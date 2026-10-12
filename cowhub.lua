@@ -19,6 +19,7 @@ local RunService = game:GetService("RunService")
 local VirtualInput = game:GetService("VirtualInputManager") or game:GetService("VirtualUser")
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualUser = game:GetService("VirtualUser")
 
 local m_abs = math.abs
 local m_sin = math.sin
@@ -35,6 +36,14 @@ plr.CharacterAdded:Connect(function(newChar)
     char = newChar
     root = char:WaitForChild("HumanoidRootPart")
     humanoid = char:WaitForChild("Humanoid")
+end)
+
+-- ==========================
+-- ANTI-AFK (Runs on Load)
+-- ==========================
+plr.Idled:Connect(function()
+    VirtualUser:CaptureController()
+    VirtualUser:ClickButton2(Vector2.new())
 end)
 
 -- Farming Variables
