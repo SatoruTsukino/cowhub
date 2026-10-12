@@ -1,3 +1,17 @@
+-- Rayfield Gen2 Autofarm, Chomper, Auto-Fishing & ESP Hub (Anti-AFK + Server-Hop)
+
+-- 1. The Server-Hop Queue Hook
+local queueOnTeleport = (queue_on_teleport or syn and syn.queue_on_teleport)
+if queueOnTeleport then
+    pcall(function()
+        queueOnTeleport([[
+            task.wait(3) -- Give the new server a moment to load your character
+            loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/cowhub.lua'))()
+        ]])
+    end)
+end
+
+-- 2. Build the Hub
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 
 local Window = Rayfield:CreateWindow({
