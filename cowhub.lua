@@ -134,7 +134,7 @@ local nextRandomPos = nil
 local farmRadius = 75
 local farmRadiusSq = farmRadius * farmRadius
 local MOB_AURA_RADIUS_SQ = 100 -- Hardcoded 10 studs squared (10 * 10)
-local mobAuraDelay = 0.5
+local mobAuraDelay = 0.1
 local lastMoveTime = 0
 local HeartbeatConnection = nil
 
@@ -171,7 +171,7 @@ local lastBackgroundCacheTime = 0
 
 -- Mob Attack Dodge Variables (Run Away & Surface Retreat)
 local autoDodgeMobs = false
-local dodgeMethod = "Run Away (Surface)" -- "Run Away (Surface)", "Teleport Away (Surface)", "Underground"
+local dodgeMethod = "Underground" -- "Underground", "Run Away (Surface)", "Teleport Away (Surface)"
 local isDodging = false
 local isUnderground = false
 local currentAttackingMob = nil
@@ -184,9 +184,9 @@ local undergroundDepth = 20
 local dodgeRetreatDistance = 25 -- Horizontal distance to retreat away from attacking mob
 local dodgeWalkSpeed = 26 -- Sprint speed when running away from attack
 local originalWalkSpeed = humanoid and humanoid.WalkSpeed or 16
-local dodgeDetectionRadius = 25
-local dodgeDetectionRadiusSq = 25 * 25
-local dodgeLingerDelay = 1.0
+local dodgeDetectionRadius = 15
+local dodgeDetectionRadiusSq = 15 * 15
+local dodgeLingerDelay = 0.02
 local lastWarningSeenTime = 0
 local notifyOnDodge = false
 local mobWarningCache = setmetatable({}, { __mode = "k" })
@@ -416,8 +416,8 @@ local function findAttackWarning(mob)
     return nil
 end
 
--- Checks if CavernAttackWarning is actively enabled via its "Enabled" attribute
-local function isWarningActive(warning)
+-- Checks if CavernAttackWarning (BillboardGui) is actively enabled via its "Enabled" attribute
+local function isWarningActive(warning, mob)
     if not warning or not warning.Parent then return false end
 
     -- Must be strictly named CavernAttackWarning (prevents any false positives)
@@ -425,15 +425,36 @@ local function isWarningActive(warning)
         return false
     end
 
-    -- Strictly check the "Enabled" attribute directly on CavernAttackWarning
-    -- NEVER fall back to BillboardGui.Enabled property (always true in Roblox Studio/engine)
-    -- and NEVER check mob models or parts (which have unrelated Enabled attributes)
+    -- 1. Check the "Enabled" attribute directly on CavernAttackWarning (Primary)
     local attr = warning:GetAttribute("Enabled")
     if attr == nil then
         attr = warning:GetAttribute("enabled")
     end
+    if attr ~= nil then
+        return attr == true
+    end
 
-    return (attr == true or attr == "true" or attr == "True" or attr == 1)
+    -- 2. Check the "Enabled" attribute on the mob or parent part
+    if mob then
+        local mobAttr = mob:GetAttribute("Enabled") or mob:GetAttribute("enabled")
+        if mobAttr ~= nil then
+            return mobAttr == true
+        end
+    end
+
+    if warning.Parent then
+        local parentAttr = warning.Parent:GetAttribute("Enabled") or warning.Parent:GetAttribute("enabled")
+        if parentAttr ~= nil then
+            return parentAttr == true
+        end
+    end
+
+    -- 3. Fallback: Check BillboardGui.Enabled property
+    if warning:IsA("BillboardGui") then
+        return warning.Enabled == true
+    end
+
+    return false
 end
 
 -- Targeted background caching for ripples and Aura Mobs (Snakes & Spiders)
@@ -776,7 +797,7 @@ local function updateHeartbeatConnection()
                     -- If already dodging, keep tracking the mob that caused the dodge
                     if isDodging and currentAttackingMob and currentAttackingMob.Parent and isMobAlive(currentAttackingMob) then
                         local warning = findAttackWarning(currentAttackingMob)
-                        if isWarningActive(warning) then
+                        if isWarningActive(warning, currentAttackingMob) then
                             attackingMobFound = true
                             attackingMobInstance = currentAttackingMob
                         end
@@ -791,7 +812,7 @@ local function updateHeartbeatConnection()
                                 if mobPos and get2DDistanceSq(checkOrigin, mobPos) <= dodgeDetectionRadiusSq then
                                     if isMobAlive(mob) then
                                         local warning = findAttackWarning(mob)
-                                        if isWarningActive(warning) then
+                                        if isWarningActive(warning, mob) then
                                             attackingMobFound = true
                                             attackingMobInstance = mob
                                             currentAttackingMob = mob
@@ -1329,7 +1350,7 @@ MainTab:CreateSection({ Name = "Aura & Pattern Configuration" })
 MainTab:CreateDropdown({
     Name = "Mob Aura Speed",
     Options = {"Slow (1.0s)", "Normal (0.5s)", "Fast (0.1s)"},
-    CurrentOption = {"Normal (0.5s)"},
+    CurrentOption = {"Fast (0.1s)"},
     MultipleOptions = false,
     Flag = "Dropdown_MobSpeed",
     Callback = function(Option)
@@ -1384,8 +1405,8 @@ MainTab:CreateSection({ Name = "Mob Attack Dodge Configuration" })
 
 MainTab:CreateDropdown({
     Name = "Dodge Method",
-    Options = {"Run Away (Surface)", "Teleport Away (Surface)", "Underground"},
-    CurrentOption = {"Run Away (Surface)"},
+    Options = {"Underground", "Run Away (Surface)", "Teleport Away (Surface)"},
+    CurrentOption = {"Underground"},
     MultipleOptions = false,
     Flag = "Dropdown_DodgeMethod",
     Callback = function(Option)
@@ -1439,7 +1460,7 @@ MainTab:CreateSlider({
     Range = {10, 50},
     Increment = 1,
     Suffix = "Studs",
-    CurrentValue = 25,
+    CurrentValue = 15,
     Flag = "Slider_DodgeRange",
     Callback = function(Value)
         dodgeDetectionRadius = Value
@@ -1449,10 +1470,10 @@ MainTab:CreateSlider({
 
 MainTab:CreateSlider({
     Name = "Dodge Return Delay (Seconds)",
-    Range = {0.2, 2.5},
-    Increment = 0.1,
+    Range = {0.01, 2.5},
+    Increment = 0.01,
     Suffix = "s",
-    CurrentValue = 1.0,
+    CurrentValue = 0.02,
     Flag = "Slider_DodgeLinger",
     Callback = function(Value)
         dodgeLingerDelay = Value
@@ -1530,7 +1551,7 @@ ScannerTab:CreateInput({
 
 ScannerTab:CreateToggle({
     Name = "Enable Discord Webhook",
-    CurrentValue = false,
+    CurrentValue = true,
     Flag = "ScannerToggle",
     Callback = function(Value)
         scannerRunning = Value
