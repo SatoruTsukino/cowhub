@@ -107,6 +107,7 @@ local charConn = plr.CharacterAdded:Connect(function(newChar)
     lastSurfaceCFrame = nil
     lastSurfacePos = nil
     undergroundCFrame = nil
+    currentUndergroundRetreatOffset = nil
     currentManatiteModel = nil
     currentGrazeTarget = nil
     currentManatitePayload = nil
@@ -204,7 +205,9 @@ local lastSurfaceCFrame = nil
 local lastSurfacePos = nil
 local undergroundCFrame = nil
 local undergroundDepth = 20
+local currentUndergroundRetreatOffset = nil
 local dodgeRetreatDistance = 25 -- Horizontal distance to retreat away from attacking mob
+local dodgeRetreatAngle = 45 -- Angle in degrees to offset retreat vector away from mob
 local dodgeWalkSpeed = 26 -- Sprint speed when running away from attack
 local originalWalkSpeed = humanoid and humanoid.WalkSpeed or 16
 local dodgeDetectionRadius = 15
@@ -1499,13 +1502,34 @@ local function updateHeartbeatConnection()
                                 originalWalkSpeed = humanoid.WalkSpeed
                             end
 
+                            local retreatDir = away2D
+                            if dodgeRetreatAngle > 0 then
+                                local rad = math.rad(dodgeRetreatAngle)
+                                local cosA = math.cos(rad)
+                                local sinA = math.sin(rad)
+                                local rightDir = Vector3.new(away2D.X * cosA - away2D.Z * sinA, 0, away2D.X * sinA + away2D.Z * cosA).Unit
+                                local leftDir = Vector3.new(away2D.X * cosA + away2D.Z * sinA, 0, -away2D.X * sinA + away2D.Z * cosA).Unit
+
+                                local rightHit = workspace:Raycast(rootPos, rightDir * dodgeRetreatDistance, raycastParams)
+                                local leftHit = workspace:Raycast(rootPos, leftDir * dodgeRetreatDistance, raycastParams)
+
+                                local rightDist = rightHit and (rightHit.Position - rootPos).Magnitude or dodgeRetreatDistance
+                                local leftDist = leftHit and (leftHit.Position - rootPos).Magnitude or dodgeRetreatDistance
+
+                                if rightDist >= leftDist then
+                                    retreatDir = rightDir
+                                else
+                                    retreatDir = leftDir
+                                end
+                            end
+
                             if dodgeMethod == "Run Away (Surface)" then
                                 if humanoid then
                                     humanoid.WalkSpeed = dodgeWalkSpeed
                                 end
                                 root.Anchored = false
                             elseif dodgeMethod == "Teleport Away (Surface)" then
-                                local retreatOffset = away2D * dodgeRetreatDistance
+                                local retreatOffset = retreatDir * dodgeRetreatDistance
                                 local retreatTarget = preDodgePos + retreatOffset
                                 local rayHit = workspace:Raycast(retreatTarget + Vector3.new(0, 10, 0), Vector3.new(0, -30, 0), raycastParams)
                                 local groundY = rayHit and (rayHit.Position.Y + 3) or preDodgePos.Y
@@ -1518,7 +1542,8 @@ local function updateHeartbeatConnection()
                                 lastSurfaceCFrame = root.CFrame
                                 lastSurfacePos = rootPos
 
-                                local retreatOffset = away2D * dodgeRetreatDistance
+                                local retreatOffset = retreatDir * dodgeRetreatDistance
+                                currentUndergroundRetreatOffset = retreatOffset
                                 local targetPos = lastSurfacePos + retreatOffset - Vector3.new(0, undergroundDepth, 0)
                                 undergroundCFrame = CFrame.new(targetPos) * (lastSurfaceCFrame.Rotation)
 
@@ -1538,7 +1563,7 @@ local function updateHeartbeatConnection()
                             if notifyOnDodge then
                                 local methodDesc = (dodgeMethod == "Run Away (Surface)" and "Running away " .. tostring(dodgeRetreatDistance) .. " studs.")
                                     or (dodgeMethod == "Teleport Away (Surface)" and "Teleported " .. tostring(dodgeRetreatDistance) .. " studs away.")
-                                    or "Retreated underground."
+                                    or ("Retreated underground (" .. tostring(dodgeRetreatDistance) .. " studs away at " .. tostring(dodgeRetreatAngle) .. "°).")
                                 Window:Notify({
                                     Title = "Attack Warning Detected",
                                     Content = methodDesc,
@@ -1576,7 +1601,10 @@ local function updateHeartbeatConnection()
                                 -- Safe! Attack has completely ended
                                 if dodgeMethod == "Underground" and isUnderground then
                                     if lastSurfaceCFrame then
-                                        local surfaceTarget = lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
+                                        local surfaceRetreatPos = lastSurfacePos and (lastSurfacePos + (currentUndergroundRetreatOffset or Vector3.zero)) or lastSurfaceCFrame.Position
+                                        local rayHit = workspace:Raycast(surfaceRetreatPos + Vector3.new(0, 10, 0), Vector3.new(0, -35, 0), raycastParams)
+                                        local groundY = rayHit and (rayHit.Position.Y + 3) or (lastSurfacePos and (lastSurfacePos.Y + 0.5) or surfaceRetreatPos.Y)
+                                        local surfaceTarget = CFrame.new(Vector3.new(surfaceRetreatPos.X, groundY, surfaceRetreatPos.Z)) * lastSurfaceCFrame.Rotation
                                         char:PivotTo(surfaceTarget)
                                         root.CFrame = surfaceTarget
                                     end
@@ -1592,6 +1620,7 @@ local function updateHeartbeatConnection()
                                     lastSurfaceCFrame = nil
                                     lastSurfacePos = nil
                                     undergroundCFrame = nil
+                                    currentUndergroundRetreatOffset = nil
                                 else
                                     -- Surface / Run Away cleanup
                                     if humanoid then
@@ -2325,6 +2354,18 @@ MainTab:CreateSlider({
 })
 
 MainTab:CreateSlider({
+    Name = "Retreat Angle (Degrees)",
+    Range = {0, 90},
+    Increment = 5,
+    Suffix = "°",
+    CurrentValue = 45,
+    Flag = "Slider_DodgeAngle",
+    Callback = function(Value)
+        dodgeRetreatAngle = Value
+    end,
+})
+
+MainTab:CreateSlider({
     Name = "Retreat Walk Speed",
     Range = {16, 50},
     Increment = 1,
@@ -2571,6 +2612,7 @@ SettingsTab:CreateButton({
             root.AssemblyLinearVelocity = Vector3.zero
             root.AssemblyAngularVelocity = Vector3.zero
             isUnderground = false
+            currentUndergroundRetreatOffset = nil
         end
         if isDodging then
             if humanoid then humanoid.WalkSpeed = originalWalkSpeed or 16 end
