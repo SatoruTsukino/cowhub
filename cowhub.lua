@@ -1,11 +1,9 @@
--- Rayfield Gen2 Autofarm, Chomper, Auto-Fishing & ESP Hub (Anti-AFK + Server-Hop)
-
 -- 1. The Server-Hop Queue Hook
 local queueOnTeleport = (queue_on_teleport or syn and syn.queue_on_teleport)
 if queueOnTeleport then
     pcall(function()
         queueOnTeleport([[
-            task.wait(3) -- Give the new server a moment to load your character
+            task.wait(3)
             loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/cowhub.lua'))()
         ]])
     end)
@@ -63,6 +61,7 @@ end)
 -- Farming Variables
 local farmOn = false
 local autoChomp = false
+local autoChompMobs = false
 local autoFish = false
 local anchorPos = nil
 local pattern = "Guided Zigzag (Nodes)"
@@ -70,6 +69,8 @@ local patternSpeed = 1.0
 local patternTimer = 0
 local nextRandomPos = nil
 local farmRadius = 75
+local mobAuraRadius = 10
+local mobAuraDelay = 0.5
 local lastMoveTime = 0 
 local HeartbeatConnection = nil
 
@@ -77,29 +78,34 @@ local HeartbeatConnection = nil
 local showPenESP = false
 local penVisualizer = nil
 
--- Team Chest ESP Variables
+-- Dynamic Team Chest ESP Variables
 local showChestESP = false
 local chestHighlight = nil
 local chestBillboard = nil
 local chestEspConnection = nil
+local chestChildAddedConn = nil
+local chestChildRemovedConn = nil
 
 -- Node Pathfinding Variables
 local nodeBlacklist = {}
 local currentTargetNode = nil
 
--- Chomp Variables
+-- Chomp & Aura Variables
 local chompEvent = ReplicatedStorage:WaitForChild("CowGame"):WaitForChild("Remotes"):WaitForChild("ChompRequest")
 local raycastParams = RaycastParams.new()
 raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+
 local lastChompedNode = ""
 local chompCooldown = 0
+local lastChompedMob = ""
+local mobChompCooldown = 0
 
--- Fishing Variables
-local fishingEvent = ReplicatedStorage:WaitForChild("CowGame"):WaitForChild("Remotes"):WaitForChild("FishingRequest")
+-- Background Caching Variables
 local fishingSpotsFolder = workspace:WaitForChild("Fishing Spots")
 local castCooldown = 0
 local activeRipples = {}
-local lastRippleCacheTime = 0
+local activeAuraMobs = {}
+local lastBackgroundCacheTime = 0
 
 -- Spammer Variables
 local spamThreads = {E = 0, Q = 0}
@@ -156,7 +162,9 @@ local function get2DDistance(p1, p2)
     return (v3(p1.X, 0, p1.Z) - v3(p2.X, 0, p2.Z)).Magnitude
 end
 
-local function cacheRipples()
+-- Unified background caching for ripples and Aura Mobs (Snakes & Spiders)
+local function cacheBackgroundElements()
+    -- 1. Cache Water Ripples
     local newRipples = {}
     for _, v in ipairs(workspace:GetDescendants()) do
         if string.match(v.Name, "CowFishingWaterRipples") then
@@ -164,6 +172,20 @@ local function cacheRipples()
         end
     end
     activeRipples = newRipples
+    
+    -- 2. Cache Aura Mobs (Snakes & Spiders)
+    local newMobs = {}
+    local cowWorld = workspace:FindFirstChild("CowWorld")
+    local resources = cowWorld and cowWorld:FindFirstChild("FjordRafting") and cowWorld.FjordRafting:FindFirstChild("Resources")
+    
+    if resources then
+        for _, v in ipairs(resources:GetDescendants()) do
+            if (string.match(v.Name, "Snake") or string.match(v.Name, "Spider")) and (v:IsA("Model") or v:IsA("BasePart")) then
+                table.insert(newMobs, v)
+            end
+        end
+    end
+    activeAuraMobs = newMobs
 end
 
 local function isSpotAvailable(spot)
@@ -208,68 +230,103 @@ local function updatePenVisualizer()
     end
 end
 
+-- Cleanup single-chest ESP instances
+local function cleanupChestVisuals()
+    if chestEspConnection then
+        chestEspConnection:Disconnect()
+        chestEspConnection = nil
+    end
+    if chestHighlight then
+        chestHighlight:Destroy()
+        chestHighlight = nil
+    end
+    if chestBillboard then
+        chestBillboard:Destroy()
+        chestBillboard = nil
+    end
+end
+
+-- Attach ESP to a loaded chest model/part
+local function attachChestESP(trackedChest)
+    cleanupChestVisuals()
+    if not trackedChest or not trackedChest.Parent then return end
+
+    chestHighlight = Instance.new("Highlight")
+    chestHighlight.Name = "ChestHighlight"
+    chestHighlight.Adornee = trackedChest
+    chestHighlight.FillColor = Color3.fromRGB(255, 215, 0)
+    chestHighlight.FillTransparency = 0.5
+    chestHighlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+    chestHighlight.OutlineTransparency = 0
+    chestHighlight.Parent = trackedChest
+
+    chestBillboard = Instance.new("BillboardGui")
+    chestBillboard.Name = "ChestESPText"
+    chestBillboard.Adornee = trackedChest:IsA("Model") and trackedChest.PrimaryPart or trackedChest:FindFirstChildWhichIsA("BasePart")
+    chestBillboard.Size = UDim2.new(0, 150, 0, 50)
+    chestBillboard.StudsOffset = Vector3.new(0, 3, 0)
+    chestBillboard.AlwaysOnTop = true
+
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Name = "Label"
+    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
+    textLabel.TextStrokeTransparency = 0
+    textLabel.TextSize = 14
+    textLabel.Font = Enum.Font.GothamBold
+    textLabel.Text = "Team Chest"
+    textLabel.Parent = chestBillboard
+
+    chestBillboard.Parent = trackedChest
+
+    chestEspConnection = RunService.RenderStepped:Connect(function()
+        if not showChestESP or not trackedChest or not trackedChest.Parent then
+            cleanupChestVisuals()
+            return
+        end
+        local chestPart = trackedChest:IsA("Model") and trackedChest.PrimaryPart or trackedChest:FindFirstChildWhichIsA("BasePart")
+        if root and chestPart and textLabel then
+            local dist = math.floor((root.Position - chestPart.Position).Magnitude)
+            textLabel.Text = "📦 Team Chest\n[" .. tostring(dist) .. " studs]"
+        end
+    end)
+end
+
+-- Dynamic load/unload watcher for LocalTeamChest
 local function updateChestESP()
-    local trackedChest = workspace:FindFirstChild("LocalTeamChest")
-    
-    if showChestESP and trackedChest then
-        if not chestHighlight then
-            chestHighlight = Instance.new("Highlight")
-            chestHighlight.Name = "ChestHighlight"
-            chestHighlight.Adornee = trackedChest
-            chestHighlight.FillColor = Color3.fromRGB(255, 215, 0)
-            chestHighlight.FillTransparency = 0.5
-            chestHighlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-            chestHighlight.OutlineTransparency = 0
-            chestHighlight.Parent = trackedChest
+    if showChestESP then
+        local currentChest = workspace:FindFirstChild("LocalTeamChest")
+        if currentChest then
+            attachChestESP(currentChest)
         end
-        
-        if not chestBillboard then
-            chestBillboard = Instance.new("BillboardGui")
-            chestBillboard.Name = "ChestESPText"
-            chestBillboard.Adornee = trackedChest:IsA("Model") and trackedChest.PrimaryPart or trackedChest:FindFirstChildWhichIsA("BasePart")
-            chestBillboard.Size = UDim2.new(0, 150, 0, 50)
-            chestBillboard.StudsOffset = Vector3.new(0, 3, 0)
-            chestBillboard.AlwaysOnTop = true
-            
-            local textLabel = Instance.new("TextLabel")
-            textLabel.Name = "Label"
-            textLabel.Size = UDim2.new(1, 0, 1, 0)
-            textLabel.BackgroundTransparency = 1
-            textLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
-            textLabel.TextStrokeTransparency = 0
-            textLabel.TextSize = 14
-            textLabel.Font = Enum.Font.GothamBold
-            textLabel.Text = "Team Chest"
-            textLabel.Parent = chestBillboard
-            
-            chestBillboard.Parent = trackedChest
+
+        if not chestChildAddedConn then
+            chestChildAddedConn = workspace.ChildAdded:Connect(function(child)
+                if child.Name == "LocalTeamChest" and showChestESP then
+                    task.wait(0.1) -- Allow model parts/PrimaryPart to replicate
+                    attachChestESP(child)
+                end
+            end)
         end
-        
-        if not chestEspConnection then
-            chestEspConnection = RunService.RenderStepped:Connect(function()
-                if not trackedChest or not trackedChest.Parent then return end
-                local textLabel = chestBillboard and chestBillboard:FindFirstChild("Label")
-                local chestPart = trackedChest:IsA("Model") and trackedChest.PrimaryPart or trackedChest:FindFirstChildWhichIsA("BasePart")
-                
-                if root and chestPart and textLabel then
-                    local dist = math.floor((root.Position - chestPart.Position).Magnitude)
-                    textLabel.Text = "📦 Team Chest\n[" .. tostring(dist) .. " studs]"
+
+        if not chestChildRemovedConn then
+            chestChildRemovedConn = workspace.ChildRemoved:Connect(function(child)
+                if child.Name == "LocalTeamChest" then
+                    cleanupChestVisuals()
                 end
             end)
         end
     else
-        if chestEspConnection then
-            chestEspConnection:Disconnect()
-            chestEspConnection = nil
+        if chestChildAddedConn then
+            chestChildAddedConn:Disconnect()
+            chestChildAddedConn = nil
         end
-        if chestHighlight then
-            chestHighlight:Destroy()
-            chestHighlight = nil
+        if chestChildRemovedConn then
+            chestChildRemovedConn:Disconnect()
+            chestChildRemovedConn = nil
         end
-        if chestBillboard then
-            chestBillboard:Destroy()
-            chestBillboard = nil
-        end
+        cleanupChestVisuals()
     end
 end
 
@@ -368,12 +425,18 @@ local function checkAuctionLots()
 end
 
 local function updateHeartbeatConnection()
-    if farmOn or autoChomp or autoFish then
+    if farmOn or autoChomp or autoFish or autoChompMobs then
         if not HeartbeatConnection then
             HeartbeatConnection = RunService.Heartbeat:Connect(function(dt)
                 if not root or not humanoid then return end
 
                 local grassFolder = workspace:FindFirstChild("CowVirtualGrass")
+
+                -- Keep background caches fresh every 1 second
+                if tick() - lastBackgroundCacheTime > 1 then
+                    task.spawn(cacheBackgroundElements)
+                    lastBackgroundCacheTime = tick()
+                end
 
                 -- 1. Movement Logic
                 if farmOn and anchorPos then
@@ -406,7 +469,7 @@ local function updateHeartbeatConnection()
                                     cleanName = string.gsub(cleanName, "^_+", "")
                                     cleanName = string.gsub(cleanName, "_+$", "")
                                     
-                                    if string.match(cleanName, "^Grass_[np]%d+_[np]%d+$") then
+                                    if string.match(cleanName, ".*Grass.*_[np%-]?%d+_[np%-]?%d+$") then
                                         local nodePos = node:IsA("Model") and node:GetPivot().Position or node.Position
                                         
                                         if get2DDistance(anchorPos, nodePos) <= farmRadius then
@@ -470,8 +533,38 @@ local function updateHeartbeatConnection()
                     end
                 end
 
-                -- 2. Raycast Chomp Logic
-                if autoChomp then
+                local prioritizedMobThisFrame = false
+
+                -- 2. Priority Mob Aura Logic (Adjustable Radius, Speed, and Auto-Align)
+                if autoChompMobs then
+                    for _, mob in ipairs(activeAuraMobs) do
+                        if mob.Parent then
+                            local mobPos = mob:IsA("Model") and mob:GetPivot().Position or mob.Position
+                            if mobPos and (root.Position - mobPos).Magnitude <= mobAuraRadius then
+                                local formattedMobName = string.gsub(mob.Name, "(%a+)(%d+)", "%1_%2")
+                                local payloadName = ""
+                                
+                                if string.match(mob.Name, "Spider") then
+                                    payloadName = "Cavern_Mob_" .. formattedMobName
+                                else
+                                    payloadName = "Fjord_Mob_" .. formattedMobName
+                                end
+                                
+                                if payloadName ~= lastChompedMob or tick() - mobChompCooldown > mobAuraDelay then
+                                    root.CFrame = CFrame.lookAt(root.Position, v3(mobPos.X, root.Position.Y, mobPos.Z))
+                                    chompEvent:FireServer(payloadName)
+                                    lastChompedMob = payloadName
+                                    mobChompCooldown = tick()
+                                    prioritizedMobThisFrame = true
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+
+                -- 3. Raycast Grass Chomp Logic (Yields to Mobs)
+                if autoChomp and not prioritizedMobThisFrame then
                     raycastParams.FilterDescendantsInstances = {char}
                     local hit = workspace:Raycast(root.Position, v3(0, -15, 0), raycastParams)
                     
@@ -491,7 +584,7 @@ local function updateHeartbeatConnection()
                             cleanName = string.gsub(cleanName, "^_+", "")
                             cleanName = string.gsub(cleanName, "_+$", "")
                             
-                            if string.match(cleanName, "^Grass_[np]%d+_[np]%d+$") then
+                            if string.match(cleanName, ".*Grass.*_[np%-]?%d+_[np%-]?%d+$") then
                                 if cleanName ~= lastChompedNode or tick() - chompCooldown > 1 then
                                     chompEvent:FireServer(cleanName)
                                     lastChompedNode = cleanName
@@ -506,13 +599,8 @@ local function updateHeartbeatConnection()
                     end
                 end
 
-                -- 3. Auto-Fishing Logic
+                -- 4. Auto-Fishing Logic
                 if autoFish then
-                    if tick() - lastRippleCacheTime > 1 then
-                        task.spawn(cacheRipples)
-                        lastRippleCacheTime = tick()
-                    end
-                    
                     if tick() - castCooldown > 3 then
                         local nearestSpot = nil
                         local shortestDistance = 50
@@ -542,7 +630,7 @@ local function updateHeartbeatConnection()
             HeartbeatConnection:Disconnect()
             HeartbeatConnection = nil
         end
-        if humanoid then humanoid:Move(v3(), false) end
+        if not farmOn and humanoid then humanoid:Move(v3(), false) end
     end
 end
 
@@ -554,12 +642,11 @@ local MainTab = Window:CreateTab({ Name = "Autofarm", Icon = 4483362458 })
 MainTab:CreateSection({ Name = "Main Toggles" })
 
 MainTab:CreateToggle({
-    Name = "Enable Autofarm & Chomper",
+    Name = "Enable Autofarm (Movement)",
     CurrentValue = false,
     Flag = "Toggle_Farm",
     Callback = function(Value)
         farmOn = Value
-        autoChomp = Value
         patternTimer = 0
         nextRandomPos = nil
         currentTargetNode = nil
@@ -569,13 +656,33 @@ MainTab:CreateToggle({
             
             Window:Notify({
                 Title = "Autofarm Enabled",
-                Content = "Absolute static home base set. Walking and chomping started.",
+                Content = "Absolute static home base set. Walking started.",
                 Duration = 3,
                 Image = 4483362458,
             })
         end
         
         updatePenVisualizer()
+        updateHeartbeatConnection()
+    end,
+})
+
+MainTab:CreateToggle({
+    Name = "Enable Auto-Chomper (Grass)",
+    CurrentValue = false,
+    Flag = "Toggle_Chomp",
+    Callback = function(Value)
+        autoChomp = Value
+        updateHeartbeatConnection()
+    end,
+})
+
+MainTab:CreateToggle({
+    Name = "Enable Mob Aura (Priority)",
+    CurrentValue = false,
+    Flag = "Toggle_MobAura",
+    Callback = function(Value)
+        autoChompMobs = Value
         updateHeartbeatConnection()
     end,
 })
@@ -590,29 +697,34 @@ MainTab:CreateToggle({
     end,
 })
 
-MainTab:CreateSection({ Name = "Visuals / ESP" })
+MainTab:CreateSection({ Name = "Aura & Pattern Configuration" })
 
-MainTab:CreateToggle({
-    Name = "Show Pen Boundary (ESP)",
-    CurrentValue = false,
-    Flag = "Toggle_PenESP",
-    Callback = function(Value)
-        showPenESP = Value
-        updatePenVisualizer()
+MainTab:CreateSlider({
+    Name = "Mob Aura Radius (Studs)",
+    Range = {5, 50},
+    Increment = 1,
+    Suffix = "Studs",
+    CurrentValue = 10,
+    Flag = "Slider_MobAura",
+    Callback = function(Value) 
+        mobAuraRadius = Value 
     end,
 })
 
-MainTab:CreateToggle({
-    Name = "Show Team Chest ESP",
-    CurrentValue = false,
-    Flag = "Toggle_ChestESP",
-    Callback = function(Value)
-        showChestESP = Value
-        updateChestESP()
+MainTab:CreateDropdown({
+    Name = "Mob Aura Speed",
+    Options = {"Slow (1.0s)", "Normal (0.5s)", "Fast (0.1s)"},
+    CurrentOption = {"Normal (0.5s)"},
+    MultipleOptions = false,
+    Flag = "Dropdown_MobSpeed",
+    Callback = function(Option)
+        local selection = type(Option) == "table" and Option[1] or Option
+        if selection == "Slow (1.0s)" then mobAuraDelay = 1.0
+        elseif selection == "Normal (0.5s)" then mobAuraDelay = 0.5
+        elseif selection == "Fast (0.1s)" then mobAuraDelay = 0.1
+        end
     end,
 })
-
-MainTab:CreateSection({ Name = "Pattern Configuration" })
 
 MainTab:CreateDropdown({
     Name = "Walking Pattern",
@@ -649,6 +761,28 @@ MainTab:CreateDropdown({
         elseif selection == "Normal (1.0x)" then patternSpeed = 1.0
         elseif selection == "Fast (1.6x)" then patternSpeed = 1.6
         end
+    end,
+})
+
+MainTab:CreateSection({ Name = "Visuals / ESP" })
+
+MainTab:CreateToggle({
+    Name = "Show Pen Boundary (ESP)",
+    CurrentValue = false,
+    Flag = "Toggle_PenESP",
+    Callback = function(Value)
+        showPenESP = Value
+        updatePenVisualizer()
+    end,
+})
+
+MainTab:CreateToggle({
+    Name = "Show Team Chest ESP (Dynamic)",
+    CurrentValue = false,
+    Flag = "Toggle_ChestESP",
+    Callback = function(Value)
+        showChestESP = Value
+        updateChestESP()
     end,
 })
 
@@ -791,6 +925,7 @@ SettingsTab:CreateButton({
 
         farmOn = false
         autoChomp = false
+        autoChompMobs = false
         autoFish = false
         scannerRunning = false 
         showPenESP = false
