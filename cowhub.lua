@@ -187,6 +187,9 @@ local mobChompCooldown = 0
 local castCooldown = 0
 local activeRipples = {}
 local activeAuraMobs = {}
+local mithrilCaveMobSet = setmetatable({}, { __mode = "k" })
+local spiderIdentifierCache = setmetatable({}, { __mode = "k" })
+local isEPressed = false
 local lastBackgroundCacheTime = 0
 
 -- Mob Attack Dodge Variables (Run Away & Surface Retreat)
@@ -206,7 +209,9 @@ local dodgeWalkSpeed = 26 -- Sprint speed when running away from attack
 local originalWalkSpeed = humanoid and humanoid.WalkSpeed or 16
 local dodgeDetectionRadius = 15
 local dodgeDetectionRadiusSq = 15 * 15
-local dodgeLingerDelay = 0.02
+local dodgeLingerDelay = 0.6
+local prioritizeMobsOverManatite = true
+local MANATITE_THREAT_RADIUS_SQ = 400 -- 20 studs squared (20 * 20)
 local lastWarningSeenTime = 0
 local notifyOnDodge = false
 local mobWarningCache = setmetatable({}, { __mode = "k" })
@@ -676,20 +681,33 @@ local function isMobAlive(mob)
 
     -- Check transparency: check attack part or primary part (eliminates GetDescendants)
     local checkPart = getMobAttackOriginPart(mob)
-    if checkPart and checkPart.Parent then
-        return checkPart.Transparency < 0.9
+    if checkPart and checkPart.Parent and checkPart.Transparency < 0.9 then
+        return true
+    end
+
+    local visual = mob:FindFirstChild("CavernBodyVisual")
+    if visual then
+        if visual:IsA("BasePart") and visual.Transparency < 0.9 then
+            return true
+        elseif visual:IsA("Model") then
+            for _, p in ipairs(visual:GetChildren()) do
+                if p:IsA("BasePart") and p.Transparency < 0.9 then
+                    return true
+                end
+            end
+        end
     end
 
     if mob:IsA("BasePart") then
         return mob.Transparency < 0.9
     elseif mob:IsA("Model") then
         local primary = mob.PrimaryPart
-        if primary then
-            return primary.Transparency < 0.9
+        if primary and primary.Transparency < 0.9 then
+            return true
         end
         for _, part in ipairs(mob:GetChildren()) do
-            if part:IsA("BasePart") then
-                return part.Transparency < 0.9
+            if part:IsA("BasePart") and part.Transparency < 0.9 then
+                return true
             end
         end
     end
@@ -795,6 +813,187 @@ local function isWarningActive(warning, mob)
     return false
 end
 
+-- Simulates an interaction keypress ('E') without blocking the render/heartbeat loop
+local function pressE()
+    if isEPressed then return end
+    isEPressed = true
+    pcall(function()
+        if successVIM and VirtualInput then
+            VirtualInput:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+        elseif keypress then
+            keypress(0x45)
+        elseif VirtualUser then
+            VirtualUser:CaptureController()
+            VirtualUser:SetKeyDown("0x65")
+        end
+    end)
+    task.spawn(function()
+        task.wait(0.04)
+        pcall(function()
+            if successVIM and VirtualInput then
+                VirtualInput:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+            elseif keyrelease then
+                keyrelease(0x45)
+            elseif VirtualUser then
+                VirtualUser:SetKeyUp("0x65")
+            end
+        end)
+        isEPressed = false
+    end)
+end
+
+-- Checks for an identifier number on Mithril cave spiders if present (e.g. 200809)
+local function findSpiderIdentifier(mob)
+    if not mob then return nil end
+    local cached = spiderIdentifierCache[mob]
+    if cached ~= nil then return cached or nil end
+
+    for _, attr in ipairs({"Id", "ID", "Identifier", "MobId", "SpiderId", "Index", "Number", "SpawnId", "NetworkId", "ServerId", "TargetId", "UID", "UUID", "EntityId"}) do
+        local val = mob:GetAttribute(attr)
+        if val ~= nil and tostring(val) ~= "" then
+            local str = tostring(val)
+            spiderIdentifierCache[mob] = str
+            return str
+        end
+    end
+
+    for attrName, attrVal in pairs(mob:GetAttributes()) do
+        if typeof(attrVal) == "number" or (typeof(attrVal) == "string" and string.match(attrVal, "^%d%d%d+$")) then
+            local str = tostring(attrVal)
+            spiderIdentifierCache[mob] = str
+            return str
+        end
+    end
+
+    for _, child in ipairs(mob:GetChildren()) do
+        if child:IsA("ValueBase") then
+            local val = child.Value
+            if val and tostring(val) ~= "" then
+                local str = tostring(val)
+                spiderIdentifierCache[mob] = str
+                return str
+            end
+        end
+    end
+
+    local visual = mob:FindFirstChild("CavernBodyVisual") or mob:FindFirstChild("Head") or mob.PrimaryPart
+    if visual then
+        for _, attr in ipairs({"Id", "ID", "Identifier", "MobId", "SpiderId", "Index", "Number", "SpawnId", "NetworkId"}) do
+            local val = visual:GetAttribute(attr)
+            if val ~= nil and tostring(val) ~= "" then
+                local str = tostring(val)
+                spiderIdentifierCache[mob] = str
+                return str
+            end
+        end
+        for attrName, attrVal in pairs(visual:GetAttributes()) do
+            if typeof(attrVal) == "number" or (typeof(attrVal) == "string" and string.match(attrVal, "^%d%d%d+$")) then
+                local str = tostring(attrVal)
+                spiderIdentifierCache[mob] = str
+                return str
+            end
+        end
+    end
+
+    pcall(function()
+        local CollectionService = game:GetService("CollectionService")
+        for _, tag in ipairs(CollectionService:GetTags(mob)) do
+            local num = string.match(tag, "(%d%d%d+)")
+            if num then
+                spiderIdentifierCache[mob] = num
+                return num
+            end
+        end
+    end)
+
+    local numMatch = string.match(mob.Name, "(%d%d%d+)")
+    if numMatch and #numMatch >= 4 then
+        spiderIdentifierCache[mob] = numMatch
+        return numMatch
+    end
+
+    spiderIdentifierCache[mob] = false
+    return nil
+end
+
+local cachedMithrilCaveFolder = nil
+local function getMithrilCaveSpidersFolder()
+    if cachedMithrilCaveFolder and cachedMithrilCaveFolder.Parent then
+        return cachedMithrilCaveFolder
+    end
+    local resources = getResourcesFolder()
+    if resources then
+        local folder = resources:FindFirstChild("MithrilCaveSpiders")
+        if folder then
+            cachedMithrilCaveFolder = folder
+            return folder
+        end
+    end
+    if cowWorldRef and cowWorldRef.Parent then
+        local folder = cowWorldRef:FindFirstChild("MithrilCaveSpiders", true)
+        if folder then
+            cachedMithrilCaveFolder = folder
+            return folder
+        end
+    end
+    local folder = workspace:FindFirstChild("MithrilCaveSpiders", true)
+    if folder then
+        cachedMithrilCaveFolder = folder
+        return folder
+    end
+    return nil
+end
+
+local function isSpiderMobInstance(instance)
+    if not (instance:IsA("Model") or instance:IsA("BasePart")) then return false end
+    local name = instance.Name
+    if name == "Mama Spider" or string.find(name, "FjordSpider", 1, true) then
+        return true
+    end
+    if string.find(name, "Spider", 1, true) and not string.find(name, "Chamber", 1, true) then
+        return true
+    end
+    return false
+end
+
+local function isMithrilCaveMob(mob)
+    if not mob then return false end
+    if mithrilCaveMobSet[mob] then return true end
+    local mFolder = getMithrilCaveSpidersFolder()
+    if mFolder and mob:IsDescendantOf(mFolder) then
+        mithrilCaveMobSet[mob] = true
+        return true
+    end
+    local name = mob.Name
+    if string.find(name, "FjordSpider", 1, true) or name == "Mama Spider" or string.find(name, "Mama", 1, true) then
+        return true
+    end
+    return false
+end
+
+-- Recursively collects living spiders from Mithril Cave chambers and rooms
+local function collectSpidersFromChamber(chamber)
+    if not chamber then return end
+    if isSpiderMobInstance(chamber) then
+        if isMobAlive(chamber) and not mithrilCaveMobSet[chamber] then
+            table.insert(activeAuraMobs, chamber)
+            mithrilCaveMobSet[chamber] = true
+        end
+        return
+    end
+
+    for _, child in ipairs(chamber:GetChildren()) do
+        if isSpiderMobInstance(child) then
+            if isMobAlive(child) and not mithrilCaveMobSet[child] then
+                table.insert(activeAuraMobs, child)
+                mithrilCaveMobSet[child] = true
+            end
+        elseif child:IsA("Folder") or child:IsA("Configuration") or child:IsA("Model") then
+            collectSpidersFromChamber(child)
+        end
+    end
+end
+
 -- Zero-allocation background caching for ripples and Aura Mobs (Snakes & Spiders)
 local function cacheBackgroundElements()
     local cWorld = cowWorldRef and cowWorldRef.Parent and cowWorldRef or workspace:FindFirstChild("CowWorld")
@@ -814,28 +1013,43 @@ local function cacheBackgroundElements()
         end
     end
 
-    -- 2. Cache Aura Mobs (Snakes & Spiders) strictly under their clearings
+    -- 2. Cache Aura Mobs (Snakes & Spiders) strictly under their clearings and Mithril Cave
     if autoChompMobs or autoDodgeMobs then
         table.clear(activeAuraMobs)
+        table.clear(mithrilCaveMobSet)
         local resources = getResourcesFolder()
 
         if resources then
             for _, clearing in ipairs(resources:GetChildren()) do
-                for _, v in ipairs(clearing:GetChildren()) do
-                    local name = v.Name
-                    local isMob = (string.find(name, "Snake", 1, true) or string.find(name, "Spider", 1, true))
-                    if isMob and (v:IsA("Model") or v:IsA("BasePart")) then
-                        if isMobAlive(v) then
-                            table.insert(activeAuraMobs, v)
+                if clearing.Name == "MithrilCaveSpiders" then
+                    for _, chamber in ipairs(clearing:GetChildren()) do
+                        collectSpidersFromChamber(chamber)
+                    end
+                else
+                    for _, v in ipairs(clearing:GetChildren()) do
+                        local name = v.Name
+                        local isMob = (string.find(name, "Snake", 1, true) or string.find(name, "Spider", 1, true))
+                        if isMob and (v:IsA("Model") or v:IsA("BasePart")) then
+                            if isMobAlive(v) then
+                                table.insert(activeAuraMobs, v)
+                            end
                         end
                     end
                 end
+            end
+        end
+
+        local mithrilFolder = getMithrilCaveSpidersFolder()
+        if mithrilFolder and (not resources or not resources:FindFirstChild("MithrilCaveSpiders")) then
+            for _, chamber in ipairs(mithrilFolder:GetChildren()) do
+                collectSpidersFromChamber(chamber)
             end
         end
     else
         if #activeAuraMobs > 0 then
             table.clear(activeAuraMobs)
         end
+        table.clear(mithrilCaveMobSet)
     end
 end
 
@@ -1233,30 +1447,19 @@ local function updateHeartbeatConnection()
                     local attackingMobFound = false
                     local attackingMobInstance = nil
 
-                    -- If already dodging, keep tracking the mob that caused the dodge
-                    if isDodging and currentAttackingMob and currentAttackingMob.Parent and isMobAlive(currentAttackingMob) then
-                        local warning = findAttackWarning(currentAttackingMob)
-                        if isWarningActive(warning, currentAttackingMob) then
-                            attackingMobFound = true
-                            attackingMobInstance = currentAttackingMob
-                        end
-                    end
-
-                    -- If not already locked onto an active warning, scan activeAuraMobs
-                    if not attackingMobFound then
-                        local checkOrigin = (isDodging and preDodgePos) or (isUnderground and lastSurfacePos) or rootPos
-                        for _, mob in ipairs(activeAuraMobs) do
-                            if mob.Parent then
-                                local mobPos = getMobAttackOrigin(mob)
-                                if mobPos and get2DDistanceSq(checkOrigin, mobPos) <= dodgeDetectionRadiusSq then
-                                    if isMobAlive(mob) then
-                                        local warning = findAttackWarning(mob)
-                                        if isWarningActive(warning, mob) then
-                                            attackingMobFound = true
-                                            attackingMobInstance = mob
-                                            currentAttackingMob = mob
-                                            break
-                                        end
+                    -- Chained multi-mob dodging: scan activeAuraMobs for ANY active attack warning
+                    local checkOrigin = (isDodging and preDodgePos) or (isUnderground and lastSurfacePos) or rootPos
+                    for _, mob in ipairs(activeAuraMobs) do
+                        if mob.Parent then
+                            local mobPos = getMobAttackOrigin(mob)
+                            if mobPos and get2DDistanceSq(checkOrigin, mobPos) <= dodgeDetectionRadiusSq then
+                                if isMobAlive(mob) then
+                                    local warning = findAttackWarning(mob)
+                                    if isWarningActive(warning, mob) then
+                                        attackingMobFound = true
+                                        attackingMobInstance = mob
+                                        currentAttackingMob = mob
+                                        break
                                     end
                                 end
                             end
@@ -1265,6 +1468,11 @@ local function updateHeartbeatConnection()
 
                     if attackingMobFound and attackingMobInstance then
                         lastWarningSeenTime = now
+
+                        -- Force unanchor during surface dodges so evasion is never locked
+                        if root.Anchored and dodgeMethod ~= "Underground" then
+                            pcall(function() root.Anchored = false end)
+                        end
 
                         -- Calculate horizontal retreat direction directly away from the attacking mob
                         local attackOrigin = getMobAttackOrigin(attackingMobInstance) or (preDodgePos or rootPos)
@@ -1569,29 +1777,79 @@ local function updateHeartbeatConnection()
                 -- 2. Priority Mob Aura Logic
                 if autoChompMobs then
                     local auraOrigin = isUnderground and (lastSurfacePos or rootPos) or rootPos
+                    local closestMob = nil
+                    local closestDistSq = math.huge
+                    local closestMobPos = nil
+
                     for _, mob in ipairs(activeAuraMobs) do
                         if mob.Parent then
                             local mobPos = getMobAttackOrigin(mob)
-                            -- Distance check FIRST before any alive/descendant validation (hardcoded 10 studs)
-                            if mobPos and get3DDistanceSq(auraOrigin, mobPos) <= MOB_AURA_RADIUS_SQ then
-                                if isMobAlive(mob) then
-                                    local payloadName = getMobPayload(mob.Name)
-
-                                    if payloadName ~= lastChompedMob or (now - mobChompCooldown > mobAuraDelay) then
-                                        if not isUnderground and not isDodging then
-                                            local lookDx = mobPos.X - rootPos.X
-                                            local lookDz = mobPos.Z - rootPos.Z
-                                            if (lookDx * lookDx + lookDz * lookDz) > 0.01 then
-                                                root.CFrame = CFrame.lookAt(rootPos, Vector3.new(mobPos.X, rootPos.Y, mobPos.Z))
-                                            end
-                                        end
-                                        chompEvent:FireServer(payloadName)
-                                        lastChompedMob = payloadName
-                                        mobChompCooldown = now
-                                        prioritizedMobThisFrame = true
-                                        break
+                            if mobPos then
+                                local distSq = get3DDistanceSq(auraOrigin, mobPos)
+                                if distSq <= MOB_AURA_RADIUS_SQ and distSq < closestDistSq then
+                                    if isMobAlive(mob) then
+                                        closestDistSq = distSq
+                                        closestMob = mob
+                                        closestMobPos = mobPos
                                     end
                                 end
+                            end
+                        end
+                    end
+
+                    if closestMob then
+                        local mob = closestMob
+                        local mobPos = closestMobPos
+                        local isCaveMob = isMithrilCaveMob(mob)
+
+                        if isCaveMob then
+                            if (now - mobChompCooldown > mobAuraDelay) or (lastChompedMob ~= mob) then
+                                if not isUnderground and not isDodging then
+                                    local lookDx = mobPos.X - rootPos.X
+                                    local lookDz = mobPos.Z - rootPos.Z
+                                    if (lookDx * lookDx + lookDz * lookDz) > 0.01 then
+                                        root.CFrame = CFrame.lookAt(rootPos, Vector3.new(mobPos.X, rootPos.Y, mobPos.Z))
+                                    end
+                                end
+
+                                local spiderId = findSpiderIdentifier(mob)
+                                if spiderId then
+                                    local payloadName = "Cavern_Mob_Spider_" .. tostring(spiderId)
+                                    chompEvent:FireServer(payloadName)
+                                end
+
+                                if fireproximityprompt then
+                                    local prompt = mob:FindFirstChildWhichIsA("ProximityPrompt", true)
+                                    if prompt and prompt.Enabled then
+                                        pcall(function() fireproximityprompt(prompt) end)
+                                    end
+                                end
+
+                                pressE()
+
+                                lastChompedMob = mob
+                                mobChompCooldown = now
+                                prioritizedMobThisFrame = true
+                            else
+                                prioritizedMobThisFrame = true
+                            end
+                        else
+                            local payloadName = getMobPayload(mob.Name)
+
+                            if payloadName ~= lastChompedMob or (now - mobChompCooldown > mobAuraDelay) then
+                                if not isUnderground and not isDodging then
+                                    local lookDx = mobPos.X - rootPos.X
+                                    local lookDz = mobPos.Z - rootPos.Z
+                                    if (lookDx * lookDx + lookDz * lookDz) > 0.01 then
+                                        root.CFrame = CFrame.lookAt(rootPos, Vector3.new(mobPos.X, rootPos.Y, mobPos.Z))
+                                    end
+                                end
+                                chompEvent:FireServer(payloadName)
+                                lastChompedMob = payloadName
+                                mobChompCooldown = now
+                                prioritizedMobThisFrame = true
+                            else
+                                prioritizedMobThisFrame = true
                             end
                         end
                     end
@@ -1657,8 +1915,27 @@ local function updateHeartbeatConnection()
                     end
                 end
 
+                -- Threat clearing detection: check if any alive hostile mobs are within 20 studs
+                local hasNearbyThreat = false
+                if autoChompMobs and (autoManatite or farmOn) then
+                    local threatOrigin = isUnderground and (lastSurfacePos or rootPos) or rootPos
+                    for _, mob in ipairs(activeAuraMobs) do
+                        if mob.Parent and isMobAlive(mob) then
+                            local mobPos = getMobAttackOrigin(mob)
+                            if mobPos and get2DDistanceSq(threatOrigin, mobPos) <= MANATITE_THREAT_RADIUS_SQ then
+                                hasNearbyThreat = true
+                                break
+                            end
+                        end
+                    end
+                end
+
+                if hasNearbyThreat and prioritizeMobsOverManatite and root.Anchored and not isUnderground then
+                    pcall(function() root.Anchored = false end)
+                end
+
                 -- 5. Manatite Farm Logic (Sea Maze Teleport & Autochomp)
-                if autoManatite and not isUnderground and not isDodging then
+                if autoManatite and not isUnderground and not isDodging and not (prioritizeMobsOverManatite and hasNearbyThreat) then
                     cleanupManatiteBlacklist(now)
 
                     local targetValid = currentManatiteModel
@@ -1703,7 +1980,7 @@ local function updateHeartbeatConnection()
                                 lastManatiteTeleportTime = now
                             end
                         else
-                            if manatiteAnchorChomp and not root.Anchored then
+                            if manatiteAnchorChomp and not root.Anchored and not isDodging and not isUnderground and not hasNearbyThreat then
                                 pcall(function() root.Anchored = true end)
                             end
                         end
@@ -1952,6 +2229,15 @@ MainTab:CreateToggle({
     end,
 })
 
+MainTab:CreateToggle({
+    Name = "Prioritize Mobs Near Manatite (20 Studs)",
+    CurrentValue = true,
+    Flag = "Toggle_PrioritizeMobsManatite",
+    Callback = function(Value)
+        prioritizeMobsOverManatite = Value
+    end,
+})
+
 MainTab:CreateSection({ Name = "Aura & Pattern Configuration" })
 
 MainTab:CreateDropdown({
@@ -2077,10 +2363,10 @@ MainTab:CreateSlider({
 
 MainTab:CreateSlider({
     Name = "Dodge Return Delay (Seconds)",
-    Range = {0.01, 2.5},
-    Increment = 0.01,
+    Range = {0.05, 2.5},
+    Increment = 0.05,
     Suffix = "s",
-    CurrentValue = 0.02,
+    CurrentValue = 0.6,
     Flag = "Slider_DodgeLinger",
     Callback = function(Value)
         dodgeLingerDelay = Value
@@ -2296,6 +2582,18 @@ SettingsTab:CreateButton({
         showChestESP = false
         updatePenVisualizer()
         updateChestESP()
+
+        table.clear(activeAuraMobs)
+        table.clear(mithrilCaveMobSet)
+        pcall(function()
+            if successVIM and VirtualInput then
+                VirtualInput:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+            elseif keyrelease then
+                keyrelease(0x45)
+            elseif VirtualUser then
+                VirtualUser:SetKeyUp("0x65")
+            end
+        end)
 
         spamThreads.E = spamThreads.E + 1
         spamThreads.Q = spamThreads.Q + 1

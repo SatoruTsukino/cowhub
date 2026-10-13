@@ -209,7 +209,9 @@ local dodgeWalkSpeed = 26 -- Sprint speed when running away from attack
 local originalWalkSpeed = humanoid and humanoid.WalkSpeed or 16
 local dodgeDetectionRadius = 15
 local dodgeDetectionRadiusSq = 15 * 15
-local dodgeLingerDelay = 0.02
+local dodgeLingerDelay = 0.6
+local prioritizeMobsOverManatite = true
+local MANATITE_THREAT_RADIUS_SQ = 400 -- 20 studs squared (20 * 20)
 local lastWarningSeenTime = 0
 local notifyOnDodge = false
 local mobWarningCache = setmetatable({}, { __mode = "k" })
@@ -816,24 +818,24 @@ local function pressE()
     if isEPressed then return end
     isEPressed = true
     pcall(function()
-        if VirtualInput and VirtualInput.SendKeyEvent then
+        if successVIM and VirtualInput then
             VirtualInput:SendKeyEvent(true, Enum.KeyCode.E, false, game)
         elseif keypress then
             keypress(0x45)
         elseif VirtualUser then
-            pcall(function() VirtualUser:CaptureController() end)
-            pcall(function() VirtualUser:SetKeyDown("0x65") end)
+            VirtualUser:CaptureController()
+            VirtualUser:SetKeyDown("0x65")
         end
     end)
     task.spawn(function()
-        task.wait(0.03)
+        task.wait(0.04)
         pcall(function()
-            if VirtualInput and VirtualInput.SendKeyEvent then
+            if successVIM and VirtualInput then
                 VirtualInput:SendKeyEvent(false, Enum.KeyCode.E, false, game)
             elseif keyrelease then
                 keyrelease(0x45)
             elseif VirtualUser then
-                pcall(function() VirtualUser:SetKeyUp("0x65") end)
+                VirtualUser:SetKeyUp("0x65")
             end
         end)
         isEPressed = false
@@ -846,10 +848,18 @@ local function findSpiderIdentifier(mob)
     local cached = spiderIdentifierCache[mob]
     if cached ~= nil then return cached or nil end
 
-    for _, attr in ipairs({"Id", "ID", "Identifier", "MobId", "SpiderId", "Index", "Number", "SpawnId", "NetworkId", "ServerId", "TargetId"}) do
+    for _, attr in ipairs({"Id", "ID", "Identifier", "MobId", "SpiderId", "Index", "Number", "SpawnId", "NetworkId", "ServerId", "TargetId", "UID", "UUID", "EntityId"}) do
         local val = mob:GetAttribute(attr)
         if val ~= nil and tostring(val) ~= "" then
             local str = tostring(val)
+            spiderIdentifierCache[mob] = str
+            return str
+        end
+    end
+
+    for attrName, attrVal in pairs(mob:GetAttributes()) do
+        if typeof(attrVal) == "number" or (typeof(attrVal) == "string" and string.match(attrVal, "^%d%d%d+$")) then
+            local str = tostring(attrVal)
             spiderIdentifierCache[mob] = str
             return str
         end
@@ -866,9 +876,9 @@ local function findSpiderIdentifier(mob)
         end
     end
 
-    local visual = mob:FindFirstChild("CavernBodyVisual") or mob:FindFirstChild("Head")
+    local visual = mob:FindFirstChild("CavernBodyVisual") or mob:FindFirstChild("Head") or mob.PrimaryPart
     if visual then
-        for _, attr in ipairs({"Id", "ID", "Identifier", "MobId", "SpiderId", "Index", "Number"}) do
+        for _, attr in ipairs({"Id", "ID", "Identifier", "MobId", "SpiderId", "Index", "Number", "SpawnId", "NetworkId"}) do
             local val = visual:GetAttribute(attr)
             if val ~= nil and tostring(val) ~= "" then
                 local str = tostring(val)
@@ -876,10 +886,28 @@ local function findSpiderIdentifier(mob)
                 return str
             end
         end
+        for attrName, attrVal in pairs(visual:GetAttributes()) do
+            if typeof(attrVal) == "number" or (typeof(attrVal) == "string" and string.match(attrVal, "^%d%d%d+$")) then
+                local str = tostring(attrVal)
+                spiderIdentifierCache[mob] = str
+                return str
+            end
+        end
     end
 
+    pcall(function()
+        local CollectionService = game:GetService("CollectionService")
+        for _, tag in ipairs(CollectionService:GetTags(mob)) do
+            local num = string.match(tag, "(%d%d%d+)")
+            if num then
+                spiderIdentifierCache[mob] = num
+                return num
+            end
+        end
+    end)
+
     local numMatch = string.match(mob.Name, "(%d%d%d+)")
-    if numMatch then
+    if numMatch and #numMatch >= 4 then
         spiderIdentifierCache[mob] = numMatch
         return numMatch
     end
@@ -916,6 +944,18 @@ local function getMithrilCaveSpidersFolder()
     return nil
 end
 
+local function isSpiderMobInstance(instance)
+    if not (instance:IsA("Model") or instance:IsA("BasePart")) then return false end
+    local name = instance.Name
+    if name == "Mama Spider" or string.find(name, "FjordSpider", 1, true) then
+        return true
+    end
+    if string.find(name, "Spider", 1, true) and not string.find(name, "Chamber", 1, true) then
+        return true
+    end
+    return false
+end
+
 local function isMithrilCaveMob(mob)
     if not mob then return false end
     if mithrilCaveMobSet[mob] then return true end
@@ -925,7 +965,7 @@ local function isMithrilCaveMob(mob)
         return true
     end
     local name = mob.Name
-    if string.find(name, "FjordSpider", 1, true) or string.find(name, "Mama Spider", 1, true) or string.find(name, "Mama", 1, true) then
+    if string.find(name, "FjordSpider", 1, true) or name == "Mama Spider" or string.find(name, "Mama", 1, true) then
         return true
     end
     return false
@@ -934,8 +974,7 @@ end
 -- Recursively collects living spiders from Mithril Cave chambers and rooms
 local function collectSpidersFromChamber(chamber)
     if not chamber then return end
-    local chamberName = chamber.Name
-    if (chamber:IsA("Model") or chamber:IsA("BasePart")) and (string.find(chamberName, "Spider", 1, true) or string.find(chamberName, "Mama", 1, true)) then
+    if isSpiderMobInstance(chamber) then
         if isMobAlive(chamber) and not mithrilCaveMobSet[chamber] then
             table.insert(activeAuraMobs, chamber)
             mithrilCaveMobSet[chamber] = true
@@ -943,14 +982,14 @@ local function collectSpidersFromChamber(chamber)
         return
     end
 
-    for _, mob in ipairs(chamber:GetChildren()) do
-        if mob:IsA("Folder") or mob:IsA("Configuration") then
-            collectSpidersFromChamber(mob)
-        elseif (mob:IsA("Model") or mob:IsA("BasePart")) and (string.find(mob.Name, "Spider", 1, true) or string.find(mob.Name, "Mama", 1, true)) then
-            if isMobAlive(mob) and not mithrilCaveMobSet[mob] then
-                table.insert(activeAuraMobs, mob)
-                mithrilCaveMobSet[mob] = true
+    for _, child in ipairs(chamber:GetChildren()) do
+        if isSpiderMobInstance(child) then
+            if isMobAlive(child) and not mithrilCaveMobSet[child] then
+                table.insert(activeAuraMobs, child)
+                mithrilCaveMobSet[child] = true
             end
+        elseif child:IsA("Folder") or child:IsA("Configuration") or child:IsA("Model") then
+            collectSpidersFromChamber(child)
         end
     end
 end
@@ -1408,30 +1447,19 @@ local function updateHeartbeatConnection()
                     local attackingMobFound = false
                     local attackingMobInstance = nil
 
-                    -- If already dodging, keep tracking the mob that caused the dodge
-                    if isDodging and currentAttackingMob and currentAttackingMob.Parent and isMobAlive(currentAttackingMob) then
-                        local warning = findAttackWarning(currentAttackingMob)
-                        if isWarningActive(warning, currentAttackingMob) then
-                            attackingMobFound = true
-                            attackingMobInstance = currentAttackingMob
-                        end
-                    end
-
-                    -- If not already locked onto an active warning, scan activeAuraMobs
-                    if not attackingMobFound then
-                        local checkOrigin = (isDodging and preDodgePos) or (isUnderground and lastSurfacePos) or rootPos
-                        for _, mob in ipairs(activeAuraMobs) do
-                            if mob.Parent then
-                                local mobPos = getMobAttackOrigin(mob)
-                                if mobPos and get2DDistanceSq(checkOrigin, mobPos) <= dodgeDetectionRadiusSq then
-                                    if isMobAlive(mob) then
-                                        local warning = findAttackWarning(mob)
-                                        if isWarningActive(warning, mob) then
-                                            attackingMobFound = true
-                                            attackingMobInstance = mob
-                                            currentAttackingMob = mob
-                                            break
-                                        end
+                    -- Chained multi-mob dodging: scan activeAuraMobs for ANY active attack warning
+                    local checkOrigin = (isDodging and preDodgePos) or (isUnderground and lastSurfacePos) or rootPos
+                    for _, mob in ipairs(activeAuraMobs) do
+                        if mob.Parent then
+                            local mobPos = getMobAttackOrigin(mob)
+                            if mobPos and get2DDistanceSq(checkOrigin, mobPos) <= dodgeDetectionRadiusSq then
+                                if isMobAlive(mob) then
+                                    local warning = findAttackWarning(mob)
+                                    if isWarningActive(warning, mob) then
+                                        attackingMobFound = true
+                                        attackingMobInstance = mob
+                                        currentAttackingMob = mob
+                                        break
                                     end
                                 end
                             end
@@ -1440,6 +1468,11 @@ local function updateHeartbeatConnection()
 
                     if attackingMobFound and attackingMobInstance then
                         lastWarningSeenTime = now
+
+                        -- Force unanchor during surface dodges so evasion is never locked
+                        if root.Anchored and dodgeMethod ~= "Underground" then
+                            pcall(function() root.Anchored = false end)
+                        end
 
                         -- Calculate horizontal retreat direction directly away from the attacking mob
                         local attackOrigin = getMobAttackOrigin(attackingMobInstance) or (preDodgePos or rootPos)
@@ -1785,6 +1818,13 @@ local function updateHeartbeatConnection()
                                     chompEvent:FireServer(payloadName)
                                 end
 
+                                if fireproximityprompt then
+                                    local prompt = mob:FindFirstChildWhichIsA("ProximityPrompt", true)
+                                    if prompt and prompt.Enabled then
+                                        pcall(function() fireproximityprompt(prompt) end)
+                                    end
+                                end
+
                                 pressE()
 
                                 lastChompedMob = mob
@@ -1875,8 +1915,27 @@ local function updateHeartbeatConnection()
                     end
                 end
 
+                -- Threat clearing detection: check if any alive hostile mobs are within 20 studs
+                local hasNearbyThreat = false
+                if autoChompMobs and (autoManatite or farmOn) then
+                    local threatOrigin = isUnderground and (lastSurfacePos or rootPos) or rootPos
+                    for _, mob in ipairs(activeAuraMobs) do
+                        if mob.Parent and isMobAlive(mob) then
+                            local mobPos = getMobAttackOrigin(mob)
+                            if mobPos and get2DDistanceSq(threatOrigin, mobPos) <= MANATITE_THREAT_RADIUS_SQ then
+                                hasNearbyThreat = true
+                                break
+                            end
+                        end
+                    end
+                end
+
+                if hasNearbyThreat and prioritizeMobsOverManatite and root.Anchored and not isUnderground then
+                    pcall(function() root.Anchored = false end)
+                end
+
                 -- 5. Manatite Farm Logic (Sea Maze Teleport & Autochomp)
-                if autoManatite and not isUnderground and not isDodging then
+                if autoManatite and not isUnderground and not isDodging and not (prioritizeMobsOverManatite and hasNearbyThreat) then
                     cleanupManatiteBlacklist(now)
 
                     local targetValid = currentManatiteModel
@@ -1921,7 +1980,7 @@ local function updateHeartbeatConnection()
                                 lastManatiteTeleportTime = now
                             end
                         else
-                            if manatiteAnchorChomp and not root.Anchored then
+                            if manatiteAnchorChomp and not root.Anchored and not isDodging and not isUnderground and not hasNearbyThreat then
                                 pcall(function() root.Anchored = true end)
                             end
                         end
@@ -2170,6 +2229,15 @@ MainTab:CreateToggle({
     end,
 })
 
+MainTab:CreateToggle({
+    Name = "Prioritize Mobs Near Manatite (20 Studs)",
+    CurrentValue = true,
+    Flag = "Toggle_PrioritizeMobsManatite",
+    Callback = function(Value)
+        prioritizeMobsOverManatite = Value
+    end,
+})
+
 MainTab:CreateSection({ Name = "Aura & Pattern Configuration" })
 
 MainTab:CreateDropdown({
@@ -2295,10 +2363,10 @@ MainTab:CreateSlider({
 
 MainTab:CreateSlider({
     Name = "Dodge Return Delay (Seconds)",
-    Range = {0.01, 2.5},
-    Increment = 0.01,
+    Range = {0.05, 2.5},
+    Increment = 0.05,
     Suffix = "s",
-    CurrentValue = 0.02,
+    CurrentValue = 0.6,
     Flag = "Slider_DodgeLinger",
     Callback = function(Value)
         dodgeLingerDelay = Value
@@ -2518,10 +2586,12 @@ SettingsTab:CreateButton({
         table.clear(activeAuraMobs)
         table.clear(mithrilCaveMobSet)
         pcall(function()
-            if VirtualInput and VirtualInput.SendKeyEvent then
+            if successVIM and VirtualInput then
                 VirtualInput:SendKeyEvent(false, Enum.KeyCode.E, false, game)
             elseif keyrelease then
                 keyrelease(0x45)
+            elseif VirtualUser then
+                VirtualUser:SetKeyUp("0x65")
             end
         end)
 
