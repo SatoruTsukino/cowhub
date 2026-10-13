@@ -45,43 +45,7 @@ if not successVIM or not VirtualInput then
     VirtualInput = VirtualUser
 end
 
--- Fast Local Math & Engine Functions
-local math_abs = math.abs
-local math_sin = math.sin
-local math_cos = math.cos
-local math_rad = math.rad
-local math_random = math.random
-local math_floor = math.floor
-local math_sqrt = math.sqrt
-local math_pi = math.pi
-local TWO_PI = math_pi * 2
-local math_huge = math.huge
-
-local string_find = string.find
-local string_gsub = string.gsub
-local string_match = string.match
-local string_lower = string.lower
-local table_insert = table.insert
-local table_clear = table.clear
-local ipairs = ipairs
-local pairs = pairs
-local pcall = pcall
-local type = type
-local tostring = tostring
-local tonumber = tonumber
-
-local os_clock = os.clock
-local task_wait = task.wait
-local task_spawn = task.spawn
-
-local Vector3_new = Vector3.new
-local Vector3_zero = Vector3.zero
-local Vector2_zero = Vector2.zero
-local CFrame_new = CFrame.new
-local CFrame_Angles = CFrame.Angles
-local CFrame_lookAt = CFrame.lookAt
-
-local RAYCAST_DOWN = Vector3_new(0, -15, 0)
+local RAYCAST_DOWN = Vector3.new(0, -15, 0)
 
 -- ==========================
 -- PLAYER & CHARACTER STATE
@@ -95,11 +59,11 @@ local scriptConnections = {}
 -- Pre-cached character baseparts for zero-allocation collision toggling
 local charBaseParts = {}
 local function updateCharBaseParts(character)
-    table_clear(charBaseParts)
+    table.clear(charBaseParts)
     if character then
         for _, part in ipairs(character:GetDescendants()) do
             if part:IsA("BasePart") then
-                table_insert(charBaseParts, part)
+                table.insert(charBaseParts, part)
             end
         end
     end
@@ -109,9 +73,9 @@ updateCharBaseParts(char)
 -- Anti-AFK (Runs on Load)
 local idleConn = plr.Idled:Connect(function()
     VirtualUser:CaptureController()
-    VirtualUser:ClickButton2(Vector2_zero)
+    VirtualUser:ClickButton2(Vector2.zero)
 end)
-table_insert(scriptConnections, idleConn)
+table.insert(scriptConnections, idleConn)
 
 -- ==========================
 -- REMOTES & GAME FOLDERS
@@ -147,7 +111,7 @@ local charConn = plr.CharacterAdded:Connect(function(newChar)
     currentGrazeTarget = nil
     currentManatitePayload = nil
 end)
-table_insert(scriptConnections, charConn)
+table.insert(scriptConnections, charConn)
 
 -- ==========================
 -- STATE VARIABLES
@@ -301,7 +265,7 @@ local WEBHOOK_URL = loadWebhook()
 local function get2DDistance(p1, p2)
     local dx = p1.X - p2.X
     local dz = p1.Z - p2.Z
-    return math_sqrt(dx * dx + dz * dz)
+    return math.sqrt(dx * dx + dz * dz)
 end
 
 -- Squared 2D Distance (Zero allocations, avoids math.sqrt)
@@ -354,7 +318,7 @@ local function getNodePosition(node)
 end
 
 local function getGrassNodes()
-    local now = os_clock()
+    local now = os.clock()
     if not cachedGrassFolder or not cachedGrassFolder.Parent then
         cachedGrassFolder = workspace:FindFirstChild("CowVirtualGrass")
     end
@@ -366,7 +330,7 @@ local function getGrassNodes()
 end
 
 local function getFishingSpots()
-    local now = os_clock()
+    local now = os.clock()
     if now - lastFishingSpotsCacheTime > 5 or #cachedFishingSpots == 0 then
         lastFishingSpotsCacheTime = now
         if fishingSpotsFolder and fishingSpotsFolder.Parent then
@@ -388,11 +352,11 @@ local function getCleanGrassName(nodeName)
     local cached = nodeCleanNameCache[nodeName]
     if cached ~= nil then return cached end
 
-    local cleanName = string_gsub(nodeName, "GrassVisual", "")
-    cleanName = string_gsub(cleanName, "^_+", "")
-    cleanName = string_gsub(cleanName, "_+$", "")
+    local cleanName = string.gsub(nodeName, "GrassVisual", "")
+    cleanName = string.gsub(cleanName, "^_+", "")
+    cleanName = string.gsub(cleanName, "_+$", "")
 
-    if string_match(cleanName, ".*Grass.*_[np%-]?%d+_[np%-]?%d+$") then
+    if string.match(cleanName, ".*Grass.*_[np%-]?%d+_[np%-]?%d+$") then
         nodeCleanNameCache[nodeName] = cleanName
         return cleanName
     else
@@ -405,8 +369,8 @@ local function getMobPayload(mobName)
     local cached = mobPayloadCache[mobName]
     if cached then return cached end
 
-    local formattedMobName = string_gsub(mobName, "(%a+)(%d+)", "%1_%2")
-    if string_find(mobName, "Spider", 1, true) then
+    local formattedMobName = string.gsub(mobName, "(%a+)(%d+)", "%1_%2")
+    if string.find(mobName, "Spider", 1, true) then
         cached = "Cavern_Mob_" .. formattedMobName
     else
         cached = "Fjord_Mob_" .. formattedMobName
@@ -472,7 +436,7 @@ local function getManatiteClustersFolder()
 end
 
 local function getManatiteModels()
-    local now = os_clock()
+    local now = os.clock()
     local folder = getManatiteClustersFolder()
     if folder and (now - lastManatiteCacheTime > 2 or #cachedManatiteModels == 0) then
         lastManatiteCacheTime = now
@@ -523,14 +487,14 @@ local function getManatitePayload(modelName)
     if cached then return cached end
 
     local payload
-    if string_find(modelName, "^Manatite_SeaMaze_") then
+    if string.find(modelName, "^Manatite_SeaMaze_") then
         payload = modelName
     else
-        local suffix = string_match(modelName, "^Manatite_(.+)$")
+        local suffix = string.match(modelName, "^Manatite_(.+)$")
         if suffix then
             payload = "Manatite_SeaMaze_" .. suffix
         else
-            local tag = string_match(modelName, "^Manatite[_-]?(.*)$")
+            local tag = string.match(modelName, "^Manatite[_-]?(.*)$")
             if tag and tag ~= "" then
                 payload = "Manatite_SeaMaze_" .. tag
             else
@@ -558,8 +522,8 @@ local function findNextAvailableManatite(searchOrigin)
     local models = getManatiteModels()
     if not models or #models == 0 then return nil, nil end
 
-    local now = os_clock()
-    local origin = searchOrigin or (root and root.Position) or Vector3_zero
+    local now = os.clock()
+    local origin = searchOrigin or (root and root.Position) or Vector3.zero
 
     if manatiteOrder == "Alphabetical (A-Z)" then
         local availableList = {}
@@ -569,7 +533,7 @@ local function findNextAvailableManatite(searchOrigin)
                 if not blacklistedAt or (now - blacklistedAt > 20) then
                     local target = getGrazeTarget(model)
                     if target and isGrazeTargetAvailable(target, model) then
-                        table_insert(availableList, {model = model, target = target})
+                        table.insert(availableList, {model = model, target = target})
                     end
                 end
             end
@@ -582,7 +546,7 @@ local function findNextAvailableManatite(searchOrigin)
     else
         local bestModel = nil
         local bestTarget = nil
-        local shortestDistSq = math_huge
+        local shortestDistSq = math.huge
 
         for _, model in ipairs(models) do
             if model.Parent then
@@ -608,26 +572,26 @@ end
 local function teleportToManatite(grazeTarget, model)
     if not root or not char or not grazeTarget or not grazeTarget.Parent then return end
 
-    local targetPos = grazeTarget.Position + Vector3_new(0, manatiteHeightOffset, 0)
+    local targetPos = grazeTarget.Position + Vector3.new(0, manatiteHeightOffset, 0)
     local modelPos = model and model:GetPivot().Position or grazeTarget.Position
-    local lookDir = Vector3_new(modelPos.X - targetPos.X, 0, modelPos.Z - targetPos.Z)
+    local lookDir = Vector3.new(modelPos.X - targetPos.X, 0, modelPos.Z - targetPos.Z)
     local targetCFrame
     if lookDir.Magnitude > 0.5 then
-        targetCFrame = CFrame_lookAt(targetPos, targetPos + lookDir.Unit)
+        targetCFrame = CFrame.lookAt(targetPos, targetPos + lookDir.Unit)
     else
-        targetCFrame = CFrame_new(targetPos)
+        targetCFrame = CFrame.new(targetPos)
     end
 
     char:PivotTo(targetCFrame)
     root.CFrame = targetCFrame
 
     for _, part in ipairs(charBaseParts) do
-        part.AssemblyLinearVelocity = Vector3_zero
-        part.AssemblyAngularVelocity = Vector3_zero
+        part.AssemblyLinearVelocity = Vector3.zero
+        part.AssemblyAngularVelocity = Vector3.zero
     end
 
     if humanoid then
-        humanoid:Move(Vector3_zero, false)
+        humanoid:Move(Vector3.zero, false)
     end
 
     if manatiteAnchorChomp then
@@ -746,7 +710,7 @@ local function findAttackWarning(mob)
         end
     end
 
-    local now = os_clock()
+    local now = os.clock()
     local lastCheck = mobWarningCheckTime[mob]
     if lastCheck and (now - lastCheck < 0.5) then
         return nil
@@ -795,7 +759,7 @@ local function isWarningActive(warning, mob)
     if not warning or not warning.Parent then return false end
 
     -- Must be strictly named CavernAttackWarning (prevents any false positives)
-    if warning.Name ~= "CavernAttackWarning" and not string_find(warning.Name, "AttackWarning", 1, true) then
+    if warning.Name ~= "CavernAttackWarning" and not string.find(warning.Name, "AttackWarning", 1, true) then
         return false
     end
 
@@ -837,32 +801,32 @@ local function cacheBackgroundElements()
 
     -- 1. Cache Water Ripples (Only if auto-fishing is enabled)
     if autoFish then
-        table_clear(activeRipples)
+        table.clear(activeRipples)
         local searchRoot = cWorld or workspace
         for _, v in ipairs(searchRoot:GetDescendants()) do
-            if string_find(v.Name, "CowFishingWaterRipples", 1, true) then
-                table_insert(activeRipples, v)
+            if string.find(v.Name, "CowFishingWaterRipples", 1, true) then
+                table.insert(activeRipples, v)
             end
         end
     else
         if #activeRipples > 0 then
-            table_clear(activeRipples)
+            table.clear(activeRipples)
         end
     end
 
     -- 2. Cache Aura Mobs (Snakes & Spiders) strictly under their clearings
     if autoChompMobs or autoDodgeMobs then
-        table_clear(activeAuraMobs)
+        table.clear(activeAuraMobs)
         local resources = getResourcesFolder()
 
         if resources then
             for _, clearing in ipairs(resources:GetChildren()) do
                 for _, v in ipairs(clearing:GetChildren()) do
                     local name = v.Name
-                    local isMob = (string_find(name, "Snake", 1, true) or string_find(name, "Spider", 1, true))
+                    local isMob = (string.find(name, "Snake", 1, true) or string.find(name, "Spider", 1, true))
                     if isMob and (v:IsA("Model") or v:IsA("BasePart")) then
                         if isMobAlive(v) then
-                            table_insert(activeAuraMobs, v)
+                            table.insert(activeAuraMobs, v)
                         end
                     end
                 end
@@ -870,7 +834,7 @@ local function cacheBackgroundElements()
         end
     else
         if #activeAuraMobs > 0 then
-            table_clear(activeAuraMobs)
+            table.clear(activeAuraMobs)
         end
     end
 end
@@ -921,8 +885,8 @@ local function updatePenVisualizer()
             penVisualizer.CastShadow = false
             penVisualizer.Parent = workspace
         end
-        penVisualizer.Size = Vector3_new(0.5, farmRadius * 2, farmRadius * 2)
-        penVisualizer.CFrame = CFrame_new(anchorPos) * CFrame_Angles(0, 0, math_rad(90))
+        penVisualizer.Size = Vector3.new(0.5, farmRadius * 2, farmRadius * 2)
+        penVisualizer.CFrame = CFrame.new(anchorPos) * CFrame.Angles(0, 0, math.rad(90))
     else
         if penVisualizer then
             penVisualizer:Destroy()
@@ -968,7 +932,7 @@ local function attachChestESP(trackedChest)
     chestBillboard.Name = "ChestESPText"
     chestBillboard.Adornee = chestPart
     chestBillboard.Size = UDim2.new(0, 150, 0, 50)
-    chestBillboard.StudsOffset = Vector3_new(0, 3, 0)
+    chestBillboard.StudsOffset = Vector3.new(0, 3, 0)
     chestBillboard.AlwaysOnTop = true
 
     local textLabel = Instance.new("TextLabel")
@@ -991,11 +955,11 @@ local function attachChestESP(trackedChest)
             cleanupChestVisuals()
             return
         end
-        local now = os_clock()
+        local now = os.clock()
         if now - lastChestUpdate > 0.1 then
             lastChestUpdate = now
             if root and chestPart.Parent then
-                local dist = math_floor(get2DDistance(root.Position, chestPart.Position))
+                local dist = math.floor(get2DDistance(root.Position, chestPart.Position))
                 if dist ~= lastDist then
                     lastDist = dist
                     textLabel.Text = "📦 Team Chest\n[" .. dist .. " studs]"
@@ -1016,7 +980,7 @@ local function updateChestESP()
         if not chestChildAddedConn then
             chestChildAddedConn = workspace.ChildAdded:Connect(function(child)
                 if child.Name == "LocalTeamChest" and showChestESP then
-                    task_wait(0.1)
+                    task.wait(0.1)
                     attachChestESP(child)
                 end
             end)
@@ -1054,7 +1018,7 @@ local function cleanupManatiteVisuals()
         if visual.highlight then pcall(function() visual.highlight:Destroy() end) end
         if visual.billboard then pcall(function() visual.billboard:Destroy() end) end
     end
-    table_clear(manatiteVisuals)
+    table.clear(manatiteVisuals)
 end
 
 local function updateManatiteESP()
@@ -1066,7 +1030,7 @@ local function updateManatiteESP()
                     cleanupManatiteVisuals()
                     return
                 end
-                local now = os_clock()
+                local now = os.clock()
                 if now - lastEspUpdate > 0.4 then
                     lastEspUpdate = now
                     local models = getManatiteModels()
@@ -1089,7 +1053,7 @@ local function updateManatiteESP()
                                     bb.Name = "ManatiteESPText"
                                     bb.Adornee = target
                                     bb.Size = UDim2.new(0, 160, 0, 40)
-                                    bb.StudsOffset = Vector3_new(0, 2.5, 0)
+                                    bb.StudsOffset = Vector3.new(0, 2.5, 0)
                                     bb.AlwaysOnTop = true
 
                                     local lbl = Instance.new("TextLabel")
@@ -1134,17 +1098,17 @@ local function HandleSpam(keyName, state, delayTime)
     delayTime = delayTime or 0.05
 
     if state then
-        task_spawn(function()
+        task.spawn(function()
             local keyCode = Enum.KeyCode[keyName]
             while spamThreads[keyName] == currentThread do
                 pcall(function()
                     VirtualInput:SendKeyEvent(true, keyCode, false, game)
                 end)
-                task_wait(delayTime)
+                task.wait(delayTime)
                 pcall(function()
                     VirtualInput:SendKeyEvent(false, keyCode, false, game)
                 end)
-                task_wait(delayTime)
+                task.wait(delayTime)
             end
         end)
     end
@@ -1155,7 +1119,7 @@ local function formatNumber(n)
     local formatted = tostring(n)
     local k
     repeat
-        formatted, k = string_gsub(formatted, "^(-?%d+)(%d%d%d)", "%1,%2")
+        formatted, k = string.gsub(formatted, "^(-?%d+)(%d%d%d)", "%1,%2")
     until k == 0
     return formatted
 end
@@ -1215,7 +1179,7 @@ local function checkAuctionLots()
                     Body = HttpService:JSONEncode(payload)
                 })
 
-                task_wait(0.5)
+                task.wait(0.5)
             end
         end
     end
@@ -1224,7 +1188,7 @@ end
 local function debouncedCheckAuctionLots()
     if isCheckingAuction then return end
     isCheckingAuction = true
-    task_spawn(function()
+    task.spawn(function()
         checkAuctionLots()
         isCheckingAuction = false
     end)
@@ -1252,13 +1216,13 @@ local function updateHeartbeatConnection()
                     return
                 end
 
-                local now = os_clock()
+                local now = os.clock()
                 local rootPos = root.Position
 
                 -- Targeted background caches refresh
                 if (autoFish or autoChompMobs or autoDodgeMobs) and (now - lastBackgroundCacheTime > 1.5) then
                     lastBackgroundCacheTime = now
-                    task_spawn(cacheBackgroundElements)
+                    task.spawn(cacheBackgroundElements)
                 end
 
                 -- Weak blacklist sweep
@@ -1305,17 +1269,17 @@ local function updateHeartbeatConnection()
                         -- Calculate horizontal retreat direction directly away from the attacking mob
                         local attackOrigin = getMobAttackOrigin(attackingMobInstance) or (preDodgePos or rootPos)
                         local awayDir = rootPos - attackOrigin
-                        local away2D = Vector3_new(awayDir.X, 0, awayDir.Z)
+                        local away2D = Vector3.new(awayDir.X, 0, awayDir.Z)
 
                         if away2D.Magnitude > 0.1 then
                             away2D = away2D.Unit
                         else
                             local look = root.CFrame.LookVector
-                            away2D = Vector3_new(-look.X, 0, -look.Z)
+                            away2D = Vector3.new(-look.X, 0, -look.Z)
                             if away2D.Magnitude > 0.1 then
                                 away2D = away2D.Unit
                             else
-                                away2D = Vector3_new(0, 0, 1)
+                                away2D = Vector3.new(0, 0, 1)
                             end
                         end
 
@@ -1335,9 +1299,9 @@ local function updateHeartbeatConnection()
                             elseif dodgeMethod == "Teleport Away (Surface)" then
                                 local retreatOffset = away2D * dodgeRetreatDistance
                                 local retreatTarget = preDodgePos + retreatOffset
-                                local rayHit = workspace:Raycast(retreatTarget + Vector3_new(0, 10, 0), Vector3_new(0, -30, 0), raycastParams)
+                                local rayHit = workspace:Raycast(retreatTarget + Vector3.new(0, 10, 0), Vector3.new(0, -30, 0), raycastParams)
                                 local groundY = rayHit and (rayHit.Position.Y + 3) or preDodgePos.Y
-                                local targetCFrame = CFrame_new(Vector3_new(retreatTarget.X, groundY, retreatTarget.Z)) * preDodgeCFrame.Rotation
+                                local targetCFrame = CFrame.new(Vector3.new(retreatTarget.X, groundY, retreatTarget.Z)) * preDodgeCFrame.Rotation
                                 char:PivotTo(targetCFrame)
                                 root.CFrame = targetCFrame
                                 root.Anchored = false
@@ -1347,16 +1311,16 @@ local function updateHeartbeatConnection()
                                 lastSurfacePos = rootPos
 
                                 local retreatOffset = away2D * dodgeRetreatDistance
-                                local targetPos = lastSurfacePos + retreatOffset - Vector3_new(0, undergroundDepth, 0)
-                                undergroundCFrame = CFrame_new(targetPos) * (lastSurfaceCFrame.Rotation)
+                                local targetPos = lastSurfacePos + retreatOffset - Vector3.new(0, undergroundDepth, 0)
+                                undergroundCFrame = CFrame.new(targetPos) * (lastSurfaceCFrame.Rotation)
 
                                 char:PivotTo(undergroundCFrame)
                                 root.CFrame = undergroundCFrame
                                 root.Anchored = true
 
                                 for _, part in ipairs(charBaseParts) do
-                                    part.AssemblyLinearVelocity = Vector3_zero
-                                    part.AssemblyAngularVelocity = Vector3_zero
+                                    part.AssemblyLinearVelocity = Vector3.zero
+                                    part.AssemblyAngularVelocity = Vector3.zero
                                     if part ~= root then
                                         part.CanCollide = false
                                     end
@@ -1388,14 +1352,14 @@ local function updateHeartbeatConnection()
                                     humanoid:Move(away2D, false)
                                     humanoid:MoveTo(retreatTarget)
                                 else
-                                    humanoid:Move(Vector3_zero, false)
+                                    humanoid:Move(Vector3.zero, false)
                                 end
                             end
                         elseif dodgeMethod == "Underground" and isUnderground and undergroundCFrame then
                             char:PivotTo(undergroundCFrame)
                             root.CFrame = undergroundCFrame
-                            root.AssemblyLinearVelocity = Vector3_zero
-                            root.AssemblyAngularVelocity = Vector3_zero
+                            root.AssemblyLinearVelocity = Vector3.zero
+                            root.AssemblyAngularVelocity = Vector3.zero
                         end
                     else
                         -- No active warning seen this frame: check if currently dodging
@@ -1404,14 +1368,14 @@ local function updateHeartbeatConnection()
                                 -- Safe! Attack has completely ended
                                 if dodgeMethod == "Underground" and isUnderground then
                                     if lastSurfaceCFrame then
-                                        local surfaceTarget = lastSurfaceCFrame + Vector3_new(0, 0.5, 0)
+                                        local surfaceTarget = lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
                                         char:PivotTo(surfaceTarget)
                                         root.CFrame = surfaceTarget
                                     end
                                     root.Anchored = false
                                     for _, part in ipairs(charBaseParts) do
-                                        part.AssemblyLinearVelocity = Vector3_zero
-                                        part.AssemblyAngularVelocity = Vector3_zero
+                                        part.AssemblyLinearVelocity = Vector3.zero
+                                        part.AssemblyAngularVelocity = Vector3.zero
                                         if part.Name == "HumanoidRootPart" or part.Name == "UpperTorso" or part.Name == "Torso" then
                                             part.CanCollide = true
                                         end
@@ -1425,7 +1389,7 @@ local function updateHeartbeatConnection()
                                     if humanoid then
                                         humanoid.WalkSpeed = originalWalkSpeed or 16
                                         if not farmOn then
-                                            humanoid:Move(Vector3_zero, false)
+                                            humanoid:Move(Vector3.zero, false)
                                         end
                                     end
                                 end
@@ -1457,18 +1421,18 @@ local function updateHeartbeatConnection()
                                         local currentDist = get2DDistance(rootPos, attackOrigin)
                                         if currentDist < dodgeRetreatDistance then
                                             local awayDir = rootPos - attackOrigin
-                                            local away2D = Vector3_new(awayDir.X, 0, awayDir.Z)
-                                            away2D = (away2D.Magnitude > 0.1) and away2D.Unit or Vector3_new(0, 0, 1)
+                                            local away2D = Vector3.new(awayDir.X, 0, awayDir.Z)
+                                            away2D = (away2D.Magnitude > 0.1) and away2D.Unit or Vector3.new(0, 0, 1)
                                             humanoid:Move(away2D, false)
                                         else
-                                            humanoid:Move(Vector3_zero, false)
+                                            humanoid:Move(Vector3.zero, false)
                                         end
                                     end
                                 elseif dodgeMethod == "Underground" and isUnderground and undergroundCFrame then
                                     char:PivotTo(undergroundCFrame)
                                     root.CFrame = undergroundCFrame
-                                    root.AssemblyLinearVelocity = Vector3_zero
-                                    root.AssemblyAngularVelocity = Vector3_zero
+                                    root.AssemblyLinearVelocity = Vector3.zero
+                                    root.AssemblyAngularVelocity = Vector3.zero
                                 end
                             end
                         end
@@ -1477,14 +1441,14 @@ local function updateHeartbeatConnection()
                     -- autoDodgeMobs was disabled while dodging
                     if isUnderground then
                         if lastSurfaceCFrame then
-                            local surfaceTarget = lastSurfaceCFrame + Vector3_new(0, 0.5, 0)
+                            local surfaceTarget = lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
                             char:PivotTo(surfaceTarget)
                             root.CFrame = surfaceTarget
                         end
                         root.Anchored = false
                         for _, part in ipairs(charBaseParts) do
-                            part.AssemblyLinearVelocity = Vector3_zero
-                            part.AssemblyAngularVelocity = Vector3_zero
+                            part.AssemblyLinearVelocity = Vector3.zero
+                            part.AssemblyAngularVelocity = Vector3.zero
                             if part.Name == "HumanoidRootPart" or part.Name == "UpperTorso" or part.Name == "Torso" then
                                 part.CanCollide = true
                             end
@@ -1497,7 +1461,7 @@ local function updateHeartbeatConnection()
                     if humanoid then
                         humanoid.WalkSpeed = originalWalkSpeed or 16
                         if not farmOn then
-                            humanoid:Move(Vector3_zero, false)
+                            humanoid:Move(Vector3.zero, false)
                         end
                     end
                     isDodging = false
@@ -1512,9 +1476,9 @@ local function updateHeartbeatConnection()
                     local targetPos
 
                     if pattern == "Guided Zigzag (Nodes)" then
-                        local ghostX = math_sin(patternTimer * 1.3) * farmRadius
-                        local ghostZ = math_cos(patternTimer * 1.9) * farmRadius
-                        local ghostPos = anchorPos + Vector3_new(ghostX, 0, ghostZ)
+                        local ghostX = math.sin(patternTimer * 1.3) * farmRadius
+                        local ghostZ = math.cos(patternTimer * 1.9) * farmRadius
+                        local ghostPos = anchorPos + Vector3.new(ghostX, 0, ghostZ)
 
                         local needNewNode = false
                         if not currentTargetNode or not currentTargetNode.Parent then
@@ -1527,7 +1491,7 @@ local function updateHeartbeatConnection()
                         end
 
                         if needNewNode then
-                            local nearestDistSq = math_huge
+                            local nearestDistSq = math.huge
                             local nearestNode = nil
                             local grassNodes = getGrassNodes()
 
@@ -1555,8 +1519,8 @@ local function updateHeartbeatConnection()
                             else
                                 currentTargetNode = nil
                                 if not nextRandomPos or get2DDistanceSq(rootPos, nextRandomPos) < 25 then
-                                    local angle = math_random() * TWO_PI
-                                    nextRandomPos = anchorPos + Vector3_new(math_cos(angle) * farmRadius, 0, math_sin(angle) * farmRadius)
+                                    local angle = math.random() * (math.pi * 2)
+                                    nextRandomPos = anchorPos + Vector3.new(math.cos(angle) * farmRadius, 0, math.sin(angle) * farmRadius)
                                 end
                             end
                         end
@@ -1568,20 +1532,20 @@ local function updateHeartbeatConnection()
                         end
 
                     elseif pattern == "Circle" then
-                        local currentRadius = farmRadius * math_abs(math_sin(patternTimer * 0.2))
+                        local currentRadius = farmRadius * math.abs(math.sin(patternTimer * 0.2))
                         local angle = patternTimer * 1.5
-                        targetPos = anchorPos + Vector3_new(math_cos(angle) * currentRadius, 0, math_sin(angle) * currentRadius)
+                        targetPos = anchorPos + Vector3.new(math.cos(angle) * currentRadius, 0, math.sin(angle) * currentRadius)
 
                     elseif pattern == "Square" then
-                        targetPos = anchorPos + Vector3_new(math_sin(patternTimer * 1.8) * farmRadius, 0, math_cos(patternTimer * 0.2) * farmRadius)
+                        targetPos = anchorPos + Vector3.new(math.sin(patternTimer * 1.8) * farmRadius, 0, math.cos(patternTimer * 0.2) * farmRadius)
 
                     elseif pattern == "Zigzag" then
-                        targetPos = anchorPos + Vector3_new(math_sin(patternTimer * 1.3) * farmRadius, 0, math_cos(patternTimer * 1.9) * farmRadius)
+                        targetPos = anchorPos + Vector3.new(math.sin(patternTimer * 1.3) * farmRadius, 0, math.cos(patternTimer * 1.9) * farmRadius)
 
                     elseif pattern == "Random" then
                         if not nextRandomPos or get2DDistanceSq(rootPos, nextRandomPos) < 25 then
-                            local angle = math_random() * TWO_PI
-                            nextRandomPos = anchorPos + Vector3_new(math_cos(angle) * farmRadius, 0, math_sin(angle) * farmRadius)
+                            local angle = math.random() * (math.pi * 2)
+                            nextRandomPos = anchorPos + Vector3.new(math.cos(angle) * farmRadius, 0, math.sin(angle) * farmRadius)
                         end
                         targetPos = nextRandomPos
                     end
@@ -1591,8 +1555,8 @@ local function updateHeartbeatConnection()
                         local offZ = targetPos.Z - anchorPos.Z
                         local distSq = offX * offX + offZ * offZ
                         if distSq > farmRadiusSq then
-                            local scale = farmRadius / math_sqrt(distSq)
-                            targetPos = Vector3_new(anchorPos.X + offX * scale, targetPos.Y, anchorPos.Z + offZ * scale)
+                            local scale = farmRadius / math.sqrt(distSq)
+                            targetPos = Vector3.new(anchorPos.X + offX * scale, targetPos.Y, anchorPos.Z + offZ * scale)
                         end
 
                         humanoid:MoveTo(targetPos)
@@ -1618,7 +1582,7 @@ local function updateHeartbeatConnection()
                                             local lookDx = mobPos.X - rootPos.X
                                             local lookDz = mobPos.Z - rootPos.Z
                                             if (lookDx * lookDx + lookDz * lookDz) > 0.01 then
-                                                root.CFrame = CFrame_lookAt(rootPos, Vector3_new(mobPos.X, rootPos.Y, mobPos.Z))
+                                                root.CFrame = CFrame.lookAt(rootPos, Vector3.new(mobPos.X, rootPos.Y, mobPos.Z))
                                             end
                                         end
                                         chompEvent:FireServer(payloadName)
@@ -1642,14 +1606,14 @@ local function updateHeartbeatConnection()
                         if hit and hit.Instance then
                             local actualNode = hit.Instance
 
-                            if not string_find(actualNode.Name, "Grass", 1, true) and actualNode.Parent then
-                                if string_find(actualNode.Parent.Name, "Grass", 1, true) then
+                            if not string.find(actualNode.Name, "Grass", 1, true) and actualNode.Parent then
+                                if string.find(actualNode.Parent.Name, "Grass", 1, true) then
                                     actualNode = actualNode.Parent
                                 end
                             end
 
                             local nodeName = actualNode.Name
-                            if string_find(nodeName, "Grass", 1, true) then
+                            if string.find(nodeName, "Grass", 1, true) then
                                 local cleanName = getCleanGrassName(nodeName)
                                 if cleanName then
                                     if cleanName ~= lastChompedNode or (now - chompCooldown > 1) then
@@ -1731,7 +1695,7 @@ local function updateHeartbeatConnection()
                             end
                         end
                     else
-                        local targetPos = currentGrazeTarget.Position + Vector3_new(0, manatiteHeightOffset, 0)
+                        local targetPos = currentGrazeTarget.Position + Vector3.new(0, manatiteHeightOffset, 0)
 
                         if get3DDistanceSq(rootPos, targetPos) > 36 then
                             if (now - lastManatiteTeleportTime > 0.4) then
@@ -1758,11 +1722,11 @@ local function updateHeartbeatConnection()
             HeartbeatConnection = nil
         end
         if isUnderground and root and lastSurfaceCFrame then
-            root.CFrame = lastSurfaceCFrame + Vector3_new(0, 0.5, 0)
+            root.CFrame = lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
             root.Anchored = false
             for _, part in ipairs(charBaseParts) do
-                part.AssemblyLinearVelocity = Vector3_zero
-                part.AssemblyAngularVelocity = Vector3_zero
+                part.AssemblyLinearVelocity = Vector3.zero
+                part.AssemblyAngularVelocity = Vector3.zero
                 if part.Name == "HumanoidRootPart" or part.Name == "UpperTorso" or part.Name == "Torso" then
                     part.CanCollide = true
                 end
@@ -1782,7 +1746,7 @@ local function updateHeartbeatConnection()
         if not autoManatite and manatiteAnchorChomp and root then
             pcall(function() root.Anchored = false end)
         end
-        if not farmOn and humanoid then humanoid:Move(Vector3_zero, false) end
+        if not farmOn and humanoid then humanoid:Move(Vector3.zero, false) end
     end
 end
 
@@ -1858,8 +1822,8 @@ MainTab:CreateToggle({
                 char:PivotTo(preManatiteCFrame)
                 root.CFrame = preManatiteCFrame
                 for _, part in ipairs(charBaseParts) do
-                    part.AssemblyLinearVelocity = Vector3_zero
-                    part.AssemblyAngularVelocity = Vector3_zero
+                    part.AssemblyLinearVelocity = Vector3.zero
+                    part.AssemblyAngularVelocity = Vector3.zero
                 end
             end
             currentManatiteModel = nil
@@ -1898,10 +1862,10 @@ MainTab:CreateToggle({
         autoDodgeMobs = Value
         if not Value then
             if isUnderground and root and lastSurfaceCFrame then
-                root.CFrame = lastSurfaceCFrame + Vector3_new(0, 0.5, 0)
+                root.CFrame = lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
                 root.Anchored = false
-                root.AssemblyLinearVelocity = Vector3_zero
-                root.AssemblyAngularVelocity = Vector3_zero
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
                 for _, part in ipairs(charBaseParts) do
                     if part.Name == "HumanoidRootPart" or part.Name == "UpperTorso" or part.Name == "Torso" then
                         part.CanCollide = true
@@ -1918,7 +1882,7 @@ MainTab:CreateToggle({
                 currentAttackingMob = nil
                 preDodgePos = nil
                 preDodgeCFrame = nil
-                if not farmOn and humanoid then humanoid:Move(Vector3_zero, false) end
+                if not farmOn and humanoid then humanoid:Move(Vector3.zero, false) end
             end
         end
         updateHeartbeatConnection()
@@ -2055,7 +2019,7 @@ MainTab:CreateDropdown({
     Callback = function(Option)
         dodgeMethod = type(Option) == "table" and Option[1] or Option
         if dodgeMethod ~= "Underground" and isUnderground and root and lastSurfaceCFrame then
-            root.CFrame = lastSurfaceCFrame + Vector3_new(0, 0.5, 0)
+            root.CFrame = lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
             root.Anchored = false
             isUnderground = false
         end
@@ -2224,17 +2188,17 @@ ScannerTab:CreateToggle({
                 local lot = skinAuction:FindFirstChild(lotName)
                 if lot then
                     local conn = lot:GetAttributeChangedSignal("SkinId"):Connect(function()
-                        task_wait(1)
+                        task.wait(1)
                         if scannerRunning then debouncedCheckAuctionLots() end
                     end)
-                    table_insert(auctionConnections, conn)
+                    table.insert(auctionConnections, conn)
                 end
             end
 
             debouncedCheckAuctionLots()
         else
             for _, conn in ipairs(auctionConnections) do conn:Disconnect() end
-            table_clear(auctionConnections)
+            table.clear(auctionConnections)
         end
     end,
 })
@@ -2286,7 +2250,7 @@ SettingsTab:CreateButton({
     Name = "Close Script & Destroy UI",
     Callback = function()
         if scannerRunning and httpRequest and WEBHOOK_URL ~= "" then
-            task_spawn(function()
+            task.spawn(function()
                 httpRequest({
                     Url = WEBHOOK_URL,
                     Method = "POST",
@@ -2316,10 +2280,10 @@ SettingsTab:CreateButton({
         currentGrazeTarget = nil
         currentManatitePayload = nil
         if isUnderground and root and lastSurfaceCFrame then
-            root.CFrame = lastSurfaceCFrame + Vector3_new(0, 0.5, 0)
+            root.CFrame = lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
             root.Anchored = false
-            root.AssemblyLinearVelocity = Vector3_zero
-            root.AssemblyAngularVelocity = Vector3_zero
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
             isUnderground = false
         end
         if isDodging then
@@ -2337,12 +2301,12 @@ SettingsTab:CreateButton({
         spamThreads.Q = spamThreads.Q + 1
 
         for _, conn in ipairs(auctionConnections) do conn:Disconnect() end
-        table_clear(auctionConnections)
+        table.clear(auctionConnections)
 
         for _, conn in ipairs(scriptConnections) do
             if conn and conn.Disconnect then conn:Disconnect() end
         end
-        table_clear(scriptConnections)
+        table.clear(scriptConnections)
 
         pcall(function() RunService:Set3dRenderingEnabled(true) end)
         if setfpscap then pcall(function() setfpscap(60) end) end
@@ -2351,7 +2315,7 @@ SettingsTab:CreateButton({
             HeartbeatConnection:Disconnect()
             HeartbeatConnection = nil
         end
-        pcall(function() if humanoid then humanoid:Move(Vector3_zero, false) end end)
+        pcall(function() if humanoid then humanoid:Move(Vector3.zero, false) end end)
 
         Window:Unload()
     end,
