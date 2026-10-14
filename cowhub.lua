@@ -403,23 +403,11 @@ local function getGrassNodes()
     return cachedGrassNodes
 end
 
-local function getFishingSpotsFolder()
-    if fishingSpotsFolder and fishingSpotsFolder.Parent then return fishingSpotsFolder end
-    fishingSpotsFolder = workspace:FindFirstChild("Fishing Spots") or workspace:FindFirstChild("FishingSpots")
-    if not fishingSpotsFolder then
-        local cWorld = cowWorldRef and cowWorldRef.Parent and cowWorldRef or workspace:FindFirstChild("CowWorld")
-        if cWorld then
-            fishingSpotsFolder = cWorld:FindFirstChild("Fishing Spots", true) or cWorld:FindFirstChild("FishingSpots", true)
-        end
-    end
-    return fishingSpotsFolder
-end
-
 local function getFishingSpots()
     local now = os.clock()
     if now - lastFishingSpotsCacheTime > 5 or #cachedFishingSpots == 0 then
         lastFishingSpotsCacheTime = now
-        local folder = getFishingSpotsFolder()
+        local folder = fishingSpotsFolder and fishingSpotsFolder.Parent and fishingSpotsFolder or workspace:FindFirstChild("Fishing Spots")
         if folder then
             table.clear(cachedFishingSpots)
             for _, spot in ipairs(folder:GetChildren()) do
@@ -435,14 +423,7 @@ end
 local function getSpotPosition(spot)
     local pos = fishingSpotPosCache[spot]
     if pos then return pos end
-    if spot:IsA("Model") then
-        pos = spot:GetPivot().Position
-    elseif spot:IsA("BasePart") then
-        pos = spot.Position
-    else
-        local bp = spot:FindFirstChildWhichIsA("BasePart", true)
-        if bp then pos = bp.Position end
-    end
+    pos = spot:IsA("Model") and spot:GetPivot().Position or (spot:IsA("BasePart") and spot.Position)
     if pos then
         fishingSpotPosCache[spot] = pos
     end
@@ -1664,12 +1645,13 @@ local function cacheBackgroundElements()
 
     -- 1. Cache Water Ripples (Only if auto-fishing is enabled)
     if autoFish then
-        table.clear(activeRipples)
+        local newRipples = {}
         for _, v in ipairs(workspace:GetDescendants()) do
-            if string.find(v.Name, "FishingWaterRipples", 1, true) then
-                table.insert(activeRipples, v)
+            if string.find(v.Name, "CowFishingWaterRipples", 1, true) then
+                table.insert(newRipples, v)
             end
         end
+        activeRipples = newRipples
     else
         if #activeRipples > 0 then
             table.clear(activeRipples)
@@ -1720,23 +1702,7 @@ local ripplePosCache = setmetatable({}, { __mode = "k" })
 local function getRipplePosition(ripple)
     local pos = ripplePosCache[ripple]
     if pos then return pos end
-    if ripple:IsA("Model") then
-        pos = ripple:GetPivot().Position
-    elseif ripple:IsA("BasePart") then
-        pos = ripple.Position
-    elseif ripple:IsA("Attachment") then
-        pos = ripple.WorldPosition
-    else
-        local bp = ripple:FindFirstChildWhichIsA("BasePart", true)
-        if bp then
-            pos = bp.Position
-        else
-            local att = ripple:FindFirstChildWhichIsA("Attachment", true)
-            if att then
-                pos = att.WorldPosition
-            end
-        end
-    end
+    pos = ripple:IsA("Model") and ripple:GetPivot().Position or (ripple:IsA("BasePart") and ripple.Position)
     if pos then
         ripplePosCache[ripple] = pos
     end
@@ -1747,48 +1713,21 @@ local function isSpotAvailable(spot)
     local spotPos = getSpotPosition(spot)
     if not spotPos then return false end
 
-    local availAttr = spot:GetAttribute("Available")
-    if availAttr == false then
-        return false
-    end
-
-    -- 1. Check direct child/descendant ripple on spot
-    local directRipple = spot:FindFirstChild("CowFishingWaterRipples", true) or spot:FindFirstChild("FishingWaterRipples", true)
-    if directRipple then
-        local surfaceGui = directRipple:FindFirstChild("FishingWaterSurface", true) or directRipple:FindFirstChildWhichIsA("SurfaceGui", true)
-        if surfaceGui then
-            if surfaceGui.Enabled then return true end
-        else
-            return true
-        end
-    end
-
-    -- Direct SurfaceGui on spot
-    local directSurface = spot:FindFirstChild("FishingWaterSurface", true) or spot:FindFirstChildWhichIsA("SurfaceGui", true)
-    if directSurface and directSurface:IsA("SurfaceGui") then
-        if directSurface.Enabled then return true end
-    end
-
-    -- 2. Check active ripples across workspace
     for _, ripple in ipairs(activeRipples) do
         if ripple.Parent then
-            local isDirectChild = ripple:IsDescendantOf(spot) or spot:IsDescendantOf(ripple)
             local ripplePos = getRipplePosition(ripple)
 
-            if isDirectChild or (ripplePos and (get2DDistanceSq(spotPos, ripplePos) <= 225 or get3DDistanceSq(spotPos, ripplePos) <= 256)) then
-                local surfaceGui = ripple:FindFirstChild("FishingWaterSurface", true) or ripple:FindFirstChildWhichIsA("SurfaceGui", true)
-                if surfaceGui then
-                    if surfaceGui.Enabled then
-                        return true
-                    end
-                else
+            if ripplePos and (get3DDistanceSq(spotPos, ripplePos) <= 49 or ripple:IsDescendantOf(spot)) then
+                local surfaceGui = ripple:FindFirstChild("FishingWaterSurface") or ripple:FindFirstChild("FishingWaterSurface", true)
+                if surfaceGui and surfaceGui.Enabled then
                     return true
                 end
             end
         end
     end
 
-    if availAttr == true then
+    local directSurface = spot:FindFirstChild("FishingWaterSurface") or spot:FindFirstChild("FishingWaterSurface", true)
+    if directSurface and directSurface.Enabled then
         return true
     end
 
