@@ -278,6 +278,7 @@ local dodgeLingerDelay = 0.6
 local prioritizeMobsOverManatite = true
 local MANATITE_THREAT_RADIUS_SQ = 100 -- 10 studs squared (10 * 10)
 local lastWarningSeenTime = 0
+local lastTeleportDodgeDist = 0
 local notifyOnDodge = false
 
 -- Spammer Variables
@@ -1269,6 +1270,112 @@ local function isWarningActive(warning, mob)
     return false
 end
 
+-- Calculates an unobstructed, safe surface retreat position avoiding walls, rocks, and cave ceilings
+local function findSafeDodgePosition(originPos, preCFrame, away2D, maxDist, preferredAngle, attackingMob)
+    if not originPos or not preCFrame or not away2D then return nil, 0, nil end
+
+    local filterList = {char}
+    if attackingMob and attackingMob.Parent then
+        table.insert(filterList, attackingMob)
+    end
+
+    local dodgeRayParams = RaycastParams.new()
+    dodgeRayParams.FilterType = Enum.RaycastFilterType.Exclude
+    dodgeRayParams.FilterDescendantsInstances = filterList
+
+    -- Sample current floor height to preserve relative humanoid root elevation
+    local groundSample = workspace:Raycast(originPos + Vector3.new(0, 1, 0), Vector3.new(0, -6, 0), dodgeRayParams)
+    local rootHeightOffset = groundSample and (originPos.Y - groundSample.Position.Y) or 2.8
+    if rootHeightOffset < 1.0 or rootHeightOffset > 5.0 then
+        rootHeightOffset = 2.8
+    end
+
+    local rayOrigin = originPos + Vector3.new(0, 0.5, 0)
+
+    -- Build candidate escape angles (preferred angle first, then radial spread up to 135 deg)
+    local candidateAngles = {}
+    if preferredAngle and preferredAngle > 0 then
+        table.insert(candidateAngles, preferredAngle)
+        table.insert(candidateAngles, -preferredAngle)
+    end
+
+    for _, ang in ipairs({0, 30, -30, 45, -45, 60, -60, 75, -75, 90, -90, 115, -115, 135, -135}) do
+        if not preferredAngle or preferredAngle <= 0 or (math.abs(ang - preferredAngle) > 0.01 and math.abs(ang + preferredAngle) > 0.01) then
+            table.insert(candidateAngles, ang)
+        end
+    end
+
+    local bestCandidate = nil
+    local bestScore = -math.huge
+
+    for _, angle in ipairs(candidateAngles) do
+        local rad = math.rad(angle)
+        local cosA = math.cos(rad)
+        local sinA = math.sin(rad)
+        local candDir = Vector3.new(away2D.X * cosA - away2D.Z * sinA, 0, away2D.X * sinA + away2D.Z * cosA)
+
+        if candDir.Magnitude > 0.01 then
+            candDir = candDir.Unit
+
+            -- 1. Horizontal obstacle & wall clearance check
+            local wallHit = workspace:Raycast(rayOrigin, candDir * maxDist, dodgeRayParams)
+            local clearDist
+            if wallHit then
+                clearDist = wallHit.Distance - 3.5
+            else
+                clearDist = maxDist
+            end
+
+            -- Require at least 3.5 studs of clear, unobstructed travel to avoid clipping walls
+            if clearDist >= 3.5 then
+                local testDest = originPos + (candDir * clearDist)
+
+                -- 2. Destination floor check (cast down from +2 studs to prevent clipping cave ceilings)
+                local floorHit = workspace:Raycast(testDest + Vector3.new(0, 2.0, 0), Vector3.new(0, -10, 0), dodgeRayParams)
+                if floorHit then
+                    local destRootY = floorHit.Position.Y + rootHeightOffset
+
+                    -- Discard extreme vertical drops or mountain climbs (> 8 studs)
+                    if math.abs(destRootY - originPos.Y) <= 8.0 then
+                        local finalRootPos = Vector3.new(testDest.X, destRootY, testDest.Z)
+
+                        -- 3. Ceiling headroom verification (require at least 3.5 studs vertical clearance)
+                        local ceilHit = workspace:Raycast(finalRootPos, Vector3.new(0, 3.5, 0), dodgeRayParams)
+                        if not ceilHit then
+                            -- 4. Line of sight check from current position to destination
+                            local pathVec = (finalRootPos + Vector3.new(0, 0.5, 0)) - rayOrigin
+                            local pathHit = workspace:Raycast(rayOrigin, pathVec, dodgeRayParams)
+                            if not pathHit or pathHit.Distance >= (pathVec.Magnitude - 1.5) then
+                                -- 5. Score candidate: prioritize travel distance and alignment away from threat
+                                local dot = candDir:Dot(away2D)
+                                local score = clearDist * (1.0 + math.max(0, dot))
+                                if preferredAngle and preferredAngle > 0 and (math.abs(angle - preferredAngle) < 0.01 or math.abs(angle + preferredAngle) < 0.01) then
+                                    score = score * 1.15
+                                end
+
+                                if score > bestScore then
+                                    bestScore = score
+                                    bestCandidate = {
+                                        cframe = CFrame.new(finalRootPos) * preCFrame.Rotation,
+                                        distance = clearDist,
+                                        direction = candDir,
+                                    }
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if bestCandidate then
+        return bestCandidate.cframe, bestCandidate.distance, bestCandidate.direction
+    end
+
+    return nil, 0, nil
+end
+
 -- Simulates an interaction keypress ('E') without blocking the render/heartbeat loop
 local function pressE()
     if isEPressed then return end
@@ -2050,26 +2157,9 @@ local function updateHeartbeatConnection()
                                 originalWalkSpeed = humanoid.WalkSpeed
                             end
 
-                            local retreatDir = away2D
-                            if dodgeRetreatAngle > 0 then
-                                local rad = math.rad(dodgeRetreatAngle)
-                                local cosA = math.cos(rad)
-                                local sinA = math.sin(rad)
-                                local rightDir = Vector3.new(away2D.X * cosA - away2D.Z * sinA, 0, away2D.X * sinA + away2D.Z * cosA).Unit
-                                local leftDir = Vector3.new(away2D.X * cosA + away2D.Z * sinA, 0, -away2D.X * sinA + away2D.Z * cosA).Unit
-
-                                local rightHit = workspace:Raycast(rootPos, rightDir * dodgeRetreatDistance, raycastParams)
-                                local leftHit = workspace:Raycast(rootPos, leftDir * dodgeRetreatDistance, raycastParams)
-
-                                local rightDist = rightHit and (rightHit.Position - rootPos).Magnitude or dodgeRetreatDistance
-                                local leftDist = leftHit and (leftHit.Position - rootPos).Magnitude or dodgeRetreatDistance
-
-                                if rightDist >= leftDist then
-                                    retreatDir = rightDir
-                                else
-                                    retreatDir = leftDir
-                                end
-                            end
+                            local safeDodgeCFrame, safeDodgeDist, safeDodgeDir = findSafeDodgePosition(preDodgePos, preDodgeCFrame, away2D, dodgeRetreatDistance, dodgeRetreatAngle, attackingMobInstance)
+                            local retreatDir = safeDodgeDir or away2D
+                            local actualRetreatDist = safeDodgeDist or dodgeRetreatDistance
 
                             if dodgeMethod == "Run Away (Surface)" then
                                 if humanoid then
@@ -2077,20 +2167,24 @@ local function updateHeartbeatConnection()
                                 end
                                 root.Anchored = false
                             elseif dodgeMethod == "Teleport Away (Surface)" then
-                                local retreatOffset = retreatDir * dodgeRetreatDistance
-                                local retreatTarget = preDodgePos + retreatOffset
-                                local rayHit = workspace:Raycast(retreatTarget + Vector3.new(0, 10, 0), Vector3.new(0, -30, 0), raycastParams)
-                                local groundY = rayHit and (rayHit.Position.Y + 3) or preDodgePos.Y
-                                local targetCFrame = CFrame.new(Vector3.new(retreatTarget.X, groundY, retreatTarget.Z)) * preDodgeCFrame.Rotation
-                                char:PivotTo(targetCFrame)
-                                root.CFrame = targetCFrame
+                                if safeDodgeCFrame and safeDodgeDist and safeDodgeDist >= 3.5 then
+                                    char:PivotTo(safeDodgeCFrame)
+                                    root.CFrame = safeDodgeCFrame
+                                    for _, part in ipairs(charBaseParts) do
+                                        part.AssemblyLinearVelocity = Vector3.zero
+                                        part.AssemblyAngularVelocity = Vector3.zero
+                                    end
+                                    lastTeleportDodgeDist = safeDodgeDist
+                                else
+                                    lastTeleportDodgeDist = 0
+                                end
                                 root.Anchored = false
                             elseif dodgeMethod == "Underground" then
                                 isUnderground = true
                                 lastSurfaceCFrame = root.CFrame
                                 lastSurfacePos = rootPos
 
-                                local retreatOffset = retreatDir * dodgeRetreatDistance
+                                local retreatOffset = retreatDir * actualRetreatDist
                                 currentUndergroundRetreatOffset = retreatOffset
                                 local targetPos = lastSurfacePos + retreatOffset - Vector3.new(0, undergroundDepth, 0)
                                 undergroundCFrame = CFrame.new(targetPos) * (lastSurfaceCFrame.Rotation)
@@ -2110,8 +2204,8 @@ local function updateHeartbeatConnection()
 
                             if notifyOnDodge then
                                 local methodDesc = (dodgeMethod == "Run Away (Surface)" and "Running away " .. tostring(dodgeRetreatDistance) .. " studs.")
-                                    or (dodgeMethod == "Teleport Away (Surface)" and "Teleported " .. tostring(dodgeRetreatDistance) .. " studs away.")
-                                    or ("Retreated underground (" .. tostring(dodgeRetreatDistance) .. " studs away at " .. tostring(dodgeRetreatAngle) .. "°).")
+                                    or (dodgeMethod == "Teleport Away (Surface)" and (lastTeleportDodgeDist > 0 and string.format("Teleported %.1f studs away (clear path).", lastTeleportDodgeDist) or "No clear path (standing ground safely)."))
+                                    or ("Retreated underground (" .. tostring(math.floor(actualRetreatDist)) .. " studs away).")
                                 Window:Notify({
                                     Title = "Attack Warning Detected",
                                     Content = methodDesc,
@@ -2150,7 +2244,7 @@ local function updateHeartbeatConnection()
                                 if dodgeMethod == "Underground" and isUnderground then
                                     if lastSurfaceCFrame then
                                         local surfaceRetreatPos = lastSurfacePos and (lastSurfacePos + (currentUndergroundRetreatOffset or Vector3.zero)) or lastSurfaceCFrame.Position
-                                        local rayHit = workspace:Raycast(surfaceRetreatPos + Vector3.new(0, 10, 0), Vector3.new(0, -35, 0), raycastParams)
+                                        local rayHit = workspace:Raycast(surfaceRetreatPos + Vector3.new(0, 4, 0), Vector3.new(0, -20, 0), raycastParams)
                                         local groundY = rayHit and (rayHit.Position.Y + 3) or (lastSurfacePos and (lastSurfacePos.Y + 0.5) or surfaceRetreatPos.Y)
                                         local surfaceTarget = CFrame.new(Vector3.new(surfaceRetreatPos.X, groundY, surfaceRetreatPos.Z)) * lastSurfaceCFrame.Rotation
                                         char:PivotTo(surfaceTarget)
@@ -2175,6 +2269,21 @@ local function updateHeartbeatConnection()
                                         humanoid.WalkSpeed = originalWalkSpeed or 16
                                         if not farmOn then
                                             humanoid:Move(Vector3.zero, false)
+                                        end
+                                    end
+
+                                    -- Return safely to preDodgeCFrame if farming Manatite or Mithril
+                                    if dodgeMethod == "Teleport Away (Surface)" and preDodgeCFrame then
+                                        if ((manatite and manatite.auto) or (mithril and mithril.auto)) then
+                                            char:PivotTo(preDodgeCFrame)
+                                            root.CFrame = preDodgeCFrame
+                                            for _, part in ipairs(charBaseParts) do
+                                                part.AssemblyLinearVelocity = Vector3.zero
+                                                part.AssemblyAngularVelocity = Vector3.zero
+                                            end
+                                            if ((manatite and manatite.auto and manatite.anchor) or (mithril and mithril.auto and mithril.anchor)) and not hasNearbyThreat then
+                                                pcall(function() root.Anchored = true end)
+                                            end
                                         end
                                     end
                                 end
@@ -2247,6 +2356,19 @@ local function updateHeartbeatConnection()
                         humanoid.WalkSpeed = originalWalkSpeed or 16
                         if not farmOn then
                             humanoid:Move(Vector3.zero, false)
+                        end
+                    end
+                    if dodgeMethod == "Teleport Away (Surface)" and preDodgeCFrame then
+                        if ((manatite and manatite.auto) or (mithril and mithril.auto)) then
+                            char:PivotTo(preDodgeCFrame)
+                            root.CFrame = preDodgeCFrame
+                            for _, part in ipairs(charBaseParts) do
+                                part.AssemblyLinearVelocity = Vector3.zero
+                                part.AssemblyAngularVelocity = Vector3.zero
+                            end
+                            if ((manatite and manatite.auto and manatite.anchor) or (mithril and mithril.auto and mithril.anchor)) then
+                                pcall(function() root.Anchored = true end)
+                            end
                         end
                     end
                     isDodging = false
