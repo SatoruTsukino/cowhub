@@ -104,6 +104,7 @@ local charConn = plr.CharacterAdded:Connect(function(newChar)
     updateCharBaseParts(newChar)
     isDodging = false
     isUnderground = false
+    lastRecordedHearts = nil
     currentAttackingMob = nil
     preDodgePos = nil
     preDodgeCFrame = nil
@@ -280,6 +281,9 @@ local MANATITE_THREAT_RADIUS_SQ = 100 -- 10 studs squared (10 * 10)
 local lastWarningSeenTime = 0
 local lastTeleportDodgeDist = 0
 local notifyOnDodge = false
+local dodgeOnHeartsDecreased = true
+local lastRecordedHearts = nil
+local normalPlayerHearts = 0
 
 -- Spammer Variables
 local spamThreads = {E = 0, Q = 0}
@@ -1114,6 +1118,39 @@ local function getMobAttackOrigin(mob)
     return mob.Position
 end
 
+-- Checks if there is an unobstructed line of sight (no walls, terrain, or solid geometry) between origin and mob
+local function hasLineOfSight(origin, mobPos, mob)
+    if not origin or not mobPos or not mob then return false end
+
+    local dir = mobPos - origin
+    local dist = dir.Magnitude
+    if dist < 0.5 then return true end
+
+    local hit = workspace:Raycast(origin, dir, raycastParams)
+    if not hit then
+        return true
+    end
+
+    if hit.Instance and hit.Instance:IsDescendantOf(mob) then
+        return true
+    end
+
+    -- If the hit part is non-collidable and translucent/transparent (e.g. grass, aura effects, zone triggers)
+    -- cast a second ray from beyond the hit part
+    if hit.Instance and not hit.Instance.CanCollide and (hit.Instance.Transparency > 0.4 or not hit.Instance.CastShadow) then
+        local hitPos = hit.Position + (dir.Unit * 0.1)
+        local remainingDir = mobPos - hitPos
+        if remainingDir.Magnitude > 0.2 then
+            local nextHit = workspace:Raycast(hitPos, remainingDir, raycastParams)
+            if not nextHit or (nextHit.Instance and nextHit.Instance:IsDescendantOf(mob)) then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
 -- Validates whether a mob is physically alive (O(1) checks, zero GetDescendants)
 local function isMobAlive(mob)
     if not mob or not mob.Parent then return false end
@@ -1268,6 +1305,43 @@ local function isWarningActive(warning, mob)
     end
 
     return false
+end
+
+-- Reads current hearts/health attribute from LocalPlayer, Character, or Humanoid
+local function getLocalPlayerHearts()
+    if plr then
+        for _, attr in ipairs({"Hearts", "hearts", "Heart", "heart", "Health", "health"}) do
+            local val = plr:GetAttribute(attr)
+            if typeof(val) == "number" then return val, attr end
+        end
+    end
+    if char then
+        for _, attr in ipairs({"Hearts", "hearts", "Heart", "heart", "Health", "health"}) do
+            local val = char:GetAttribute(attr)
+            if typeof(val) == "number" then return val, attr end
+        end
+    end
+    if humanoid and typeof(humanoid.Health) == "number" then
+        return humanoid.Health, "HumanoidHealth"
+    end
+    return nil, nil
+end
+
+-- Reads max/normal hearts attribute from LocalPlayer, Character, or Humanoid
+local function getLocalPlayerMaxHearts()
+    if plr then
+        for _, attr in ipairs({"MaxHearts", "maxHearts", "NormalHearts", "normalHearts", "MaxHealth", "maxHealth"}) do
+            local val = plr:GetAttribute(attr)
+            if typeof(val) == "number" then return val end
+        end
+    end
+    if char then
+        for _, attr in ipairs({"MaxHearts", "maxHearts", "NormalHearts", "normalHearts", "MaxHealth", "maxHealth"}) do
+            local val = char:GetAttribute(attr)
+            if typeof(val) == "number" then return val end
+        end
+    end
+    return nil
 end
 
 -- Calculates an unobstructed, safe surface retreat position avoiding walls, rocks, and cave ceilings
@@ -2102,11 +2176,34 @@ local function updateHeartbeatConnection()
 
                 -- 0. Priority Mob Attack Warning & Dodge Logic (Run Away & Surface Retreat)
                 if autoDodgeMobs then
+                    local currentHearts = getLocalPlayerHearts()
+                    local heartsDecreased = false
+                    local heartsBelowNormal = false
+
+                    if currentHearts then
+                        if normalPlayerHearts == 0 or currentHearts > normalPlayerHearts then
+                            normalPlayerHearts = currentHearts
+                        end
+                        local maxAttr = getLocalPlayerMaxHearts()
+                        if maxAttr and maxAttr > normalPlayerHearts then
+                            normalPlayerHearts = maxAttr
+                        end
+
+                        if lastRecordedHearts ~= nil and currentHearts < lastRecordedHearts then
+                            heartsDecreased = true
+                        end
+                        if normalPlayerHearts > 0 and (normalPlayerHearts - currentHearts) > 0.05 then
+                            heartsBelowNormal = true
+                        end
+                        lastRecordedHearts = currentHearts
+                    end
+
                     local attackingMobFound = false
                     local attackingMobInstance = nil
 
                     -- Chained multi-mob dodging: scan activeAuraMobs for ANY active attack warning
                     local checkOrigin = (isDodging and preDodgePos) or (isUnderground and lastSurfacePos) or rootPos
+                    local losOrigin = checkOrigin + Vector3.new(0, 0.5, 0)
                     for _, mob in ipairs(activeAuraMobs) do
                         if mob.Parent then
                             local mobPos = getMobAttackOrigin(mob)
@@ -2114,17 +2211,22 @@ local function updateHeartbeatConnection()
                                 if isMobAlive(mob) then
                                     local warning = findAttackWarning(mob)
                                     if isWarningActive(warning, mob) then
-                                        attackingMobFound = true
-                                        attackingMobInstance = mob
-                                        currentAttackingMob = mob
-                                        break
+                                        if hasLineOfSight(losOrigin, mobPos, mob) then
+                                            attackingMobFound = true
+                                            attackingMobInstance = mob
+                                            currentAttackingMob = mob
+                                            break
+                                        end
                                     end
                                 end
                             end
                         end
                     end
 
-                    if attackingMobFound and attackingMobInstance then
+                    local shouldRetreat = (attackingMobFound and attackingMobInstance)
+                        or (dodgeOnHeartsDecreased and (heartsDecreased or (heartsBelowNormal and not isDodging)))
+
+                    if shouldRetreat then
                         lastWarningSeenTime = now
 
                         -- Force unanchor during surface dodges so evasion is never locked
@@ -2132,8 +2234,28 @@ local function updateHeartbeatConnection()
                             pcall(function() root.Anchored = false end)
                         end
 
-                        -- Calculate horizontal retreat direction directly away from the attacking mob
-                        local attackOrigin = getMobAttackOrigin(attackingMobInstance) or (preDodgePos or rootPos)
+                        -- Determine threat position to retreat away from
+                        local attackOrigin = nil
+                        if attackingMobInstance then
+                            attackOrigin = getMobAttackOrigin(attackingMobInstance)
+                        else
+                            local closestDistSq = math.huge
+                            for _, mob in ipairs(activeAuraMobs) do
+                                if mob.Parent and isMobAlive(mob) then
+                                    local mobPos = getMobAttackOrigin(mob)
+                                    if mobPos then
+                                        local distSq = get2DDistanceSq(rootPos, mobPos)
+                                        if distSq < closestDistSq then
+                                            closestDistSq = distSq
+                                            attackingMobInstance = mob
+                                            attackOrigin = mobPos
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                        attackOrigin = attackOrigin or (preDodgePos or rootPos)
+
                         local awayDir = rootPos - attackOrigin
                         local away2D = Vector3.new(awayDir.X, 0, awayDir.Z)
 
@@ -2149,15 +2271,17 @@ local function updateHeartbeatConnection()
                             end
                         end
 
-                        if not isDodging then
-                            isDodging = true
-                            preDodgePos = rootPos
-                            preDodgeCFrame = root.CFrame
-                            if humanoid then
-                                originalWalkSpeed = humanoid.WalkSpeed
+                        if not isDodging or (isDodging and heartsDecreased) then
+                            if not isDodging then
+                                isDodging = true
+                                preDodgePos = rootPos
+                                preDodgeCFrame = root.CFrame
+                                if humanoid then
+                                    originalWalkSpeed = humanoid.WalkSpeed
+                                end
                             end
 
-                            local safeDodgeCFrame, safeDodgeDist, safeDodgeDir = findSafeDodgePosition(preDodgePos, preDodgeCFrame, away2D, dodgeRetreatDistance, dodgeRetreatAngle, attackingMobInstance)
+                            local safeDodgeCFrame, safeDodgeDist, safeDodgeDir = findSafeDodgePosition(preDodgePos or rootPos, preDodgeCFrame or root.CFrame, away2D, dodgeRetreatDistance, dodgeRetreatAngle, attackingMobInstance)
                             local retreatDir = safeDodgeDir or away2D
                             local actualRetreatDist = safeDodgeDist or dodgeRetreatDistance
 
@@ -2167,14 +2291,32 @@ local function updateHeartbeatConnection()
                                 end
                                 root.Anchored = false
                             elseif dodgeMethod == "Teleport Away (Surface)" then
+                                local targetCFrame = nil
+                                local actualDist = 0
+
                                 if safeDodgeCFrame and safeDodgeDist and safeDodgeDist >= 3.5 then
-                                    char:PivotTo(safeDodgeCFrame)
-                                    root.CFrame = safeDodgeCFrame
+                                    targetCFrame = safeDodgeCFrame
+                                    actualDist = safeDodgeDist
+                                end
+
+                                -- If hearts decreased or below normal, retreat regardless of within a wall or not
+                                if not targetCFrame and (heartsDecreased or heartsBelowNormal or (safeDodgeDist and safeDodgeDist < 3.5)) then
+                                    local fallbackOffset = retreatDir * dodgeRetreatDistance
+                                    local fallbackPos = (preDodgePos or rootPos) + fallbackOffset
+                                    local floorRay = workspace:Raycast(fallbackPos + Vector3.new(0, 2.0, 0), Vector3.new(0, -10, 0), raycastParams)
+                                    local groundY = floorRay and (floorRay.Position.Y + 2.8) or (preDodgePos and preDodgePos.Y or rootPos.Y)
+                                    targetCFrame = CFrame.new(Vector3.new(fallbackPos.X, groundY, fallbackPos.Z)) * (preDodgeCFrame and preDodgeCFrame.Rotation or root.CFrame.Rotation)
+                                    actualDist = dodgeRetreatDistance
+                                end
+
+                                if targetCFrame then
+                                    char:PivotTo(targetCFrame)
+                                    root.CFrame = targetCFrame
                                     for _, part in ipairs(charBaseParts) do
                                         part.AssemblyLinearVelocity = Vector3.zero
                                         part.AssemblyAngularVelocity = Vector3.zero
                                     end
-                                    lastTeleportDodgeDist = safeDodgeDist
+                                    lastTeleportDodgeDist = actualDist
                                 else
                                     lastTeleportDodgeDist = 0
                                 end
@@ -2184,7 +2326,7 @@ local function updateHeartbeatConnection()
                                 lastSurfaceCFrame = root.CFrame
                                 lastSurfacePos = rootPos
 
-                                local retreatOffset = retreatDir * actualRetreatDist
+                                local retreatOffset = retreatDir * (actualRetreatDist > 0 and actualRetreatDist or dodgeRetreatDistance)
                                 currentUndergroundRetreatOffset = retreatOffset
                                 local targetPos = lastSurfacePos + retreatOffset - Vector3.new(0, undergroundDepth, 0)
                                 undergroundCFrame = CFrame.new(targetPos) * (lastSurfaceCFrame.Rotation)
@@ -2203,9 +2345,10 @@ local function updateHeartbeatConnection()
                             end
 
                             if notifyOnDodge then
-                                local methodDesc = (dodgeMethod == "Run Away (Surface)" and "Running away " .. tostring(dodgeRetreatDistance) .. " studs.")
-                                    or (dodgeMethod == "Teleport Away (Surface)" and (lastTeleportDodgeDist > 0 and string.format("Teleported %.1f studs away (clear path).", lastTeleportDodgeDist) or "No clear path (standing ground safely)."))
-                                    or ("Retreated underground (" .. tostring(math.floor(actualRetreatDist)) .. " studs away).")
+                                local reason = (heartsDecreased or heartsBelowNormal) and " [Hearts Decreased]" or ""
+                                local methodDesc = (dodgeMethod == "Run Away (Surface)" and "Running away " .. tostring(dodgeRetreatDistance) .. " studs" .. reason .. ".")
+                                    or (dodgeMethod == "Teleport Away (Surface)" and (lastTeleportDodgeDist > 0 and string.format("Teleported %.1f studs away%s.", lastTeleportDodgeDist, reason) or "Retreated away."))
+                                    or ("Retreated underground (" .. tostring(math.floor(dodgeRetreatDistance)) .. " studs away" .. reason .. ").")
                                 Window:Notify({
                                     Title = "Attack Warning Detected",
                                     Content = methodDesc,
@@ -2239,7 +2382,14 @@ local function updateHeartbeatConnection()
                     else
                         -- No active warning seen this frame: check if currently dodging
                         if isDodging then
-                            if (now - lastWarningSeenTime) >= dodgeLingerDelay then
+                            -- Keep evasion alive if hearts are still below normal
+                            if dodgeOnHeartsDecreased and heartsBelowNormal then
+                                lastWarningSeenTime = now
+                            end
+
+                            local canExitDodge = ((now - lastWarningSeenTime) >= dodgeLingerDelay) and not (dodgeOnHeartsDecreased and heartsBelowNormal)
+
+                            if canExitDodge then
                                 -- Safe! Attack has completely ended
                                 if dodgeMethod == "Underground" and isUnderground then
                                     if lastSurfaceCFrame then
@@ -2473,9 +2623,10 @@ local function updateHeartbeatConnection()
 
                 local prioritizedMobThisFrame = false
 
-                -- 2. Priority Mob Aura Logic
+                -- 2. Priority Mob Aura Logic (unobstructed line of sight only)
                 if autoChompMobs then
                     local auraOrigin = isUnderground and (lastSurfacePos or rootPos) or rootPos
+                    local losOrigin = (isUnderground and lastSurfacePos or rootPos) + Vector3.new(0, 0.5, 0)
                     local closestMob = nil
                     local closestDistSq = math.huge
                     local closestMobPos = nil
@@ -2486,7 +2637,7 @@ local function updateHeartbeatConnection()
                             if mobPos then
                                 local distSq = get3DDistanceSq(auraOrigin, mobPos)
                                 if distSq <= MOB_AURA_RADIUS_SQ and distSq < closestDistSq then
-                                    if isMobAlive(mob) then
+                                    if isMobAlive(mob) and hasLineOfSight(losOrigin, mobPos, mob) then
                                         closestDistSq = distSq
                                         closestMob = mob
                                         closestMobPos = mobPos
@@ -2614,16 +2765,19 @@ local function updateHeartbeatConnection()
                     end
                 end
 
-                -- Threat clearing detection: check if any alive hostile mobs are within 10 studs
+                -- Threat clearing detection: check if any alive hostile mobs are within 10 studs with unobstructed line of sight
                 local hasNearbyThreat = false
                 if autoChompMobs and ((manatite and manatite.auto) or (mithril and mithril.auto) or farmOn) then
                     local threatOrigin = isUnderground and (lastSurfacePos or rootPos) or rootPos
+                    local losOrigin = threatOrigin + Vector3.new(0, 0.5, 0)
                     for _, mob in ipairs(activeAuraMobs) do
                         if mob.Parent and isMobAlive(mob) then
                             local mobPos = getMobAttackOrigin(mob)
                             if mobPos and get2DDistanceSq(threatOrigin, mobPos) <= MANATITE_THREAT_RADIUS_SQ then
-                                hasNearbyThreat = true
-                                break
+                                if hasLineOfSight(losOrigin, mobPos, mob) then
+                                    hasNearbyThreat = true
+                                    break
+                                end
                             end
                         end
                     end
@@ -3040,6 +3194,15 @@ MainTab:CreateToggle({
     Flag = "Toggle_DodgeNotify",
     Callback = function(Value)
         notifyOnDodge = Value
+    end,
+})
+
+MainTab:CreateToggle({
+    Name = "Retreat on Hearts Decreased",
+    CurrentValue = true,
+    Flag = "Toggle_DodgeHearts",
+    Callback = function(Value)
+        dodgeOnHeartsDecreased = Value
     end,
 })
 
