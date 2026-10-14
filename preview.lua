@@ -10,7 +10,7 @@ if queueOnTeleport then
     pcall(function()
         queueOnTeleport([[
             task.wait(3)
-            loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/preview.lua'))()
+            loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/cowhub.lua'))()
         ]])
     end)
 end
@@ -112,6 +112,10 @@ local charConn = plr.CharacterAdded:Connect(function(newChar)
     lastSurfacePos = nil
     undergroundCFrame = nil
     currentUndergroundRetreatOffset = nil
+    isAerialRetreat = false
+    aerialRetreatCFrame = nil
+    preAerialCFrame = nil
+    aerialRetreatStartTime = 0
     if manatite then
         manatite.model = nil
         manatite.target = nil
@@ -252,6 +256,7 @@ local castCooldown = 0
 local lastFishingSearchTime = 0
 local activeRipples = setmetatable({}, { __mode = "k" })
 local rippleConnections = {}
+local ripplePosCache = setmetatable({}, { __mode = "kv" })
 local activeAuraMobs = {}
 local mithrilCaveMobSet = setmetatable({}, { __mode = "k" })
 local spiderIdentifierCache = setmetatable({}, { __mode = "k" })
@@ -293,6 +298,16 @@ local normalPlayerArmor = 0
 local lastDamageRetreatTime = 0
 local threatStartTime = 0
 local dodgeStartTime = 0
+
+-- Aerial Retreat Variables (Low-Health Emergency Retreat)
+local isAerialRetreat = false
+local aerialRetreatStartTime = 0
+local aerialRetreatDuration = 60   -- seconds to hover before returning
+local aerialRetreatHeight = 200    -- studs above current position
+local aerialRetreatCFrame = nil    -- position locked while hovering
+local preAerialCFrame = nil        -- original position to return to
+local aerialRetreatCooldown = 10   -- minimum seconds between aerial retreats
+local lastAerialRetreatTime = 0
 
 -- Spammer Variables
 local spamThreads = {E = 0, Q = 0}
@@ -1840,7 +1855,7 @@ local function cacheBackgroundElements()
     isCachingBackground = false
 end
 
-local ripplePosCache = setmetatable({}, { __mode = "kv" })
+
 local function getRipplePosition(ripple)
     if not ripple or not ripple.Parent then
         ripplePosCache[ripple] = nil
@@ -2413,7 +2428,88 @@ local function updateHeartbeatConnection()
                 sanitizeMemory(now)
 
                 -- 0. Priority Mob Attack Warning & Dodge Logic (Run Away & Surface Retreat)
-                if autoDodgeMobs then
+                -- === AERIAL RETREAT: Low-Health Emergency Hover ===
+                -- Triggered when hearts decrease; independently of autoDodgeMobs.
+                -- Teleports player 200 studs up, pauses mining for 60s, then returns.
+                if isAerialRetreat then
+                    local elapsed = now - aerialRetreatStartTime
+                    if elapsed < aerialRetreatDuration then
+                        -- Lock the character at the aerial hover position
+                        if aerialRetreatCFrame and root and root.Parent then
+                            char:PivotTo(aerialRetreatCFrame)
+                            root.CFrame = aerialRetreatCFrame
+                            root.AssemblyLinearVelocity = Vector3.zero
+                            root.AssemblyAngularVelocity = Vector3.zero
+                        end
+                    else
+                        -- 60 seconds elapsed: return to pre-retreat position and resume mining
+                        isAerialRetreat = false
+                        if root and root.Parent then
+                            root.Anchored = false
+                            if preAerialCFrame then
+                                char:PivotTo(preAerialCFrame)
+                                root.CFrame = preAerialCFrame
+                                for _, part in ipairs(charBaseParts) do
+                                    part.AssemblyLinearVelocity = Vector3.zero
+                                    part.AssemblyAngularVelocity = Vector3.zero
+                                end
+                            end
+                        end
+                        aerialRetreatCFrame = nil
+                        preAerialCFrame = nil
+                        if notifyOnDodge then
+                            Window:Notify({
+                                Title = "Aerial Retreat: Complete",
+                                Content = "Returned to mining position. Resuming autofarm.",
+                                Duration = 2,
+                            })
+                        end
+                    end
+                elseif autoDodgeMobs and dodgeOnHeartsDecreased then
+                    -- Quick health check to trigger aerial retreat (runs even without full autoDodge scan)
+                    local currentHearts = getLocalPlayerHearts()
+                    if currentHearts and lastRecordedHearts ~= nil and currentHearts < lastRecordedHearts then
+                        if (now - lastAerialRetreatTime) >= aerialRetreatCooldown and not isAerialRetreat then
+                            -- Save position and teleport 200 studs up
+                            isAerialRetreat = true
+                            aerialRetreatStartTime = now
+                            lastAerialRetreatTime = now
+                            preAerialCFrame = root.CFrame
+                            local hoverPos = rootPos + Vector3.new(0, aerialRetreatHeight, 0)
+                            aerialRetreatCFrame = CFrame.new(hoverPos) * root.CFrame.Rotation
+                            char:PivotTo(aerialRetreatCFrame)
+                            root.CFrame = aerialRetreatCFrame
+                            root.Anchored = true
+                            for _, part in ipairs(charBaseParts) do
+                                part.AssemblyLinearVelocity = Vector3.zero
+                                part.AssemblyAngularVelocity = Vector3.zero
+                            end
+                            -- Blacklist current ore nodes so bot finds new ones on return
+                            if manatite and manatite.auto and manatite.model then
+                                manatite.blacklist[manatite.model] = now
+                                manatite.model = nil
+                                manatite.target = nil
+                                manatite.payload = nil
+                            end
+                            if mithril and mithril.auto and mithril.model then
+                                mithril.blacklist[mithril.model] = now
+                                mithril.model = nil
+                                mithril.orePart = nil
+                                mithril.payload = nil
+                            end
+                            if notifyOnDodge then
+                                Window:Notify({
+                                    Title = "Aerial Retreat: Low Health!",
+                                    Content = string.format("Retreating %d studs up for %ds. Mining paused.", aerialRetreatHeight, aerialRetreatDuration),
+                                    Duration = 3,
+                                })
+                            end
+                        end
+                    end
+                    lastRecordedHearts = currentHearts
+                end
+
+                if autoDodgeMobs and not isAerialRetreat then
                     local currentHearts = getLocalPlayerHearts()
                     local heartsDecreased = false
                     local heartsBelowNormal = false
@@ -2488,16 +2584,14 @@ local function updateHeartbeatConnection()
 
                     local damageRetreatTriggered = false
                     if dodgeOnHeartsDecreased then
-                        if heartsDecreased then
-                            damageRetreatTriggered = true
-                            lastDamageRetreatTime = now
-                        elseif armorDecreased and armorAtZero then
+                        if armorDecreased and armorAtZero then
                             damageRetreatTriggered = true
                             lastDamageRetreatTime = now
                         elseif armorAtZero and heartsBelowNormal and not isDodging and (now - lastDamageRetreatTime > 2.0) then
                             damageRetreatTriggered = true
                             lastDamageRetreatTime = now
                         end
+                        -- Note: heartsDecreased is now handled exclusively by the Aerial Retreat system above.
                     end
 
                     local shouldRetreat = (attackingMobFound and attackingMobInstance) or damageRetreatTriggered
@@ -3127,7 +3221,7 @@ local function updateHeartbeatConnection()
                 end
 
                 -- 5. Manatite Farm Logic (Sea Maze Teleport & Autochomp)
-                if manatite and manatite.auto and not isUnderground and not isDodging and not (prioritizeMobsOverManatite and hasNearbyThreat) then
+                if manatite and manatite.auto and not isUnderground and not isDodging and not isAerialRetreat and not (prioritizeMobsOverManatite and hasNearbyThreat) then
                     manatite.cleanupBlacklist(now)
 
                     local targetValid = manatite.model
@@ -3185,7 +3279,7 @@ local function updateHeartbeatConnection()
                 end
 
                 -- 6. Mithril Ore Farm Logic (Crystal Geode Ores Teleport & Autochomp)
-                if mithril and mithril.auto and not isUnderground and not isDodging and not (prioritizeMobsOverManatite and hasNearbyThreat) then
+                if mithril and mithril.auto and not isUnderground and not isDodging and not isAerialRetreat and not (prioritizeMobsOverManatite and hasNearbyThreat) then
                     mithril.cleanupBlacklist(now)
 
                     local targetValid = mithril.model
@@ -3980,6 +4074,18 @@ SettingsTab:CreateButton({
             mithril.model = nil
             mithril.orePart = nil
             mithril.payload = nil
+        end
+        if isAerialRetreat and root then
+            isAerialRetreat = false
+            root.Anchored = false
+            if preAerialCFrame then
+                pcall(function() char:PivotTo(preAerialCFrame) end)
+                pcall(function() root.CFrame = preAerialCFrame end)
+            end
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            aerialRetreatCFrame = nil
+            preAerialCFrame = nil
         end
         if isUnderground and root and lastSurfaceCFrame then
             root.CFrame = lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
