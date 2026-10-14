@@ -92,6 +92,9 @@ local raycastParams = RaycastParams.new()
 raycastParams.FilterType = Enum.RaycastFilterType.Exclude
 raycastParams.FilterDescendantsInstances = {char}
 
+local manatite
+local mithril
+
 local charConn = plr.CharacterAdded:Connect(function(newChar)
     char = newChar
     root = char:WaitForChild("HumanoidRootPart")
@@ -108,9 +111,16 @@ local charConn = plr.CharacterAdded:Connect(function(newChar)
     lastSurfacePos = nil
     undergroundCFrame = nil
     currentUndergroundRetreatOffset = nil
-    currentManatiteModel = nil
-    currentGrazeTarget = nil
-    currentManatitePayload = nil
+    if manatite then
+        manatite.model = nil
+        manatite.target = nil
+        manatite.payload = nil
+    end
+    if mithril then
+        mithril.model = nil
+        mithril.orePart = nil
+        mithril.payload = nil
+    end
 end)
 table.insert(scriptConnections, charConn)
 
@@ -134,41 +144,93 @@ local mobAuraDelay = 0.1
 local lastMoveTime = 0
 local HeartbeatConnection = nil
 
--- Manatite Farm Variables
-local autoManatite = false
-local manatiteChompDelay = 0.1
-local manatiteHeightOffset = 2.5
-local manatiteOrder = "Nearest Available" -- "Nearest Available", "Alphabetical (A-Z)"
-local manatiteAnchorChomp = false
-local returnOnDisable = false
-local preManatiteCFrame = nil
-local currentManatiteModel = nil
-local currentGrazeTarget = nil
-local currentManatitePayload = nil
-local lastManatiteChompTime = 0
-local lastManatiteTeleportTime = 0
-local lastManatiteSearchTime = 0
-local currentManatiteStartTime = 0
-local manatiteBlacklist = setmetatable({}, { __mode = "k" })
-local lastManatiteBlacklistCleanup = 0
-local manatitePayloadCache = {}
+-- Manatite Farm & ESP State Table
+manatite = {
+    auto = false,
+    delay = 0.1,
+    heightOffset = 2.5,
+    order = "Nearest Available", -- "Nearest Available", "Alphabetical (A-Z)", "Largest Crystal Yield"
+    anchor = false,
+    returnOnDisable = false,
+    preCFrame = nil,
+    model = nil,
+    target = nil,
+    payload = nil,
+    lastChompTime = 0,
+    lastTeleportTime = 0,
+    lastSearchTime = 0,
+    startTime = 0,
+    blacklist = setmetatable({}, { __mode = "k" }),
+    lastBlacklistCleanup = 0,
+    payloadCache = {},
+    showESP = false,
+    visuals = {},
+    espConn = nil,
+    cachedFolder = nil,
+    cachedModels = {},
+    lastCacheTime = 0,
+    yieldAttributes = {
+        "CrystalYield",
+        "crystalYield",
+        "Crystal_Yield",
+        "crystal_yield",
+        "Crystal Yield",
+        "Yield",
+        "yield",
+        "Crystals",
+        "crystals",
+        "CrystalAmount",
+        "crystalAmount",
+        "CrystalCount",
+        "crystalCount",
+        "RemainingYield",
+        "remainingYield",
+        "YieldRemaining",
+        "yieldRemaining",
+    },
+}
 
--- Manatite ESP Variables
-local showManatiteESP = false
-local manatiteVisuals = {}
-local manatiteEspConnection = nil
+-- Mithril Farm & ESP State Table
+mithril = {
+    auto = false,
+    delay = 0.1,
+    heightOffset = 2.5,
+    order = "Nearest Available", -- "Nearest Available", "Alphabetical (A-Z)"
+    anchor = false,
+    returnOnDisable = false,
+    preCFrame = nil,
+    model = nil,
+    orePart = nil,
+    payload = nil,
+    lastChompTime = 0,
+    lastTeleportTime = 0,
+    lastSearchTime = 0,
+    startTime = 0,
+    blacklist = setmetatable({}, { __mode = "k" }),
+    lastBlacklistCleanup = 0,
+    payloadCache = {},
+    showESP = false,
+    visuals = {},
+    espConn = nil,
+    cachedFolder = nil,
+    cachedModels = {},
+    lastCacheTime = 0,
+}
 
--- Pen ESP Variables
-local showPenESP = false
-local penVisualizer = nil
+-- Visual ESP State Tables
+local penESP = {
+    show = false,
+    visualizer = nil,
+}
 
--- Dynamic Team Chest ESP Variables
-local showChestESP = false
-local chestHighlight = nil
-local chestBillboard = nil
-local chestEspConnection = nil
-local chestChildAddedConn = nil
-local chestChildRemovedConn = nil
+local chestESP = {
+    show = false,
+    highlight = nil,
+    billboard = nil,
+    espConn = nil,
+    childAddedConn = nil,
+    childRemovedConn = nil,
+}
 
 -- Node Pathfinding & Memoization
 local nodeBlacklist = setmetatable({}, { __mode = "k" })
@@ -214,10 +276,9 @@ local dodgeDetectionRadius = 15
 local dodgeDetectionRadiusSq = 15 * 15
 local dodgeLingerDelay = 0.6
 local prioritizeMobsOverManatite = true
-local MANATITE_THREAT_RADIUS_SQ = 400 -- 20 studs squared (20 * 20)
+local MANATITE_THREAT_RADIUS_SQ = 100 -- 10 studs squared (10 * 10)
 local lastWarningSeenTime = 0
 local notifyOnDodge = false
-local mobWarningCache = setmetatable({}, { __mode = "k" })
 
 -- Spammer Variables
 local spamThreads = {E = 0, Q = 0}
@@ -401,13 +462,9 @@ end
 -- ==========================
 -- MANATITE CLUSTERS & SEA MAZE HELPERS
 -- ==========================
-local cachedManatiteFolder = nil
-local cachedManatiteModels = {}
-local lastManatiteCacheTime = 0
-
-local function getManatiteClustersFolder()
-    if cachedManatiteFolder and cachedManatiteFolder.Parent then
-        return cachedManatiteFolder
+function manatite.getFolder()
+    if manatite.cachedFolder and manatite.cachedFolder.Parent then
+        return manatite.cachedFolder
     end
 
     -- Primary: workspace.FjordDelta.ManatiteFjordCave.ManatiteMaze.ManatiteClusters
@@ -426,7 +483,7 @@ local function getManatiteClustersFolder()
             if maze then
                 local clusters = maze:FindFirstChild("ManatiteClusters") or maze:FindFirstChild("ManatiteClusters", true)
                 if clusters then
-                    cachedManatiteFolder = clusters
+                    manatite.cachedFolder = clusters
                     return clusters
                 end
             end
@@ -436,24 +493,24 @@ local function getManatiteClustersFolder()
     -- Fallback: Search workspace for "ManatiteClusters"
     local clusters = workspace:FindFirstChild("ManatiteClusters", true)
     if clusters then
-        cachedManatiteFolder = clusters
+        manatite.cachedFolder = clusters
         return clusters
     end
 
     return nil
 end
 
-local function getManatiteModels()
+function manatite.getModels()
     local now = os.clock()
-    local folder = getManatiteClustersFolder()
-    if folder and (now - lastManatiteCacheTime > 2 or #cachedManatiteModels == 0) then
-        lastManatiteCacheTime = now
-        cachedManatiteModels = folder:GetChildren()
+    local folder = manatite.getFolder()
+    if folder and (now - manatite.lastCacheTime > 2 or #manatite.cachedModels == 0) then
+        manatite.lastCacheTime = now
+        manatite.cachedModels = folder:GetChildren()
     end
-    return cachedManatiteModels
+    return manatite.cachedModels
 end
 
-local function getGrazeTarget(model)
+function manatite.getGrazeTarget(model)
     if not model or not model.Parent then return nil end
     local target = model:FindFirstChild("GrazeTarget")
     if target and target:IsA("BasePart") then
@@ -466,7 +523,136 @@ local function getGrazeTarget(model)
     return nil
 end
 
-local function isGrazeTargetAvailable(target, model)
+function manatite.getGrazeTargetYield(target, model)
+    if not target then return 0, false end
+
+    -- 1. Direct attribute check on GrazeTarget part
+    for _, name in ipairs(manatite.yieldAttributes) do
+        local val = target:GetAttribute(name)
+        if val ~= nil then
+            local num = tonumber(val)
+            if num and num == num and num ~= math.huge and num ~= -math.huge then
+                return num, true
+            end
+        end
+    end
+
+    -- 2. Dynamic attribute scan on GrazeTarget part
+    local ok, attrs = pcall(function() return target:GetAttributes() end)
+    if ok and type(attrs) == "table" then
+        -- Priority 1: contains both "crystal" and "yield" (ignoring max/total/capacity limits)
+        for name, val in pairs(attrs) do
+            local lower = string.lower(name)
+            if not (string.find(lower, "max") or string.find(lower, "total") or string.find(lower, "cap")) then
+                if string.find(lower, "crystal") and string.find(lower, "yield") then
+                    local num = tonumber(val)
+                    if num and num == num and num ~= math.huge and num ~= -math.huge then
+                        return num, true
+                    end
+                end
+            end
+        end
+
+        -- Priority 2: contains "yield"
+        for name, val in pairs(attrs) do
+            local lower = string.lower(name)
+            if not (string.find(lower, "max") or string.find(lower, "total") or string.find(lower, "cap")) then
+                if string.find(lower, "yield") then
+                    local num = tonumber(val)
+                    if num and num == num and num ~= math.huge and num ~= -math.huge then
+                        return num, true
+                    end
+                end
+            end
+        end
+
+        -- Priority 3: contains "crystal"
+        for name, val in pairs(attrs) do
+            local lower = string.lower(name)
+            if not (string.find(lower, "max") or string.find(lower, "total") or string.find(lower, "cap")) then
+                if string.find(lower, "crystal") then
+                    local num = tonumber(val)
+                    if num and num == num and num ~= math.huge and num ~= -math.huge then
+                        return num, true
+                    end
+                end
+            end
+        end
+
+        -- Fallback: check max/total yield attributes if present
+        for name, val in pairs(attrs) do
+            local lower = string.lower(name)
+            if string.find(lower, "crystal") or string.find(lower, "yield") then
+                local num = tonumber(val)
+                if num and num == num and num ~= math.huge and num ~= -math.huge then
+                    return num, true
+                end
+            end
+        end
+    end
+
+    -- 3. ValueBase child fallback on GrazeTarget
+    for _, name in ipairs(manatite.yieldAttributes) do
+        local child = target:FindFirstChild(name)
+        if child and (child:IsA("NumberValue") or child:IsA("IntValue")) then
+            return child.Value, true
+        end
+    end
+
+    -- 4. Fallback checks on model
+    if model then
+        for _, name in ipairs(manatite.yieldAttributes) do
+            local val = model:GetAttribute(name)
+            if val ~= nil then
+                local num = tonumber(val)
+                if num and num == num and num ~= math.huge and num ~= -math.huge then
+                    return num, true
+                end
+            end
+        end
+
+        local mOk, mAttrs = pcall(function() return model:GetAttributes() end)
+        if mOk and type(mAttrs) == "table" then
+            for name, val in pairs(mAttrs) do
+                local lower = string.lower(name)
+                if not (string.find(lower, "max") or string.find(lower, "total") or string.find(lower, "cap")) then
+                    if string.find(lower, "crystal") and string.find(lower, "yield") then
+                        local num = tonumber(val)
+                        if num and num == num and num ~= math.huge and num ~= -math.huge then
+                            return num, true
+                        end
+                    end
+                end
+            end
+            for name, val in pairs(mAttrs) do
+                local lower = string.lower(name)
+                if not (string.find(lower, "max") or string.find(lower, "total") or string.find(lower, "cap")) then
+                    if string.find(lower, "yield") then
+                        local num = tonumber(val)
+                        if num and num == num and num ~= math.huge and num ~= -math.huge then
+                            return num, true
+                        end
+                    end
+                end
+            end
+            for name, val in pairs(mAttrs) do
+                local lower = string.lower(name)
+                if not (string.find(lower, "max") or string.find(lower, "total") or string.find(lower, "cap")) then
+                    if string.find(lower, "crystal") then
+                        local num = tonumber(val)
+                        if num and num == num and num ~= math.huge and num ~= -math.huge then
+                            return num, true
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return 0, false
+end
+
+function manatite.isAvailable(target, model)
     if not target or not target.Parent then return false end
     if model and not model.Parent then return false end
 
@@ -484,14 +670,22 @@ local function isGrazeTargetAvailable(target, model)
     end
 
     if attr ~= nil then
-        return (attr == true or attr == "true" or attr == 1)
+        if not (attr == true or attr == "true" or attr == 1) then
+            return false
+        end
+    end
+
+    -- If a crystal yield attribute is present and explicitly <= 0, cluster is depleted
+    local yieldVal, hasYield = manatite.getGrazeTargetYield(target, model)
+    if hasYield and yieldVal <= 0 then
+        return false
     end
 
     return true
 end
 
-local function getManatitePayload(modelName)
-    local cached = manatitePayloadCache[modelName]
+function manatite.getPayload(modelName)
+    local cached = manatite.payloadCache[modelName]
     if cached then return cached end
 
     local payload
@@ -511,36 +705,36 @@ local function getManatitePayload(modelName)
         end
     end
 
-    manatitePayloadCache[modelName] = payload
+    manatite.payloadCache[modelName] = payload
     return payload
 end
 
-local function cleanupManatiteBlacklist(now)
-    if now - lastManatiteBlacklistCleanup > 10 then
-        lastManatiteBlacklistCleanup = now
-        for model, timestamp in pairs(manatiteBlacklist) do
+function manatite.cleanupBlacklist(now)
+    if now - manatite.lastBlacklistCleanup > 10 then
+        manatite.lastBlacklistCleanup = now
+        for model, timestamp in pairs(manatite.blacklist) do
             if now - timestamp > 20 then
-                manatiteBlacklist[model] = nil
+                manatite.blacklist[model] = nil
             end
         end
     end
 end
 
-local function findNextAvailableManatite(searchOrigin)
-    local models = getManatiteModels()
+function manatite.findNext(searchOrigin)
+    local models = manatite.getModels()
     if not models or #models == 0 then return nil, nil end
 
     local now = os.clock()
     local origin = searchOrigin or (root and root.Position) or Vector3.zero
 
-    if manatiteOrder == "Alphabetical (A-Z)" then
+    if manatite.order == "Alphabetical (A-Z)" then
         local availableList = {}
         for _, model in ipairs(models) do
             if model.Parent then
-                local blacklistedAt = manatiteBlacklist[model]
+                local blacklistedAt = manatite.blacklist[model]
                 if not blacklistedAt or (now - blacklistedAt > 20) then
-                    local target = getGrazeTarget(model)
-                    if target and isGrazeTargetAvailable(target, model) then
+                    local target = manatite.getGrazeTarget(model)
+                    if target and manatite.isAvailable(target, model) then
                         table.insert(availableList, {model = model, target = target})
                     end
                 end
@@ -551,6 +745,39 @@ local function findNextAvailableManatite(searchOrigin)
             return availableList[1].model, availableList[1].target
         end
         return nil, nil
+    elseif manatite.order == "Largest Crystal Yield" then
+        local availableList = {}
+        for _, model in ipairs(models) do
+            if model.Parent then
+                local blacklistedAt = manatite.blacklist[model]
+                if not blacklistedAt or (now - blacklistedAt > 20) then
+                    local target = manatite.getGrazeTarget(model)
+                    if target and manatite.isAvailable(target, model) then
+                        local yieldVal = manatite.getGrazeTargetYield(target, model)
+                        local distSq = get3DDistanceSq(origin, target.Position)
+                        table.insert(availableList, {
+                            model = model,
+                            target = target,
+                            yield = yieldVal,
+                            distSq = distSq
+                        })
+                    end
+                end
+            end
+        end
+        if #availableList > 0 then
+            table.sort(availableList, function(a, b)
+                if a.yield ~= b.yield then
+                    return a.yield > b.yield
+                end
+                if a.distSq ~= b.distSq then
+                    return a.distSq < b.distSq
+                end
+                return a.model.Name < b.model.Name
+            end)
+            return availableList[1].model, availableList[1].target
+        end
+        return nil, nil
     else
         local bestModel = nil
         local bestTarget = nil
@@ -558,10 +785,10 @@ local function findNextAvailableManatite(searchOrigin)
 
         for _, model in ipairs(models) do
             if model.Parent then
-                local blacklistedAt = manatiteBlacklist[model]
+                local blacklistedAt = manatite.blacklist[model]
                 if not blacklistedAt or (now - blacklistedAt > 20) then
-                    local target = getGrazeTarget(model)
-                    if target and isGrazeTargetAvailable(target, model) then
+                    local target = manatite.getGrazeTarget(model)
+                    if target and manatite.isAvailable(target, model) then
                         local distSq = get3DDistanceSq(origin, target.Position)
                         if distSq < shortestDistSq then
                             shortestDistSq = distSq
@@ -577,10 +804,10 @@ local function findNextAvailableManatite(searchOrigin)
     end
 end
 
-local function teleportToManatite(grazeTarget, model)
+function manatite.teleport(grazeTarget, model)
     if not root or not char or not grazeTarget or not grazeTarget.Parent then return end
 
-    local targetPos = grazeTarget.Position + Vector3.new(0, manatiteHeightOffset, 0)
+    local targetPos = grazeTarget.Position + Vector3.new(0, manatite.heightOffset, 0)
     local modelPos = model and model:GetPivot().Position or grazeTarget.Position
     local lookDir = Vector3.new(modelPos.X - targetPos.X, 0, modelPos.Z - targetPos.Z)
     local targetCFrame
@@ -602,7 +829,233 @@ local function teleportToManatite(grazeTarget, model)
         humanoid:Move(Vector3.zero, false)
     end
 
-    if manatiteAnchorChomp then
+    if manatite.anchor then
+        pcall(function() root.Anchored = true end)
+    end
+end
+
+-- Mithril Ore Farm Helpers (Crystal Geode Ores)
+function mithril.getFolder()
+    if mithril.cachedFolder and mithril.cachedFolder.Parent then
+        return mithril.cachedFolder
+    end
+
+    -- 1. Primary: workspace.CowWorld.FjordRafting.Resources.CrystalGeodeOres
+    local res = getResourcesFolder()
+    if res then
+        local geode = res:FindFirstChild("CrystalGeodeOres") or res:FindFirstChild("CrystalGeodeOres", true)
+        if geode then
+            mithril.cachedFolder = geode
+            return geode
+        end
+    end
+
+    -- 2. Direct path via CowWorld
+    local cowWorld = cowWorldRef
+    if not cowWorld or not cowWorld.Parent then
+        cowWorld = workspace:FindFirstChild("CowWorld")
+    end
+    if cowWorld then
+        local rafting = cowWorld:FindFirstChild("FjordRafting") or cowWorld:FindFirstChild("FjordRafting", true)
+        if rafting then
+            local geode = rafting:FindFirstChild("CrystalGeodeOres") or rafting:FindFirstChild("CrystalGeodeOres", true)
+            if geode then
+                mithril.cachedFolder = geode
+                return geode
+            end
+        end
+        local directGeode = cowWorld:FindFirstChild("CrystalGeodeOres", true)
+        if directGeode then
+            mithril.cachedFolder = directGeode
+            return directGeode
+        end
+    end
+
+    -- 3. Fallback: Search anywhere in workspace
+    local geode = workspace:FindFirstChild("CrystalGeodeOres", true)
+    if geode then
+        mithril.cachedFolder = geode
+        return geode
+    end
+
+    return nil
+end
+
+function mithril.getModels()
+    local now = os.clock()
+    local folder = mithril.getFolder()
+    if folder and (now - mithril.lastCacheTime > 2 or #mithril.cachedModels == 0) then
+        mithril.lastCacheTime = now
+        local rawChildren = folder:GetChildren()
+        local list = {}
+        for _, child in ipairs(rawChildren) do
+            if string.find(string.lower(child.Name), "mithril") then
+                table.insert(list, child)
+            end
+        end
+        if #list == 0 and #rawChildren > 0 then
+            mithril.cachedModels = rawChildren
+        else
+            mithril.cachedModels = list
+        end
+    end
+    return mithril.cachedModels
+end
+
+function mithril.getOrePart(model)
+    if not model or not model.Parent then return nil end
+    local ore = model:FindFirstChild("Ore")
+    if ore and ore:IsA("BasePart") then
+        return ore
+    end
+    local recursiveOre = model:FindFirstChild("Ore", true)
+    if recursiveOre and recursiveOre:IsA("BasePart") then
+        return recursiveOre
+    end
+    if model:IsA("BasePart") then
+        return model
+    end
+    return model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+end
+
+function mithril.isAvailable(orePart, model)
+    if not orePart or not orePart.Parent then return false end
+    if model and not model.Parent then return false end
+
+    -- Check attribute "Available" / "available" directly on Ore part
+    local attr = orePart:GetAttribute("Available")
+    if attr == nil then
+        attr = orePart:GetAttribute("available")
+    end
+    -- Fallback to model attribute
+    if attr == nil and model then
+        attr = model:GetAttribute("Available")
+        if attr == nil then
+            attr = model:GetAttribute("available")
+        end
+    end
+
+    if attr ~= nil then
+        return (attr == true or attr == "true" or attr == 1)
+    end
+
+    return true
+end
+
+function mithril.getPayload(modelName)
+    local cached = mithril.payloadCache[modelName]
+    if cached then return cached end
+
+    local payload
+    if string.find(modelName, "^Cavern_Ore_") then
+        payload = modelName
+    else
+        local oreType, id = string.match(modelName, "^(MithrilOre)_?(%d+)$")
+        if oreType and id then
+            payload = "Cavern_Ore_" .. oreType .. "_" .. id
+        else
+            local prefix, numId = string.match(modelName, "^(.-)(%d+)$")
+            if prefix and numId and prefix ~= "" then
+                prefix = string.gsub(prefix, "_$", "")
+                payload = "Cavern_Ore_" .. prefix .. "_" .. numId
+            else
+                payload = "Cavern_Ore_" .. modelName
+            end
+        end
+    end
+
+    mithril.payloadCache[modelName] = payload
+    return payload
+end
+
+function mithril.cleanupBlacklist(now)
+    if now - mithril.lastBlacklistCleanup > 10 then
+        mithril.lastBlacklistCleanup = now
+        for model, timestamp in pairs(mithril.blacklist) do
+            if now - timestamp > 20 then
+                mithril.blacklist[model] = nil
+            end
+        end
+    end
+end
+
+function mithril.findNext(searchOrigin)
+    local models = mithril.getModels()
+    if not models or #models == 0 then return nil, nil end
+
+    local now = os.clock()
+    local origin = searchOrigin or (root and root.Position) or Vector3.zero
+
+    if mithril.order == "Alphabetical (A-Z)" then
+        local availableList = {}
+        for _, model in ipairs(models) do
+            if model.Parent then
+                local blacklistedAt = mithril.blacklist[model]
+                if not blacklistedAt or (now - blacklistedAt > 20) then
+                    local orePart = mithril.getOrePart(model)
+                    if orePart and mithril.isAvailable(orePart, model) then
+                        table.insert(availableList, {model = model, target = orePart})
+                    end
+                end
+            end
+        end
+        if #availableList > 0 then
+            table.sort(availableList, function(a, b) return a.model.Name < b.model.Name end)
+            return availableList[1].model, availableList[1].target
+        end
+        return nil, nil
+    else
+        local bestModel = nil
+        local bestTarget = nil
+        local shortestDistSq = math.huge
+
+        for _, model in ipairs(models) do
+            if model.Parent then
+                local blacklistedAt = mithril.blacklist[model]
+                if not blacklistedAt or (now - blacklistedAt > 20) then
+                    local orePart = mithril.getOrePart(model)
+                    if orePart and mithril.isAvailable(orePart, model) then
+                        local distSq = get3DDistanceSq(origin, orePart.Position)
+                        if distSq < shortestDistSq then
+                            shortestDistSq = distSq
+                            bestModel = model
+                            bestTarget = orePart
+                        end
+                    end
+                end
+            end
+        end
+
+        return bestModel, bestTarget
+    end
+end
+
+function mithril.teleport(orePart, model)
+    if not root or not char or not orePart or not orePart.Parent then return end
+
+    local targetPos = orePart.Position + Vector3.new(0, mithril.heightOffset, 0)
+    local modelPos = model and model:GetPivot().Position or orePart.Position
+    local lookDir = Vector3.new(modelPos.X - targetPos.X, 0, modelPos.Z - targetPos.Z)
+    local targetCFrame
+    if lookDir.Magnitude > 0.5 then
+        targetCFrame = CFrame.lookAt(targetPos, targetPos + lookDir.Unit)
+    else
+        targetCFrame = CFrame.new(targetPos)
+    end
+
+    char:PivotTo(targetCFrame)
+    root.CFrame = targetCFrame
+
+    for _, part in ipairs(charBaseParts) do
+        part.AssemblyLinearVelocity = Vector3.zero
+        part.AssemblyAngularVelocity = Vector3.zero
+    end
+
+    if humanoid then
+        humanoid:Move(Vector3.zero, false)
+    end
+
+    if mithril.anchor then
         pcall(function() root.Anchored = true end)
     end
 end
@@ -1088,69 +1541,69 @@ local function isSpotAvailable(spot)
     return false
 end
 
-local function updatePenVisualizer()
-    if showPenESP and farmOn and anchorPos then
-        if not penVisualizer then
-            penVisualizer = Instance.new("Part")
-            penVisualizer.Name = "CowPenESP"
-            penVisualizer.Anchored = true
-            penVisualizer.CanCollide = false
-            penVisualizer.Shape = Enum.PartType.Cylinder
-            penVisualizer.Material = Enum.Material.Neon
-            penVisualizer.Color = Color3.fromRGB(255, 105, 180)
-            penVisualizer.Transparency = 0.85
-            penVisualizer.CastShadow = false
-            penVisualizer.Parent = workspace
+function penESP.update()
+    if penESP.show and farmOn and anchorPos then
+        if not penESP.visualizer then
+            penESP.visualizer = Instance.new("Part")
+            penESP.visualizer.Name = "CowPenESP"
+            penESP.visualizer.Anchored = true
+            penESP.visualizer.CanCollide = false
+            penESP.visualizer.Shape = Enum.PartType.Cylinder
+            penESP.visualizer.Material = Enum.Material.Neon
+            penESP.visualizer.Color = Color3.fromRGB(255, 105, 180)
+            penESP.visualizer.Transparency = 0.85
+            penESP.visualizer.CastShadow = false
+            penESP.visualizer.Parent = workspace
         end
-        penVisualizer.Size = Vector3.new(0.5, farmRadius * 2, farmRadius * 2)
-        penVisualizer.CFrame = CFrame.new(anchorPos) * CFrame.Angles(0, 0, math.rad(90))
+        penESP.visualizer.Size = Vector3.new(0.5, farmRadius * 2, farmRadius * 2)
+        penESP.visualizer.CFrame = CFrame.new(anchorPos) * CFrame.Angles(0, 0, math.rad(90))
     else
-        if penVisualizer then
-            penVisualizer:Destroy()
-            penVisualizer = nil
+        if penESP.visualizer then
+            penESP.visualizer:Destroy()
+            penESP.visualizer = nil
         end
     end
 end
 
 -- Cleanup single-chest ESP instances
-local function cleanupChestVisuals()
-    if chestEspConnection then
-        chestEspConnection:Disconnect()
-        chestEspConnection = nil
+function chestESP.cleanup()
+    if chestESP.espConn then
+        chestESP.espConn:Disconnect()
+        chestESP.espConn = nil
     end
-    if chestHighlight then
-        chestHighlight:Destroy()
-        chestHighlight = nil
+    if chestESP.highlight then
+        chestESP.highlight:Destroy()
+        chestESP.highlight = nil
     end
-    if chestBillboard then
-        chestBillboard:Destroy()
-        chestBillboard = nil
+    if chestESP.billboard then
+        chestESP.billboard:Destroy()
+        chestESP.billboard = nil
     end
 end
 
 -- Attach ESP to a loaded chest model/part
-local function attachChestESP(trackedChest)
-    cleanupChestVisuals()
+function chestESP.attach(trackedChest)
+    chestESP.cleanup()
     if not trackedChest or not trackedChest.Parent then return end
 
     local chestPart = trackedChest:IsA("Model") and (trackedChest.PrimaryPart or trackedChest:FindFirstChildWhichIsA("BasePart")) or (trackedChest:IsA("BasePart") and trackedChest)
     if not chestPart then return end
 
-    chestHighlight = Instance.new("Highlight")
-    chestHighlight.Name = "ChestHighlight"
-    chestHighlight.Adornee = trackedChest
-    chestHighlight.FillColor = Color3.fromRGB(255, 215, 0)
-    chestHighlight.FillTransparency = 0.5
-    chestHighlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-    chestHighlight.OutlineTransparency = 0
-    chestHighlight.Parent = trackedChest
+    chestESP.highlight = Instance.new("Highlight")
+    chestESP.highlight.Name = "ChestHighlight"
+    chestESP.highlight.Adornee = trackedChest
+    chestESP.highlight.FillColor = Color3.fromRGB(255, 215, 0)
+    chestESP.highlight.FillTransparency = 0.5
+    chestESP.highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+    chestESP.highlight.OutlineTransparency = 0
+    chestESP.highlight.Parent = trackedChest
 
-    chestBillboard = Instance.new("BillboardGui")
-    chestBillboard.Name = "ChestESPText"
-    chestBillboard.Adornee = chestPart
-    chestBillboard.Size = UDim2.new(0, 150, 0, 50)
-    chestBillboard.StudsOffset = Vector3.new(0, 3, 0)
-    chestBillboard.AlwaysOnTop = true
+    chestESP.billboard = Instance.new("BillboardGui")
+    chestESP.billboard.Name = "ChestESPText"
+    chestESP.billboard.Adornee = chestPart
+    chestESP.billboard.Size = UDim2.new(0, 150, 0, 50)
+    chestESP.billboard.StudsOffset = Vector3.new(0, 3, 0)
+    chestESP.billboard.AlwaysOnTop = true
 
     local textLabel = Instance.new("TextLabel")
     textLabel.Name = "Label"
@@ -1161,15 +1614,15 @@ local function attachChestESP(trackedChest)
     textLabel.TextSize = 14
     textLabel.Font = Enum.Font.GothamBold
     textLabel.Text = "Team Chest"
-    textLabel.Parent = chestBillboard
+    textLabel.Parent = chestESP.billboard
 
-    chestBillboard.Parent = trackedChest
+    chestESP.billboard.Parent = trackedChest
 
     local lastDist = -1
     local lastChestUpdate = 0
-    chestEspConnection = RunService.Heartbeat:Connect(function()
-        if not showChestESP or not trackedChest or not trackedChest.Parent then
-            cleanupChestVisuals()
+    chestESP.espConn = RunService.Heartbeat:Connect(function()
+        if not chestESP.show or not trackedChest or not trackedChest.Parent then
+            chestESP.cleanup()
             return
         end
         local now = os.clock()
@@ -1187,76 +1640,76 @@ local function attachChestESP(trackedChest)
 end
 
 -- Dynamic load/unload watcher for LocalTeamChest
-local function updateChestESP()
-    if showChestESP then
+function chestESP.update()
+    if chestESP.show then
         local currentChest = workspace:FindFirstChild("LocalTeamChest")
         if currentChest then
-            attachChestESP(currentChest)
+            chestESP.attach(currentChest)
         end
 
-        if not chestChildAddedConn then
-            chestChildAddedConn = workspace.ChildAdded:Connect(function(child)
-                if child.Name == "LocalTeamChest" and showChestESP then
+        if not chestESP.childAddedConn then
+            chestESP.childAddedConn = workspace.ChildAdded:Connect(function(child)
+                if child.Name == "LocalTeamChest" and chestESP.show then
                     task.wait(0.1)
-                    attachChestESP(child)
+                    chestESP.attach(child)
                 end
             end)
         end
 
-        if not chestChildRemovedConn then
-            chestChildRemovedConn = workspace.ChildRemoved:Connect(function(child)
+        if not chestESP.childRemovedConn then
+            chestESP.childRemovedConn = workspace.ChildRemoved:Connect(function(child)
                 if child.Name == "LocalTeamChest" then
-                    cleanupChestVisuals()
+                    chestESP.cleanup()
                 end
             end)
         end
     else
-        if chestChildAddedConn then
-            chestChildAddedConn:Disconnect()
-            chestChildAddedConn = nil
+        if chestESP.childAddedConn then
+            chestESP.childAddedConn:Disconnect()
+            chestESP.childAddedConn = nil
         end
-        if chestChildRemovedConn then
-            chestChildRemovedConn:Disconnect()
-            chestChildRemovedConn = nil
+        if chestESP.childRemovedConn then
+            chestESP.childRemovedConn:Disconnect()
+            chestESP.childRemovedConn = nil
         end
-        cleanupChestVisuals()
+        chestESP.cleanup()
     end
 end
 
 -- ==========================
 -- MANATITE ESP VISUALIZER
 -- ==========================
-local function cleanupManatiteVisuals()
-    if manatiteEspConnection then
-        manatiteEspConnection:Disconnect()
-        manatiteEspConnection = nil
+function manatite.cleanupVisuals()
+    if manatite.espConn then
+        manatite.espConn:Disconnect()
+        manatite.espConn = nil
     end
-    for model, visual in pairs(manatiteVisuals) do
+    for model, visual in pairs(manatite.visuals) do
         if visual.highlight then pcall(function() visual.highlight:Destroy() end) end
         if visual.billboard then pcall(function() visual.billboard:Destroy() end) end
     end
-    table.clear(manatiteVisuals)
+    table.clear(manatite.visuals)
 end
 
-local function updateManatiteESP()
-    if showManatiteESP then
-        if not manatiteEspConnection then
+function manatite.updateESP()
+    if manatite.showESP then
+        if not manatite.espConn then
             local lastEspUpdate = 0
-            manatiteEspConnection = RunService.Heartbeat:Connect(function()
-                if not showManatiteESP then
-                    cleanupManatiteVisuals()
+            manatite.espConn = RunService.Heartbeat:Connect(function()
+                if not manatite.showESP then
+                    manatite.cleanupVisuals()
                     return
                 end
                 local now = os.clock()
                 if now - lastEspUpdate > 0.4 then
                     lastEspUpdate = now
-                    local models = getManatiteModels()
+                    local models = manatite.getModels()
                     for _, model in ipairs(models) do
                         if model.Parent then
-                            local target = getGrazeTarget(model)
+                            local target = manatite.getGrazeTarget(model)
                             if target then
-                                local available = isGrazeTargetAvailable(target, model)
-                                local visual = manatiteVisuals[model]
+                                local available = manatite.isAvailable(target, model)
+                                local visual = manatite.visuals[model]
                                 if not visual then
                                     local highlight = Instance.new("Highlight")
                                     highlight.Name = "ManatiteHighlight"
@@ -1284,14 +1737,16 @@ local function updateManatiteESP()
                                     bb.Parent = model
 
                                     visual = {highlight = highlight, billboard = bb, label = lbl}
-                                    manatiteVisuals[model] = visual
+                                    manatite.visuals[model] = visual
                                 end
 
                                 if visual.highlight and visual.label then
                                     if available then
+                                        local yieldVal = manatite.getGrazeTargetYield(target, model)
+                                        local yieldSuffix = yieldVal > 0 and (" [" .. yieldVal .. "]") or ""
                                         visual.highlight.FillColor = Color3.fromRGB(0, 220, 255)
                                         visual.label.TextColor3 = Color3.fromRGB(0, 255, 200)
-                                        visual.label.Text = "💎 " .. model.Name .. "\n[AVAILABLE]"
+                                        visual.label.Text = "💎 " .. model.Name .. yieldSuffix .. "\n[AVAILABLE]"
                                     else
                                         visual.highlight.FillColor = Color3.fromRGB(120, 120, 120)
                                         visual.label.TextColor3 = Color3.fromRGB(180, 180, 180)
@@ -1305,7 +1760,93 @@ local function updateManatiteESP()
             end)
         end
     else
-        cleanupManatiteVisuals()
+        manatite.cleanupVisuals()
+    end
+end
+
+-- ==========================
+-- MITHRIL ESP VISUALIZER
+-- ==========================
+function mithril.cleanupVisuals()
+    if mithril.espConn then
+        mithril.espConn:Disconnect()
+        mithril.espConn = nil
+    end
+    for model, visual in pairs(mithril.visuals) do
+        if visual.highlight then pcall(function() visual.highlight:Destroy() end) end
+        if visual.billboard then pcall(function() visual.billboard:Destroy() end) end
+    end
+    table.clear(mithril.visuals)
+end
+
+function mithril.updateESP()
+    if mithril.showESP then
+        if not mithril.espConn then
+            local lastEspUpdate = 0
+            mithril.espConn = RunService.Heartbeat:Connect(function()
+                if not mithril.showESP then
+                    mithril.cleanupVisuals()
+                    return
+                end
+                local now = os.clock()
+                if now - lastEspUpdate > 0.4 then
+                    lastEspUpdate = now
+                    local models = mithril.getModels()
+                    for _, model in ipairs(models) do
+                        if model.Parent then
+                            local orePart = mithril.getOrePart(model)
+                            if orePart then
+                                local available = mithril.isAvailable(orePart, model)
+                                local visual = mithril.visuals[model]
+                                if not visual then
+                                    local highlight = Instance.new("Highlight")
+                                    highlight.Name = "MithrilHighlight"
+                                    highlight.Adornee = model
+                                    highlight.FillTransparency = 0.5
+                                    highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+                                    highlight.OutlineTransparency = 0.2
+                                    highlight.Parent = model
+
+                                    local bb = Instance.new("BillboardGui")
+                                    bb.Name = "MithrilESPText"
+                                    bb.Adornee = orePart
+                                    bb.Size = UDim2.new(0, 160, 0, 40)
+                                    bb.StudsOffset = Vector3.new(0, 2.5, 0)
+                                    bb.AlwaysOnTop = true
+
+                                    local lbl = Instance.new("TextLabel")
+                                    lbl.Name = "Label"
+                                    lbl.Size = UDim2.new(1, 0, 1, 0)
+                                    lbl.BackgroundTransparency = 1
+                                    lbl.TextStrokeTransparency = 0
+                                    lbl.TextSize = 13
+                                    lbl.Font = Enum.Font.GothamBold
+                                    lbl.Parent = bb
+                                    bb.Parent = model
+
+                                    visual = {highlight = highlight, billboard = bb, label = lbl}
+                                    mithril.visuals[model] = visual
+                                end
+
+                                if visual.highlight and visual.label then
+                                    if available then
+                                        visual.highlight.FillColor = Color3.fromRGB(80, 190, 255)
+                                        visual.label.TextColor3 = Color3.fromRGB(120, 220, 255)
+                                        visual.label.Text = "⛏️ " .. model.Name .. "\n[AVAILABLE]"
+                                    else
+                                        visual.highlight.FillColor = Color3.fromRGB(120, 120, 120)
+                                        visual.label.TextColor3 = Color3.fromRGB(180, 180, 180)
+                                        visual.label.Text = "⚪ " .. model.Name .. "\n[DEPLETED]"
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    else
+        mithril.cleanupVisuals()
     end
 end
 
@@ -1415,7 +1956,7 @@ end
 -- MAIN ENGINE HEARTBEAT LOOP
 -- ==========================
 local function updateHeartbeatConnection()
-    if farmOn or autoChomp or autoFish or autoChompMobs or autoDodgeMobs or autoManatite then
+    if farmOn or autoChomp or autoFish or autoChompMobs or autoDodgeMobs or (manatite and manatite.auto) or (mithril and mithril.auto) then
         if not HeartbeatConnection then
             HeartbeatConnection = RunService.Heartbeat:Connect(function(dt)
                 if not root or not humanoid or not root.Parent or not humanoid.Parent or humanoid.Health <= 0 then
@@ -1427,9 +1968,16 @@ local function updateHeartbeatConnection()
                         isDodging = false
                         currentAttackingMob = nil
                     end
-                    currentManatiteModel = nil
-                    currentGrazeTarget = nil
-                    currentManatitePayload = nil
+                    if manatite then
+                        manatite.model = nil
+                        manatite.target = nil
+                        manatite.payload = nil
+                    end
+                    if mithril then
+                        mithril.model = nil
+                        mithril.orePart = nil
+                        mithril.payload = nil
+                    end
                     return
                 end
 
@@ -1708,7 +2256,7 @@ local function updateHeartbeatConnection()
                 end
 
                 -- 1. Movement Logic
-                if farmOn and not autoManatite and anchorPos and not isDodging and not isUnderground then
+                if farmOn and not (manatite and manatite.auto) and not (mithril and mithril.auto) and anchorPos and not isDodging and not isUnderground then
                     patternTimer = patternTimer + (dt * patternSpeed)
                     local targetPos
 
@@ -1885,7 +2433,7 @@ local function updateHeartbeatConnection()
                 end
 
                 -- 3. Raycast Grass Chomp Logic (Yields to Mobs & Dodging)
-                if autoChomp and not autoManatite and not prioritizedMobThisFrame and not isUnderground and not isDodging then
+                if autoChomp and not (manatite and manatite.auto) and not (mithril and mithril.auto) and not prioritizedMobThisFrame and not isUnderground and not isDodging then
                     if (now - lastRaycastChompTime > 0.04) then
                         lastRaycastChompTime = now
                         local hit = workspace:Raycast(rootPos, RAYCAST_DOWN, raycastParams)
@@ -1919,7 +2467,7 @@ local function updateHeartbeatConnection()
                 end
 
                 -- 4. Auto-Fishing Logic
-                if autoFish and not autoManatite and fishingEvent then
+                if autoFish and not (manatite and manatite.auto) and not (mithril and mithril.auto) and fishingEvent then
                     if now - castCooldown > 3 then
                         local nearestSpot = nil
                         local shortestDistSq = 2500 -- 50 studs squared
@@ -1944,9 +2492,9 @@ local function updateHeartbeatConnection()
                     end
                 end
 
-                -- Threat clearing detection: check if any alive hostile mobs are within 20 studs
+                -- Threat clearing detection: check if any alive hostile mobs are within 10 studs
                 local hasNearbyThreat = false
-                if autoChompMobs and (autoManatite or farmOn) then
+                if autoChompMobs and ((manatite and manatite.auto) or (mithril and mithril.auto) or farmOn) then
                     local threatOrigin = isUnderground and (lastSurfacePos or rootPos) or rootPos
                     for _, mob in ipairs(activeAuraMobs) do
                         if mob.Parent and isMobAlive(mob) then
@@ -1964,59 +2512,117 @@ local function updateHeartbeatConnection()
                 end
 
                 -- 5. Manatite Farm Logic (Sea Maze Teleport & Autochomp)
-                if autoManatite and not isUnderground and not isDodging and not (prioritizeMobsOverManatite and hasNearbyThreat) then
-                    cleanupManatiteBlacklist(now)
+                if manatite and manatite.auto and not isUnderground and not isDodging and not (prioritizeMobsOverManatite and hasNearbyThreat) then
+                    manatite.cleanupBlacklist(now)
 
-                    local targetValid = currentManatiteModel
-                        and currentGrazeTarget
-                        and currentManatiteModel.Parent
-                        and currentGrazeTarget.Parent
-                        and isGrazeTargetAvailable(currentGrazeTarget, currentManatiteModel)
-                        and (now - currentManatiteStartTime <= 15)
+                    local targetValid = manatite.model
+                        and manatite.target
+                        and manatite.model.Parent
+                        and manatite.target.Parent
+                        and manatite.isAvailable(manatite.target, manatite.model)
+                        and (now - manatite.startTime <= 15)
 
                     if not targetValid then
-                        if currentManatiteModel and (now - currentManatiteStartTime > 15) then
-                            manatiteBlacklist[currentManatiteModel] = now
+                        if manatite.model and (now - manatite.startTime > 15) then
+                            manatite.blacklist[manatite.model] = now
                         end
 
-                        currentManatiteModel = nil
-                        currentGrazeTarget = nil
-                        currentManatitePayload = nil
+                        manatite.model = nil
+                        manatite.target = nil
+                        manatite.payload = nil
 
-                        if manatiteAnchorChomp and root then
+                        if manatite.anchor and root then
                             pcall(function() root.Anchored = false end)
                         end
 
-                        if (now - lastManatiteSearchTime > 0.1) then
-                            lastManatiteSearchTime = now
-                            local nextModel, nextTarget = findNextAvailableManatite(rootPos)
+                        if (now - manatite.lastSearchTime > 0.1) then
+                            manatite.lastSearchTime = now
+                            local nextModel, nextTarget = manatite.findNext(rootPos)
                             if nextModel and nextTarget then
-                                currentManatiteModel = nextModel
-                                currentGrazeTarget = nextTarget
-                                currentManatitePayload = getManatitePayload(nextModel.Name)
-                                currentManatiteStartTime = now
-                                teleportToManatite(nextTarget, nextModel)
-                                lastManatiteTeleportTime = now
-                                lastManatiteChompTime = 0
+                                manatite.model = nextModel
+                                manatite.target = nextTarget
+                                manatite.payload = manatite.getPayload(nextModel.Name)
+                                manatite.startTime = now
+                                manatite.teleport(nextTarget, nextModel)
+                                manatite.lastTeleportTime = now
+                                manatite.lastChompTime = 0
                             end
                         end
                     else
-                        local targetPos = currentGrazeTarget.Position + Vector3.new(0, manatiteHeightOffset, 0)
+                        local targetPos = manatite.target.Position + Vector3.new(0, manatite.heightOffset, 0)
 
                         if get3DDistanceSq(rootPos, targetPos) > 36 then
-                            if (now - lastManatiteTeleportTime > 0.4) then
-                                teleportToManatite(currentGrazeTarget, currentManatiteModel)
-                                lastManatiteTeleportTime = now
+                            if (now - manatite.lastTeleportTime > 0.4) then
+                                manatite.teleport(manatite.target, manatite.model)
+                                manatite.lastTeleportTime = now
                             end
                         else
-                            if manatiteAnchorChomp and not root.Anchored and not isDodging and not isUnderground and not hasNearbyThreat then
+                            if manatite.anchor and not root.Anchored and not isDodging and not isUnderground and not hasNearbyThreat then
                                 pcall(function() root.Anchored = true end)
                             end
                         end
 
-                        if (now - lastManatiteChompTime >= manatiteChompDelay) then
-                            lastManatiteChompTime = now
-                            chompEvent:FireServer(currentManatitePayload)
+                        if (now - manatite.lastChompTime >= manatite.delay) then
+                            manatite.lastChompTime = now
+                            chompEvent:FireServer(manatite.payload)
+                        end
+                    end
+                end
+
+                -- 6. Mithril Ore Farm Logic (Crystal Geode Ores Teleport & Autochomp)
+                if mithril and mithril.auto and not isUnderground and not isDodging and not (prioritizeMobsOverManatite and hasNearbyThreat) then
+                    mithril.cleanupBlacklist(now)
+
+                    local targetValid = mithril.model
+                        and mithril.orePart
+                        and mithril.model.Parent
+                        and mithril.orePart.Parent
+                        and mithril.isAvailable(mithril.orePart, mithril.model)
+                        and (now - mithril.startTime <= 15)
+
+                    if not targetValid then
+                        if mithril.model and (now - mithril.startTime > 15) then
+                            mithril.blacklist[mithril.model] = now
+                        end
+
+                        mithril.model = nil
+                        mithril.orePart = nil
+                        mithril.payload = nil
+
+                        if mithril.anchor and root then
+                            pcall(function() root.Anchored = false end)
+                        end
+
+                        if (now - mithril.lastSearchTime > 0.1) then
+                            mithril.lastSearchTime = now
+                            local nextModel, nextOre = mithril.findNext(rootPos)
+                            if nextModel and nextOre then
+                                mithril.model = nextModel
+                                mithril.orePart = nextOre
+                                mithril.payload = mithril.getPayload(nextModel.Name)
+                                mithril.startTime = now
+                                mithril.teleport(nextOre, nextModel)
+                                mithril.lastTeleportTime = now
+                                mithril.lastChompTime = 0
+                            end
+                        end
+                    else
+                        local targetPos = mithril.orePart.Position + Vector3.new(0, mithril.heightOffset, 0)
+
+                        if get3DDistanceSq(rootPos, targetPos) > 36 then
+                            if (now - mithril.lastTeleportTime > 0.4) then
+                                mithril.teleport(mithril.orePart, mithril.model)
+                                mithril.lastTeleportTime = now
+                            end
+                        else
+                            if mithril.anchor and not root.Anchored and not isDodging and not isUnderground and not hasNearbyThreat then
+                                pcall(function() root.Anchored = true end)
+                            end
+                        end
+
+                        if (now - mithril.lastChompTime >= mithril.delay) then
+                            mithril.lastChompTime = now
+                            chompEvent:FireServer(mithril.payload)
                         end
                     end
                 end
@@ -2049,7 +2655,10 @@ local function updateHeartbeatConnection()
             preDodgePos = nil
             preDodgeCFrame = nil
         end
-        if not autoManatite and manatiteAnchorChomp and root then
+        if manatite and not manatite.auto and manatite.anchor and root then
+            pcall(function() root.Anchored = false end)
+        end
+        if mithril and not mithril.auto and mithril.anchor and root then
             pcall(function() root.Anchored = false end)
         end
         if not farmOn and humanoid then humanoid:Move(Vector3.zero, false) end
@@ -2084,7 +2693,7 @@ MainTab:CreateToggle({
             })
         end
 
-        updatePenVisualizer()
+        penESP.update()
         updateHeartbeatConnection()
     end,
 })
@@ -2099,46 +2708,6 @@ MainTab:CreateToggle({
     end,
 })
 
-MainTab:CreateToggle({
-    Name = "Enable Manatite Farm (Sea Maze)",
-    CurrentValue = false,
-    Flag = "Toggle_ManatiteFarm",
-    Callback = function(Value)
-        autoManatite = Value
-        if Value then
-            if root then
-                preManatiteCFrame = root.CFrame
-            end
-            currentManatiteModel = nil
-            currentGrazeTarget = nil
-            currentManatitePayload = nil
-            lastManatiteSearchTime = 0
-
-            Window:Notify({
-                Title = "Manatite Farm Enabled",
-                Content = "Teleporting to Sea Maze Manatite clusters & chomping...",
-                Duration = 3,
-                Image = 4483362458,
-            })
-        else
-            if manatiteAnchorChomp and root then
-                pcall(function() root.Anchored = false end)
-            end
-            if returnOnDisable and preManatiteCFrame and root and char then
-                char:PivotTo(preManatiteCFrame)
-                root.CFrame = preManatiteCFrame
-                for _, part in ipairs(charBaseParts) do
-                    part.AssemblyLinearVelocity = Vector3.zero
-                    part.AssemblyAngularVelocity = Vector3.zero
-                end
-            end
-            currentManatiteModel = nil
-            currentGrazeTarget = nil
-            currentManatitePayload = nil
-        end
-        updateHeartbeatConnection()
-    end,
-})
 
 MainTab:CreateToggle({
     Name = "Enable Mob Aura (Priority)",
@@ -2195,77 +2764,6 @@ MainTab:CreateToggle({
     end,
 })
 
-MainTab:CreateSection({ Name = "Manatite Farm Configuration" })
-
-MainTab:CreateDropdown({
-    Name = "Cluster Selection Order",
-    Options = {"Nearest Available", "Alphabetical (A-Z)"},
-    CurrentOption = {"Nearest Available"},
-    MultipleOptions = false,
-    Flag = "Dropdown_ManatiteOrder",
-    Callback = function(Option)
-        local selection = type(Option) == "table" and Option[1] or Option
-        if selection == "Alphabetical (A-Z)" then
-            manatiteOrder = "Alphabetical (A-Z)"
-        else
-            manatiteOrder = "Nearest Available"
-        end
-    end,
-})
-
-MainTab:CreateSlider({
-    Name = "Manatite Chomp Delay",
-    Range = {0.05, 0.5},
-    Increment = 0.01,
-    Suffix = "s",
-    CurrentValue = 0.1,
-    Flag = "Slider_ManatiteDelay",
-    Callback = function(Value)
-        manatiteChompDelay = Value
-    end,
-})
-
-MainTab:CreateSlider({
-    Name = "Teleport Height Offset",
-    Range = {0, 8},
-    Increment = 0.5,
-    Suffix = "Studs",
-    CurrentValue = 2.5,
-    Flag = "Slider_ManatiteHeight",
-    Callback = function(Value)
-        manatiteHeightOffset = Value
-    end,
-})
-
-MainTab:CreateToggle({
-    Name = "Anchor Root While Chomping",
-    CurrentValue = false,
-    Flag = "Toggle_ManatiteAnchor",
-    Callback = function(Value)
-        manatiteAnchorChomp = Value
-        if not Value and root and not isUnderground then
-            pcall(function() root.Anchored = false end)
-        end
-    end,
-})
-
-MainTab:CreateToggle({
-    Name = "Return to Pre-Farm Pos on Disable",
-    CurrentValue = false,
-    Flag = "Toggle_ManatiteReturn",
-    Callback = function(Value)
-        returnOnDisable = Value
-    end,
-})
-
-MainTab:CreateToggle({
-    Name = "Prioritize Mobs Near Manatite (20 Studs)",
-    CurrentValue = true,
-    Flag = "Toggle_PrioritizeMobsManatite",
-    Callback = function(Value)
-        prioritizeMobsOverManatite = Value
-    end,
-})
 
 MainTab:CreateSection({ Name = "Aura & Pattern Configuration" })
 
@@ -2430,8 +2928,8 @@ MainTab:CreateToggle({
     CurrentValue = false,
     Flag = "Toggle_PenESP",
     Callback = function(Value)
-        showPenESP = Value
-        updatePenVisualizer()
+        penESP.show = Value
+        penESP.update()
     end,
 })
 
@@ -2440,18 +2938,8 @@ MainTab:CreateToggle({
     CurrentValue = false,
     Flag = "Toggle_ChestESP",
     Callback = function(Value)
-        showChestESP = Value
-        updateChestESP()
-    end,
-})
-
-MainTab:CreateToggle({
-    Name = "Show Manatite ESP (Sea Maze)",
-    CurrentValue = false,
-    Flag = "Toggle_ManatiteESP",
-    Callback = function(Value)
-        showManatiteESP = Value
-        updateManatiteESP()
+        chestESP.show = Value
+        chestESP.update()
     end,
 })
 
@@ -2469,6 +2957,250 @@ MainTab:CreateToggle({
     CurrentValue = false,
     Flag = "Toggle_Spam_Q",
     Callback = function(Value) HandleSpam("Q", Value, 0.05) end,
+})
+
+-- ==========================
+-- UI SETUP: Manatite & Mithril Tab
+-- ==========================
+local MiningTab = Window:CreateTab({ Name = "Manatite & Mithril", Icon = 4483362458 })
+
+MiningTab:CreateSection({ Name = "Manatite Farm (Sea Maze)" })
+
+MiningTab:CreateToggle({
+    Name = "Enable Manatite Farm (Sea Maze)",
+    CurrentValue = false,
+    Flag = "Toggle_ManatiteFarm",
+    Callback = function(Value)
+        manatite.auto = Value
+        if Value then
+            if root then
+                manatite.preCFrame = root.CFrame
+            end
+            manatite.model = nil
+            manatite.target = nil
+            manatite.payload = nil
+            manatite.lastSearchTime = 0
+
+            Window:Notify({
+                Title = "Manatite Farm Enabled",
+                Content = "Teleporting to Sea Maze Manatite clusters & chomping...",
+                Duration = 3,
+                Image = 4483362458,
+            })
+        else
+            if manatite.anchor and root then
+                pcall(function() root.Anchored = false end)
+            end
+            if manatite.returnOnDisable and manatite.preCFrame and root and char then
+                char:PivotTo(manatite.preCFrame)
+                root.CFrame = manatite.preCFrame
+                for _, part in ipairs(charBaseParts) do
+                    part.AssemblyLinearVelocity = Vector3.zero
+                    part.AssemblyAngularVelocity = Vector3.zero
+                end
+            end
+            manatite.model = nil
+            manatite.target = nil
+            manatite.payload = nil
+        end
+        updateHeartbeatConnection()
+    end,
+})
+
+MiningTab:CreateToggle({
+    Name = "Show Manatite ESP (Sea Maze)",
+    CurrentValue = false,
+    Flag = "Toggle_ManatiteESP",
+    Callback = function(Value)
+        manatite.showESP = Value
+        manatite.updateESP()
+    end,
+})
+
+MiningTab:CreateDropdown({
+    Name = "Cluster Selection Order",
+    Options = {"Nearest Available", "Alphabetical (A-Z)", "Largest Crystal Yield"},
+    CurrentOption = {"Nearest Available"},
+    MultipleOptions = false,
+    Flag = "Dropdown_ManatiteOrder",
+    Callback = function(Option)
+        local selection = type(Option) == "table" and Option[1] or Option
+        if selection == "Alphabetical (A-Z)" then
+            manatite.order = "Alphabetical (A-Z)"
+        elseif selection == "Largest Crystal Yield" or string.find(tostring(selection), "Yield") or string.find(tostring(selection), "yield") then
+            manatite.order = "Largest Crystal Yield"
+        else
+            manatite.order = "Nearest Available"
+        end
+    end,
+})
+
+MiningTab:CreateSlider({
+    Name = "Manatite Chomp Delay",
+    Range = {0.05, 0.5},
+    Increment = 0.01,
+    Suffix = "s",
+    CurrentValue = 0.1,
+    Flag = "Slider_ManatiteDelay",
+    Callback = function(Value)
+        manatite.delay = Value
+    end,
+})
+
+MiningTab:CreateSlider({
+    Name = "Teleport Height Offset",
+    Range = {0, 8},
+    Increment = 0.5,
+    Suffix = "Studs",
+    CurrentValue = 2.5,
+    Flag = "Slider_ManatiteHeight",
+    Callback = function(Value)
+        manatite.heightOffset = Value
+    end,
+})
+
+MiningTab:CreateToggle({
+    Name = "Anchor Root While Chomping",
+    CurrentValue = false,
+    Flag = "Toggle_ManatiteAnchor",
+    Callback = function(Value)
+        manatite.anchor = Value
+        if not Value and root and not isUnderground then
+            pcall(function() root.Anchored = false end)
+        end
+    end,
+})
+
+MiningTab:CreateToggle({
+    Name = "Return to Pre-Farm Pos on Disable",
+    CurrentValue = false,
+    Flag = "Toggle_ManatiteReturn",
+    Callback = function(Value)
+        manatite.returnOnDisable = Value
+    end,
+})
+
+MiningTab:CreateToggle({
+    Name = "Prioritize Mobs Near Manatite (10 Studs)",
+    CurrentValue = true,
+    Flag = "Toggle_PrioritizeMobsManatite",
+    Callback = function(Value)
+        prioritizeMobsOverManatite = Value
+    end,
+})
+
+MiningTab:CreateSection({ Name = "Mithril Farm (Crystal Geode)" })
+
+MiningTab:CreateToggle({
+    Name = "Enable Mithril Farm (Crystal Geode)",
+    CurrentValue = false,
+    Flag = "Toggle_MithrilFarm",
+    Callback = function(Value)
+        mithril.auto = Value
+        if Value then
+            if root then
+                mithril.preCFrame = root.CFrame
+            end
+            mithril.model = nil
+            mithril.orePart = nil
+            mithril.payload = nil
+            mithril.lastSearchTime = 0
+
+            Window:Notify({
+                Title = "Mithril Farm Enabled",
+                Content = "Teleporting to Crystal Geode Mithril ores & chomping...",
+                Duration = 3,
+                Image = 4483362458,
+            })
+        else
+            if mithril.anchor and root then
+                pcall(function() root.Anchored = false end)
+            end
+            if mithril.returnOnDisable and mithril.preCFrame and root and char then
+                char:PivotTo(mithril.preCFrame)
+                root.CFrame = mithril.preCFrame
+                for _, part in ipairs(charBaseParts) do
+                    part.AssemblyLinearVelocity = Vector3.zero
+                    part.AssemblyAngularVelocity = Vector3.zero
+                end
+            end
+            mithril.model = nil
+            mithril.orePart = nil
+            mithril.payload = nil
+        end
+        updateHeartbeatConnection()
+    end,
+})
+
+MiningTab:CreateToggle({
+    Name = "Show Mithril ESP (Crystal Geode)",
+    CurrentValue = false,
+    Flag = "Toggle_MithrilESP",
+    Callback = function(Value)
+        mithril.showESP = Value
+        mithril.updateESP()
+    end,
+})
+
+MiningTab:CreateDropdown({
+    Name = "Mithril Selection Order",
+    Options = {"Nearest Available", "Alphabetical (A-Z)"},
+    CurrentOption = {"Nearest Available"},
+    MultipleOptions = false,
+    Flag = "Dropdown_MithrilOrder",
+    Callback = function(Option)
+        local selection = type(Option) == "table" and Option[1] or Option
+        if selection == "Alphabetical (A-Z)" then
+            mithril.order = "Alphabetical (A-Z)"
+        else
+            mithril.order = "Nearest Available"
+        end
+    end,
+})
+
+MiningTab:CreateSlider({
+    Name = "Mithril Chomp Delay",
+    Range = {0.05, 0.5},
+    Increment = 0.01,
+    Suffix = "s",
+    CurrentValue = 0.1,
+    Flag = "Slider_MithrilDelay",
+    Callback = function(Value)
+        mithril.delay = Value
+    end,
+})
+
+MiningTab:CreateSlider({
+    Name = "Mithril Teleport Height Offset",
+    Range = {0, 8},
+    Increment = 0.5,
+    Suffix = "Studs",
+    CurrentValue = 2.5,
+    Flag = "Slider_MithrilHeight",
+    Callback = function(Value)
+        mithril.heightOffset = Value
+    end,
+})
+
+MiningTab:CreateToggle({
+    Name = "Anchor Root While Mining",
+    CurrentValue = false,
+    Flag = "Toggle_MithrilAnchor",
+    Callback = function(Value)
+        mithril.anchor = Value
+        if not Value and root and not isUnderground then
+            pcall(function() root.Anchored = false end)
+        end
+    end,
+})
+
+MiningTab:CreateToggle({
+    Name = "Return to Pre-Farm Pos on Disable (Mithril)",
+    CurrentValue = false,
+    Flag = "Toggle_MithrilReturn",
+    Callback = function(Value)
+        mithril.returnOnDisable = Value
+    end,
 })
 
 -- ==========================
@@ -2597,15 +3329,28 @@ SettingsTab:CreateButton({
         autoChompMobs = false
         autoFish = false
         autoDodgeMobs = false
-        autoManatite = false
-        showManatiteESP = false
-        cleanupManatiteVisuals()
-        if manatiteAnchorChomp and root then
-            pcall(function() root.Anchored = false end)
+        if manatite then
+            manatite.auto = false
+            manatite.showESP = false
+            manatite.cleanupVisuals()
+            if manatite.anchor and root then
+                pcall(function() root.Anchored = false end)
+            end
+            manatite.model = nil
+            manatite.target = nil
+            manatite.payload = nil
         end
-        currentManatiteModel = nil
-        currentGrazeTarget = nil
-        currentManatitePayload = nil
+        if mithril then
+            mithril.auto = false
+            mithril.showESP = false
+            mithril.cleanupVisuals()
+            if mithril.anchor and root then
+                pcall(function() root.Anchored = false end)
+            end
+            mithril.model = nil
+            mithril.orePart = nil
+            mithril.payload = nil
+        end
         if isUnderground and root and lastSurfaceCFrame then
             root.CFrame = lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
             root.Anchored = false
@@ -2620,10 +3365,10 @@ SettingsTab:CreateButton({
             currentAttackingMob = nil
         end
         scannerRunning = false
-        showPenESP = false
-        showChestESP = false
-        updatePenVisualizer()
-        updateChestESP()
+        penESP.show = false
+        chestESP.show = false
+        penESP.update()
+        chestESP.update()
 
         table.clear(activeAuraMobs)
         table.clear(mithrilCaveMobSet)
