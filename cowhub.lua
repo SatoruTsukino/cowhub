@@ -83,9 +83,9 @@ table.insert(scriptConnections, idleConn)
 local cowGame = ReplicatedStorage:WaitForChild("CowGame")
 local cowRemotes = cowGame:WaitForChild("Remotes")
 local chompEvent = cowRemotes:WaitForChild("ChompRequest")
-local fishingEvent = cowRemotes:FindFirstChild("FishingRequest") or cowRemotes:WaitForChild("FishingRequest")
+local fishingEvent = cowRemotes:FindFirstChild("FishingRequest") or cowRemotes:WaitForChild("FishingRequest", 5)
 local skinAuction = cowGame:WaitForChild("SkinAuction")
-local fishingSpotsFolder = workspace:WaitForChild("Fishing Spots")
+local fishingSpotsFolder = workspace:FindFirstChild("Fishing Spots") or workspace:WaitForChild("Fishing Spots", 5)
 
 -- Pre-configured Raycast Parameters (Zero allocation per frame)
 local raycastParams = RaycastParams.new()
@@ -403,12 +403,30 @@ local function getGrassNodes()
     return cachedGrassNodes
 end
 
+local function getFishingSpotsFolder()
+    if fishingSpotsFolder and fishingSpotsFolder.Parent then return fishingSpotsFolder end
+    fishingSpotsFolder = workspace:FindFirstChild("Fishing Spots") or workspace:FindFirstChild("FishingSpots")
+    if not fishingSpotsFolder then
+        local cWorld = cowWorldRef and cowWorldRef.Parent and cowWorldRef or workspace:FindFirstChild("CowWorld")
+        if cWorld then
+            fishingSpotsFolder = cWorld:FindFirstChild("Fishing Spots", true) or cWorld:FindFirstChild("FishingSpots", true)
+        end
+    end
+    return fishingSpotsFolder
+end
+
 local function getFishingSpots()
     local now = os.clock()
     if now - lastFishingSpotsCacheTime > 5 or #cachedFishingSpots == 0 then
         lastFishingSpotsCacheTime = now
-        if fishingSpotsFolder and fishingSpotsFolder.Parent then
-            cachedFishingSpots = fishingSpotsFolder:GetChildren()
+        local folder = getFishingSpotsFolder()
+        if folder then
+            table.clear(cachedFishingSpots)
+            for _, spot in ipairs(folder:GetChildren()) do
+                if spot:IsA("BasePart") or spot:IsA("Model") then
+                    table.insert(cachedFishingSpots, spot)
+                end
+            end
         end
     end
     return cachedFishingSpots
@@ -417,8 +435,17 @@ end
 local function getSpotPosition(spot)
     local pos = fishingSpotPosCache[spot]
     if pos then return pos end
-    pos = spot:IsA("Model") and spot:GetPivot().Position or spot.Position
-    fishingSpotPosCache[spot] = pos
+    if spot:IsA("Model") then
+        pos = spot:GetPivot().Position
+    elseif spot:IsA("BasePart") then
+        pos = spot.Position
+    else
+        local bp = spot:FindFirstChildWhichIsA("BasePart", true)
+        if bp then pos = bp.Position end
+    end
+    if pos then
+        fishingSpotPosCache[spot] = pos
+    end
     return pos
 end
 
@@ -1638,9 +1665,8 @@ local function cacheBackgroundElements()
     -- 1. Cache Water Ripples (Only if auto-fishing is enabled)
     if autoFish then
         table.clear(activeRipples)
-        local searchRoot = cWorld or workspace
-        for _, v in ipairs(searchRoot:GetDescendants()) do
-            if string.find(v.Name, "CowFishingWaterRipples", 1, true) then
+        for _, v in ipairs(workspace:GetDescendants()) do
+            if string.find(v.Name, "FishingWaterRipples", 1, true) then
                 table.insert(activeRipples, v)
             end
         end
@@ -1694,7 +1720,23 @@ local ripplePosCache = setmetatable({}, { __mode = "k" })
 local function getRipplePosition(ripple)
     local pos = ripplePosCache[ripple]
     if pos then return pos end
-    pos = ripple:IsA("Model") and ripple:GetPivot().Position or (ripple:IsA("BasePart") and ripple.Position)
+    if ripple:IsA("Model") then
+        pos = ripple:GetPivot().Position
+    elseif ripple:IsA("BasePart") then
+        pos = ripple.Position
+    elseif ripple:IsA("Attachment") then
+        pos = ripple.WorldPosition
+    else
+        local bp = ripple:FindFirstChildWhichIsA("BasePart", true)
+        if bp then
+            pos = bp.Position
+        else
+            local att = ripple:FindFirstChildWhichIsA("Attachment", true)
+            if att then
+                pos = att.WorldPosition
+            end
+        end
+    end
     if pos then
         ripplePosCache[ripple] = pos
     end
@@ -1703,22 +1745,53 @@ end
 
 local function isSpotAvailable(spot)
     local spotPos = getSpotPosition(spot)
+    if not spotPos then return false end
 
+    local availAttr = spot:GetAttribute("Available")
+    if availAttr == false then
+        return false
+    end
+
+    -- 1. Check direct child/descendant ripple on spot
+    local directRipple = spot:FindFirstChild("CowFishingWaterRipples", true) or spot:FindFirstChild("FishingWaterRipples", true)
+    if directRipple then
+        local surfaceGui = directRipple:FindFirstChild("FishingWaterSurface", true) or directRipple:FindFirstChildWhichIsA("SurfaceGui", true)
+        if surfaceGui then
+            if surfaceGui.Enabled then return true end
+        else
+            return true
+        end
+    end
+
+    -- Direct SurfaceGui on spot
+    local directSurface = spot:FindFirstChild("FishingWaterSurface", true) or spot:FindFirstChildWhichIsA("SurfaceGui", true)
+    if directSurface and directSurface:IsA("SurfaceGui") then
+        if directSurface.Enabled then return true end
+    end
+
+    -- 2. Check active ripples across workspace
     for _, ripple in ipairs(activeRipples) do
         if ripple.Parent then
+            local isDirectChild = ripple:IsDescendantOf(spot) or spot:IsDescendantOf(ripple)
             local ripplePos = getRipplePosition(ripple)
 
-            if ripplePos then
-                -- 5 studs squared = 25 (zero allocation 3D check)
-                if get3DDistanceSq(spotPos, ripplePos) <= 25 then
-                    local surfaceGui = ripple:FindFirstChild("FishingWaterSurface")
-                    if surfaceGui and surfaceGui.Enabled then
+            if isDirectChild or (ripplePos and (get2DDistanceSq(spotPos, ripplePos) <= 225 or get3DDistanceSq(spotPos, ripplePos) <= 256)) then
+                local surfaceGui = ripple:FindFirstChild("FishingWaterSurface", true) or ripple:FindFirstChildWhichIsA("SurfaceGui", true)
+                if surfaceGui then
+                    if surfaceGui.Enabled then
                         return true
                     end
+                else
+                    return true
                 end
             end
         end
     end
+
+    if availAttr == true then
+        return true
+    end
+
     return false
 end
 
@@ -2740,8 +2813,11 @@ local function updateHeartbeatConnection()
                 end
 
                 -- 4. Auto-Fishing Logic
-                if autoFish and not (manatite and manatite.auto) and not (mithril and mithril.auto) and fishingEvent then
-                    if now - castCooldown > 3 then
+                if autoFish and not (manatite and manatite.auto) and not (mithril and mithril.auto) then
+                    if not fishingEvent and cowRemotes then
+                        fishingEvent = cowRemotes:FindFirstChild("FishingRequest")
+                    end
+                    if fishingEvent and (now - castCooldown > 3) then
                         local nearestSpot = nil
                         local shortestDistSq = 2500 -- 50 studs squared
                         local fishingSpots = getFishingSpots()
@@ -2749,11 +2825,13 @@ local function updateHeartbeatConnection()
                         for _, spot in ipairs(fishingSpots) do
                             if spot.Parent then
                                 local spotPos = getSpotPosition(spot)
-                                local distSq = get2DDistanceSq(rootPos, spotPos)
+                                if spotPos then
+                                    local distSq = get2DDistanceSq(rootPos, spotPos)
 
-                                if distSq < shortestDistSq and isSpotAvailable(spot) then
-                                    shortestDistSq = distSq
-                                    nearestSpot = spot
+                                    if distSq < shortestDistSq and isSpotAvailable(spot) then
+                                        shortestDistSq = distSq
+                                        nearestSpot = spot
+                                    end
                                 end
                             end
                         end
@@ -3001,6 +3079,10 @@ MainTab:CreateToggle({
     Flag = "Toggle_Fish",
     Callback = function(Value)
         autoFish = Value
+        if Value then
+            lastBackgroundCacheTime = 0
+            task.spawn(cacheBackgroundElements)
+        end
         updateHeartbeatConnection()
     end,
 })
