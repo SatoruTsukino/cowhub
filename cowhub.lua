@@ -247,14 +247,18 @@ local lastRaycastChompTime = 0
 local lastChompedMob = ""
 local mobChompCooldown = 0
 
--- Background Caching Variables
+-- Background Caching & Auto-Fishing Variables
 local castCooldown = 0
-local activeRipples = {}
+local lastFishingSearchTime = 0
+local activeRipples = setmetatable({}, { __mode = "k" })
+local rippleConnections = {}
 local activeAuraMobs = {}
 local mithrilCaveMobSet = setmetatable({}, { __mode = "k" })
 local spiderIdentifierCache = setmetatable({}, { __mode = "k" })
 local isEPressed = false
 local lastBackgroundCacheTime = 0
+local isCachingBackground = false
+local lastSanitationTime = 0
 
 -- Mob Attack Dodge Variables (Run Away & Surface Retreat)
 local autoDodgeMobs = false
@@ -361,10 +365,10 @@ end
 -- CACHE & STRING MEMOIZATIONS
 -- ==========================
 local nodePositionCache = setmetatable({}, { __mode = "k" })
-local mobAttackOriginPartCache = setmetatable({}, { __mode = "k" })
-local mobHumanoidCache = setmetatable({}, { __mode = "k" })
-local mobWarningCache = setmetatable({}, { __mode = "k" })
-local mobWarningCheckTime = setmetatable({}, { __mode = "k" })
+local mobAttackOriginPartCache = setmetatable({}, { __mode = "kv" })
+local mobHumanoidCache = setmetatable({}, { __mode = "kv" })
+local mobWarningCache = setmetatable({}, { __mode = "kv" })
+local mobWarningCheckTime = setmetatable({}, { __mode = "kv" })
 local fishingSpotPosCache = setmetatable({}, { __mode = "k" })
 
 local cachedGrassFolder = workspace:FindFirstChild("CowVirtualGrass")
@@ -403,15 +407,24 @@ local function getGrassNodes()
     return cachedGrassNodes
 end
 
+local function getFishingSpotsFolder()
+    if fishingSpotsFolder and fishingSpotsFolder.Parent then return fishingSpotsFolder end
+    fishingSpotsFolder = workspace:FindFirstChild("Fishing Spots") or workspace:FindFirstChild("FishingSpots")
+    if not fishingSpotsFolder and cowWorldRef and cowWorldRef.Parent then
+        fishingSpotsFolder = cowWorldRef:FindFirstChild("Fishing Spots", true) or cowWorldRef:FindFirstChild("FishingSpots", true)
+    end
+    return fishingSpotsFolder
+end
+
 local function getFishingSpots()
     local now = os.clock()
     if now - lastFishingSpotsCacheTime > 5 or #cachedFishingSpots == 0 then
         lastFishingSpotsCacheTime = now
-        local folder = fishingSpotsFolder and fishingSpotsFolder.Parent and fishingSpotsFolder or workspace:FindFirstChild("Fishing Spots")
+        local folder = getFishingSpotsFolder()
         if folder then
             table.clear(cachedFishingSpots)
             for _, spot in ipairs(folder:GetChildren()) do
-                if spot:IsA("BasePart") or spot:IsA("Model") then
+                if (spot:IsA("BasePart") or spot:IsA("Model")) and spot.Parent then
                     table.insert(cachedFishingSpots, spot)
                 end
             end
@@ -421,6 +434,10 @@ local function getFishingSpots()
 end
 
 local function getSpotPosition(spot)
+    if not spot or not spot.Parent then
+        fishingSpotPosCache[spot] = nil
+        return nil
+    end
     local pos = fishingSpotPosCache[spot]
     if pos then return pos end
     pos = spot:IsA("Model") and spot:GetPivot().Position or (spot:IsA("BasePart") and spot.Position)
@@ -465,7 +482,7 @@ local function cleanupNodeBlacklist(now)
     if now - lastBlacklistCleanup > 15 then
         lastBlacklistCleanup = now
         for node, timestamp in pairs(nodeBlacklist) do
-            if now - timestamp > 10 then
+            if not node or not node.Parent or (now - timestamp > 10) then
                 nodeBlacklist[node] = nil
             end
         end
@@ -726,7 +743,7 @@ function manatite.cleanupBlacklist(now)
     if now - manatite.lastBlacklistCleanup > 10 then
         manatite.lastBlacklistCleanup = now
         for model, timestamp in pairs(manatite.blacklist) do
-            if now - timestamp > 20 then
+            if not model or not model.Parent or (now - timestamp > 20) then
                 manatite.blacklist[model] = nil
             end
         end
@@ -985,7 +1002,7 @@ function mithril.cleanupBlacklist(now)
     if now - mithril.lastBlacklistCleanup > 10 then
         mithril.lastBlacklistCleanup = now
         for model, timestamp in pairs(mithril.blacklist) do
-            if now - timestamp > 20 then
+            if not model or not model.Parent or (now - timestamp > 20) then
                 mithril.blacklist[model] = nil
             end
         end
@@ -1075,7 +1092,10 @@ end
 
 -- Gets the cached attacking part (Head for snakes, CavernBodyVisual for spiders)
 local function getMobAttackOriginPart(mob)
-    if not mob then return nil end
+    if not mob or not mob.Parent then
+        mobAttackOriginPartCache[mob] = nil
+        return nil
+    end
     local cached = mobAttackOriginPartCache[mob]
     if cached and cached.Parent and cached:IsDescendantOf(mob) then
         return cached
@@ -1161,7 +1181,10 @@ end
 
 -- Validates whether a mob is physically alive (O(1) checks, zero GetDescendants)
 local function isMobAlive(mob)
-    if not mob or not mob.Parent then return false end
+    if not mob or not mob.Parent then
+        mobHumanoidCache[mob] = nil
+        return false
+    end
 
     -- Check Humanoid health if mob is rigged with a humanoid
     local hum = mobHumanoidCache[mob]
@@ -1219,7 +1242,11 @@ end
 
 -- Finds CavernAttackWarning with weak caching and 0.5s throttled retries
 local function findAttackWarning(mob)
-    if not mob or not mob.Parent then return nil end
+    if not mob or not mob.Parent then
+        mobWarningCache[mob] = nil
+        mobWarningCheckTime[mob] = nil
+        return nil
+    end
 
     local cached = mobWarningCache[mob]
     if cached then
@@ -1639,26 +1666,73 @@ local function collectSpidersFromChamber(chamber)
     end
 end
 
--- Zero-allocation background caching for ripples and Aura Mobs (Snakes & Spiders)
-local function cacheBackgroundElements()
-    local cWorld = cowWorldRef and cowWorldRef.Parent and cowWorldRef or workspace:FindFirstChild("CowWorld")
+-- ==========================
+-- FISHING RIPPLE TRACKING (Zero Allocation & Leak-Free)
+-- ==========================
+local function registerRipple(ripple)
+    if not ripple or not ripple.Parent then return end
+    if not string.find(ripple.Name, "FishingWaterRipples", 1, true) then return end
+    activeRipples[ripple] = true
+end
 
-    -- 1. Cache Water Ripples (Only if auto-fishing is enabled)
-    if autoFish then
-        local newRipples = {}
-        for _, v in ipairs(workspace:GetDescendants()) do
-            if string.find(v.Name, "CowFishingWaterRipples", 1, true) then
-                table.insert(newRipples, v)
-            end
+local function unregisterRipple(ripple)
+    if ripple then
+        activeRipples[ripple] = nil
+        ripplePosCache[ripple] = nil
+    end
+end
+
+local function cleanupRippleTracking()
+    for _, conn in ipairs(rippleConnections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    table.clear(rippleConnections)
+    table.clear(activeRipples)
+    table.clear(ripplePosCache)
+end
+
+local function initRippleTracking()
+    cleanupRippleTracking()
+
+    -- 1. Scan direct children / descendants of fishingSpotsFolder (tiny scope: ~50 instances)
+    local fFolder = getFishingSpotsFolder()
+    if fFolder then
+        for _, desc in ipairs(fFolder:GetDescendants()) do
+            registerRipple(desc)
         end
-        activeRipples = newRipples
-    else
-        if #activeRipples > 0 then
-            table.clear(activeRipples)
-        end
+        local conn = fFolder.DescendantAdded:Connect(registerRipple)
+        table.insert(rippleConnections, conn)
+        local remConn = fFolder.DescendantRemoving:Connect(unregisterRipple)
+        table.insert(rippleConnections, remConn)
     end
 
-    -- 2. Cache Aura Mobs (Snakes & Spiders) strictly under their clearings and Mithril Cave
+    -- 2. Scan direct workspace children only (not descendants! ~30 instances)
+    for _, child in ipairs(workspace:GetChildren()) do
+        registerRipple(child)
+    end
+    local wsConn = workspace.ChildAdded:Connect(registerRipple)
+    table.insert(rippleConnections, wsConn)
+    local wsRemConn = workspace.ChildRemoved:Connect(unregisterRipple)
+    table.insert(rippleConnections, wsRemConn)
+
+    -- 3. Scan direct CowWorld children if present (~20 instances)
+    local cWorld = cowWorldRef and cowWorldRef.Parent and cowWorldRef or workspace:FindFirstChild("CowWorld")
+    if cWorld then
+        for _, child in ipairs(cWorld:GetChildren()) do
+            registerRipple(child)
+        end
+        local cwConn = cWorld.ChildAdded:Connect(registerRipple)
+        table.insert(rippleConnections, cwConn)
+        local cwRemConn = cWorld.ChildRemoved:Connect(unregisterRipple)
+        table.insert(rippleConnections, cwRemConn)
+    end
+end
+
+-- Lightweight background caching for Aura Mobs (Snakes & Spiders) strictly under their clearings
+local function cacheBackgroundElements()
+    if isCachingBackground then return end
+    isCachingBackground = true
+
     if autoChompMobs or autoDodgeMobs then
         table.clear(activeAuraMobs)
         table.clear(mithrilCaveMobSet)
@@ -1696,10 +1770,16 @@ local function cacheBackgroundElements()
         end
         table.clear(mithrilCaveMobSet)
     end
+
+    isCachingBackground = false
 end
 
-local ripplePosCache = setmetatable({}, { __mode = "k" })
+local ripplePosCache = setmetatable({}, { __mode = "kv" })
 local function getRipplePosition(ripple)
+    if not ripple or not ripple.Parent then
+        ripplePosCache[ripple] = nil
+        return nil
+    end
     local pos = ripplePosCache[ripple]
     if pos then return pos end
     pos = ripple:IsA("Model") and ripple:GetPivot().Position or (ripple:IsA("BasePart") and ripple.Position)
@@ -1710,25 +1790,39 @@ local function getRipplePosition(ripple)
 end
 
 local function isSpotAvailable(spot)
+    if not spot or not spot.Parent then return false end
     local spotPos = getSpotPosition(spot)
     if not spotPos then return false end
 
-    for _, ripple in ipairs(activeRipples) do
-        if ripple.Parent then
-            local ripplePos = getRipplePosition(ripple)
+    -- 1. Check direct surface on spot first (fastest non-allocating check)
+    local directSurface = spot:FindFirstChild("FishingWaterSurface")
+    if directSurface and directSurface.Enabled then
+        return true
+    end
 
-            if ripplePos and (get3DDistanceSq(spotPos, ripplePos) <= 49 or ripple:IsDescendantOf(spot)) then
-                local surfaceGui = ripple:FindFirstChild("FishingWaterSurface") or ripple:FindFirstChild("FishingWaterSurface", true)
-                if surfaceGui and surfaceGui.Enabled then
-                    return true
-                end
-            end
+    -- 2. Check direct ripple child on spot
+    local directRipple = spot:FindFirstChild("CowFishingWaterRipples") or spot:FindFirstChild("FishingWaterRipples")
+    if directRipple and directRipple.Parent then
+        local surfaceGui = directRipple:FindFirstChild("FishingWaterSurface")
+        if (surfaceGui and surfaceGui.Enabled) or not surfaceGui then
+            return true
         end
     end
 
-    local directSurface = spot:FindFirstChild("FishingWaterSurface") or spot:FindFirstChild("FishingWaterSurface", true)
-    if directSurface and directSurface.Enabled then
-        return true
+    -- 3. Check tracked active ripples (within 7 studs squared = 49 or descendant)
+    for ripple, _ in pairs(activeRipples) do
+        if ripple and ripple.Parent then
+            local ripplePos = getRipplePosition(ripple)
+            if ripplePos and (get3DDistanceSq(spotPos, ripplePos) <= 49 or ripple:IsDescendantOf(spot)) then
+                local surfaceGui = ripple:FindFirstChild("FishingWaterSurface")
+                if (surfaceGui and surfaceGui.Enabled) or not surfaceGui then
+                    return true
+                end
+            end
+        else
+            activeRipples[ripple] = nil
+            ripplePosCache[ripple] = nil
+        end
     end
 
     return false
@@ -1896,6 +1990,13 @@ function manatite.updateESP()
                 local now = os.clock()
                 if now - lastEspUpdate > 0.4 then
                     lastEspUpdate = now
+                    for model, visual in pairs(manatite.visuals) do
+                        if not model or not model.Parent then
+                            if visual.highlight then pcall(function() visual.highlight:Destroy() end) end
+                            if visual.billboard then pcall(function() visual.billboard:Destroy() end) end
+                            manatite.visuals[model] = nil
+                        end
+                    end
                     local models = manatite.getModels()
                     for _, model in ipairs(models) do
                         if model.Parent then
@@ -1984,6 +2085,13 @@ function mithril.updateESP()
                 local now = os.clock()
                 if now - lastEspUpdate > 0.4 then
                     lastEspUpdate = now
+                    for model, visual in pairs(mithril.visuals) do
+                        if not model or not model.Parent then
+                            if visual.highlight then pcall(function() visual.highlight:Destroy() end) end
+                            if visual.billboard then pcall(function() visual.billboard:Destroy() end) end
+                            mithril.visuals[model] = nil
+                        end
+                    end
                     local models = mithril.getModels()
                     for _, model in ipairs(models) do
                         if model.Parent then
@@ -2146,6 +2254,58 @@ local function debouncedCheckAuctionLots()
 end
 
 -- ==========================
+-- PERIODIC MEMORY SANITATION & GC ASSISTANCE
+-- ==========================
+local function sanitizeMemory(now)
+    if now - lastSanitationTime > 30 then
+        lastSanitationTime = now
+
+        for node, _ in pairs(nodePositionCache) do
+            if not node or not node.Parent then
+                nodePositionCache[node] = nil
+            end
+        end
+
+        for spot, _ in pairs(fishingSpotPosCache) do
+            if not spot or not spot.Parent then
+                fishingSpotPosCache[spot] = nil
+            end
+        end
+
+        for ripple, _ in pairs(activeRipples) do
+            if not ripple or not ripple.Parent then
+                activeRipples[ripple] = nil
+                ripplePosCache[ripple] = nil
+            end
+        end
+
+        for mob, _ in pairs(mobAttackOriginPartCache) do
+            if not mob or not mob.Parent then
+                mobAttackOriginPartCache[mob] = nil
+                mobHumanoidCache[mob] = nil
+                mobWarningCache[mob] = nil
+                mobWarningCheckTime[mob] = nil
+                spiderIdentifierCache[mob] = nil
+            end
+        end
+
+        cleanupNodeBlacklist(now)
+        if manatite and manatite.cleanupBlacklist then
+            manatite.cleanupBlacklist(now)
+        end
+        if mithril and mithril.cleanupBlacklist then
+            mithril.cleanupBlacklist(now)
+        end
+
+        pcall(function()
+            if collectgarbage then
+                collectgarbage("step", 100)
+            end
+        end)
+    end
+end
+
+-- ==========================
 -- MAIN ENGINE HEARTBEAT LOOP
 -- ==========================
 local function updateHeartbeatConnection()
@@ -2177,14 +2337,14 @@ local function updateHeartbeatConnection()
                 local now = os.clock()
                 local rootPos = root.Position
 
-                -- Targeted background caches refresh
-                if (autoFish or autoChompMobs or autoDodgeMobs) and (now - lastBackgroundCacheTime > 1.5) then
+                -- Targeted background caches refresh (only when mobs need caching)
+                if (autoChompMobs or autoDodgeMobs) and (now - lastBackgroundCacheTime > 1.5) then
                     lastBackgroundCacheTime = now
                     task.spawn(cacheBackgroundElements)
                 end
 
-                -- Weak blacklist sweep
-                cleanupNodeBlacklist(now)
+                -- Comprehensive memory sanitation
+                sanitizeMemory(now)
 
                 -- 0. Priority Mob Attack Warning & Dodge Logic (Run Away & Surface Retreat)
                 if autoDodgeMobs then
@@ -2756,7 +2916,8 @@ local function updateHeartbeatConnection()
                     if not fishingEvent and cowRemotes then
                         fishingEvent = cowRemotes:FindFirstChild("FishingRequest")
                     end
-                    if fishingEvent and (now - castCooldown > 3) then
+                    if fishingEvent and (now - castCooldown > 3) and (now - lastFishingSearchTime > 0.3) then
+                        lastFishingSearchTime = now
                         local nearestSpot = nil
                         local shortestDistSq = 2500 -- 50 studs squared
                         local fishingSpots = getFishingSpots()
@@ -3019,8 +3180,9 @@ MainTab:CreateToggle({
     Callback = function(Value)
         autoFish = Value
         if Value then
-            lastBackgroundCacheTime = 0
-            task.spawn(cacheBackgroundElements)
+            initRippleTracking()
+        else
+            cleanupRippleTracking()
         end
         updateHeartbeatConnection()
     end,
@@ -3634,6 +3796,7 @@ SettingsTab:CreateButton({
         autoChomp = false
         autoChompMobs = false
         autoFish = false
+        cleanupRippleTracking()
         autoDodgeMobs = false
         if manatite then
             manatite.auto = false
