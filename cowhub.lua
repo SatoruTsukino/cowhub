@@ -140,7 +140,7 @@ local patternTimer = 0
 local nextRandomPos = nil
 local farmRadius = 75
 local farmRadiusSq = farmRadius * farmRadius
-local MOB_AURA_RADIUS_SQ = 100 -- Hardcoded 10 studs squared (10 * 10)
+local MOB_AURA_RADIUS_SQ = 100 -- Hardcoded 10 studs squared (10 * 10) - server-enforced attack reach
 local mobAuraDelay = 0.1
 local lastMoveTime = 0
 local HeartbeatConnection = nil
@@ -281,13 +281,18 @@ local dodgeDetectionRadius = 15
 local dodgeDetectionRadiusSq = 15 * 15
 local dodgeLingerDelay = 0.6
 local prioritizeMobsOverManatite = true
-local MANATITE_THREAT_RADIUS_SQ = 100 -- 10 studs squared (10 * 10)
+local MANATITE_THREAT_RADIUS_SQ = 100 -- 10 studs squared (10 * 10) matching server attack reach
 local lastWarningSeenTime = 0
 local lastTeleportDodgeDist = 0
 local notifyOnDodge = false
 local dodgeOnHeartsDecreased = true
 local lastRecordedHearts = nil
 local normalPlayerHearts = 0
+local lastRecordedArmor = nil
+local normalPlayerArmor = 0
+local lastDamageRetreatTime = 0
+local threatStartTime = 0
+local dodgeStartTime = 0
 
 -- Spammer Variables
 local spamThreads = {E = 0, Q = 0}
@@ -1376,6 +1381,67 @@ local function getLocalPlayerMaxHearts()
             if typeof(val) == "number" then return val end
         end
     end
+    if humanoid and typeof(humanoid.MaxHealth) == "number" and humanoid.MaxHealth > 0 then
+        return humanoid.MaxHealth
+    end
+    return nil
+end
+
+-- Reads current armor attribute or value from LocalPlayer or Character
+local function getLocalPlayerArmor()
+    if plr then
+        for _, attr in ipairs({"Armor", "armor", "Shield", "shield", "ArmorHealth", "armorHealth", "CurrentArmor", "currentArmor"}) do
+            local val = plr:GetAttribute(attr)
+            if typeof(val) == "number" then return val, attr end
+        end
+        for _, name in ipairs({"Armor", "armor", "Shield", "shield"}) do
+            local obj = plr:FindFirstChild(name)
+            if obj and obj:IsA("ValueBase") and typeof(obj.Value) == "number" then
+                return obj.Value, name
+            end
+        end
+    end
+    if char then
+        for _, attr in ipairs({"Armor", "armor", "Shield", "shield", "ArmorHealth", "armorHealth", "CurrentArmor", "currentArmor"}) do
+            local val = char:GetAttribute(attr)
+            if typeof(val) == "number" then return val, attr end
+        end
+        for _, name in ipairs({"Armor", "armor", "Shield", "shield"}) do
+            local obj = char:FindFirstChild(name)
+            if obj and obj:IsA("ValueBase") and typeof(obj.Value) == "number" then
+                return obj.Value, name
+            end
+        end
+    end
+    return nil, nil
+end
+
+-- Reads max/normal armor attribute from LocalPlayer or Character
+local function getLocalPlayerMaxArmor()
+    if plr then
+        for _, attr in ipairs({"MaxArmor", "maxArmor", "NormalArmor", "normalArmor", "MaxShield", "maxShield"}) do
+            local val = plr:GetAttribute(attr)
+            if typeof(val) == "number" then return val end
+        end
+        for _, name in ipairs({"MaxArmor", "maxArmor", "NormalArmor", "normalArmor", "MaxShield", "maxShield"}) do
+            local obj = plr:FindFirstChild(name)
+            if obj and obj:IsA("ValueBase") and typeof(obj.Value) == "number" then
+                return obj.Value
+            end
+        end
+    end
+    if char then
+        for _, attr in ipairs({"MaxArmor", "maxArmor", "NormalArmor", "normalArmor", "MaxShield", "maxShield"}) do
+            local val = char:GetAttribute(attr)
+            if typeof(val) == "number" then return val end
+        end
+        for _, name in ipairs({"MaxArmor", "maxArmor", "NormalArmor", "normalArmor", "MaxShield", "maxShield"}) do
+            local obj = char:FindFirstChild(name)
+            if obj and obj:IsA("ValueBase") and typeof(obj.Value) == "number" then
+                return obj.Value
+            end
+        end
+    end
     return nil
 end
 
@@ -1426,17 +1492,17 @@ local function findSafeDodgePosition(originPos, preCFrame, away2D, maxDist, pref
         if candDir.Magnitude > 0.01 then
             candDir = candDir.Unit
 
-            -- 1. Horizontal obstacle & wall clearance check
+            -- 1. Horizontal obstacle & wall clearance check (with stepped distances for narrow caves)
             local wallHit = workspace:Raycast(rayOrigin, candDir * maxDist, dodgeRayParams)
             local clearDist
             if wallHit then
-                clearDist = wallHit.Distance - 3.5
+                clearDist = wallHit.Distance - 1.5
             else
                 clearDist = maxDist
             end
 
-            -- Require at least 3.5 studs of clear, unobstructed travel to avoid clipping walls
-            if clearDist >= 3.5 then
+            -- Require at least 2.0 studs of clear travel to permit cave nooks and corridors
+            if clearDist >= 2.0 then
                 local testDest = originPos + (candDir * clearDist)
 
                 -- 2. Destination floor check (cast down from +2 studs to prevent clipping cave ceilings)
@@ -1448,8 +1514,8 @@ local function findSafeDodgePosition(originPos, preCFrame, away2D, maxDist, pref
                     if math.abs(destRootY - originPos.Y) <= 8.0 then
                         local finalRootPos = Vector3.new(testDest.X, destRootY, testDest.Z)
 
-                        -- 3. Ceiling headroom verification (require at least 3.5 studs vertical clearance)
-                        local ceilHit = workspace:Raycast(finalRootPos, Vector3.new(0, 3.5, 0), dodgeRayParams)
+                        -- 3. Ceiling headroom verification (require 2.5 studs clearance for low cave ceilings)
+                        local ceilHit = workspace:Raycast(finalRootPos, Vector3.new(0, 2.5, 0), dodgeRayParams)
                         if not ceilHit then
                             -- 4. Line of sight check from current position to destination
                             local pathVec = (finalRootPos + Vector3.new(0, 0.5, 0)) - rayOrigin
@@ -1740,7 +1806,7 @@ local function cacheBackgroundElements()
 
         if resources then
             for _, clearing in ipairs(resources:GetChildren()) do
-                if clearing.Name == "MithrilCaveSpiders" then
+                if clearing.Name == "MithrilCaveSpiders" or string.find(clearing.Name, "Spider", 1, true) or string.find(clearing.Name, "Cave", 1, true) then
                     for _, chamber in ipairs(clearing:GetChildren()) do
                         collectSpidersFromChamber(chamber)
                     end
@@ -2370,11 +2436,36 @@ local function updateHeartbeatConnection()
                         lastRecordedHearts = currentHearts
                     end
 
+                    local currentArmor = getLocalPlayerArmor()
+                    local armorDecreased = false
+                    local armorAtZero = false
+
+                    if currentArmor ~= nil then
+                        if normalPlayerArmor == 0 or currentArmor > normalPlayerArmor then
+                            normalPlayerArmor = currentArmor
+                        end
+                        local maxArmorAttr = getLocalPlayerMaxArmor()
+                        if maxArmorAttr and maxArmorAttr > normalPlayerArmor then
+                            normalPlayerArmor = maxArmorAttr
+                        end
+
+                        if lastRecordedArmor ~= nil and currentArmor < lastRecordedArmor then
+                            armorDecreased = true
+                        end
+                        if currentArmor <= 0.05 then
+                            armorAtZero = true
+                        end
+                        lastRecordedArmor = currentArmor
+                    else
+                        -- No armor attribute or system detected: player is unarmored
+                        armorAtZero = true
+                    end
+
                     local attackingMobFound = false
                     local attackingMobInstance = nil
 
-                    -- Chained multi-mob dodging: scan activeAuraMobs for ANY active attack warning
-                    local checkOrigin = (isDodging and preDodgePos) or (isUnderground and lastSurfacePos) or rootPos
+                    -- Chained multi-mob dodging: scan activeAuraMobs for ANY active attack warning relative to current position
+                    local checkOrigin = (isUnderground and lastSurfacePos) or rootPos
                     local losOrigin = checkOrigin + Vector3.new(0, 0.5, 0)
                     for _, mob in ipairs(activeAuraMobs) do
                         if mob.Parent then
@@ -2395,11 +2486,42 @@ local function updateHeartbeatConnection()
                         end
                     end
 
-                    local shouldRetreat = (attackingMobFound and attackingMobInstance)
-                        or (dodgeOnHeartsDecreased and (heartsDecreased or (heartsBelowNormal and not isDodging)))
+                    local damageRetreatTriggered = false
+                    if dodgeOnHeartsDecreased then
+                        if heartsDecreased then
+                            damageRetreatTriggered = true
+                            lastDamageRetreatTime = now
+                        elseif armorDecreased and armorAtZero then
+                            damageRetreatTriggered = true
+                            lastDamageRetreatTime = now
+                        elseif armorAtZero and heartsBelowNormal and not isDodging and (now - lastDamageRetreatTime > 2.0) then
+                            damageRetreatTriggered = true
+                            lastDamageRetreatTime = now
+                        end
+                    end
+
+                    local shouldRetreat = (attackingMobFound and attackingMobInstance) or damageRetreatTriggered
 
                     if shouldRetreat then
                         lastWarningSeenTime = now
+
+                        -- If attacking mob is outside server attack range (10 studs), or if damaged while mining:
+                        -- The current crystal is infested and cannot be cleared from here.
+                        -- Blacklist it immediately so the bot relocates to a clean crystal in another cavern chamber.
+                        if (manatite and manatite.auto and manatite.model) or (mithril and mithril.auto and mithril.model) then
+                            if manatite and manatite.auto and manatite.model then
+                                manatite.blacklist[manatite.model] = now
+                                manatite.model = nil
+                                manatite.target = nil
+                                manatite.payload = nil
+                            end
+                            if mithril and mithril.auto and mithril.model then
+                                mithril.blacklist[mithril.model] = now
+                                mithril.model = nil
+                                mithril.orePart = nil
+                                mithril.payload = nil
+                            end
+                        end
 
                         -- Force unanchor during surface dodges so evasion is never locked
                         if root.Anchored and dodgeMethod ~= "Underground" then
@@ -2443,9 +2565,10 @@ local function updateHeartbeatConnection()
                             end
                         end
 
-                        if not isDodging or (isDodging and heartsDecreased) then
+                        if not isDodging or (isDodging and damageRetreatTriggered) then
                             if not isDodging then
                                 isDodging = true
+                                dodgeStartTime = now
                                 preDodgePos = rootPos
                                 preDodgeCFrame = root.CFrame
                                 if humanoid then
@@ -2466,13 +2589,13 @@ local function updateHeartbeatConnection()
                                 local targetCFrame = nil
                                 local actualDist = 0
 
-                                if safeDodgeCFrame and safeDodgeDist and safeDodgeDist >= 3.5 then
+                                if safeDodgeCFrame and safeDodgeDist and safeDodgeDist >= 2.0 then
                                     targetCFrame = safeDodgeCFrame
                                     actualDist = safeDodgeDist
                                 end
 
-                                -- If hearts decreased or below normal, retreat regardless of within a wall or not
-                                if not targetCFrame and (heartsDecreased or heartsBelowNormal or (safeDodgeDist and safeDodgeDist < 3.5)) then
+                                -- If damage occurred, retreat regardless of obstacle clearance
+                                if not targetCFrame and (damageRetreatTriggered or (safeDodgeDist and safeDodgeDist < 2.0)) then
                                     local fallbackOffset = retreatDir * dodgeRetreatDistance
                                     local fallbackPos = (preDodgePos or rootPos) + fallbackOffset
                                     local floorRay = workspace:Raycast(fallbackPos + Vector3.new(0, 2.0, 0), Vector3.new(0, -10, 0), raycastParams)
@@ -2517,7 +2640,9 @@ local function updateHeartbeatConnection()
                             end
 
                             if notifyOnDodge then
-                                local reason = (heartsDecreased or heartsBelowNormal) and " [Hearts Decreased]" or ""
+                                local reason = (armorAtZero and (heartsDecreased or heartsBelowNormal) and " [Armor Broken & Hearts Decreased]")
+                                    or ((heartsDecreased or heartsBelowNormal) and " [Hearts Decreased]")
+                                    or ""
                                 local methodDesc = (dodgeMethod == "Run Away (Surface)" and "Running away " .. tostring(dodgeRetreatDistance) .. " studs" .. reason .. ".")
                                     or (dodgeMethod == "Teleport Away (Surface)" and (lastTeleportDodgeDist > 0 and string.format("Teleported %.1f studs away%s.", lastTeleportDodgeDist, reason) or "Retreated away."))
                                     or ("Retreated underground (" .. tostring(math.floor(dodgeRetreatDistance)) .. " studs away" .. reason .. ").")
@@ -2552,14 +2677,9 @@ local function updateHeartbeatConnection()
                             root.AssemblyAngularVelocity = Vector3.zero
                         end
                     else
-                        -- No active warning seen this frame: check if currently dodging
+                        -- No active attack warning or damage hit this frame: check if currently dodging
                         if isDodging then
-                            -- Keep evasion alive if hearts are still below normal
-                            if dodgeOnHeartsDecreased and heartsBelowNormal then
-                                lastWarningSeenTime = now
-                            end
-
-                            local canExitDodge = ((now - lastWarningSeenTime) >= dodgeLingerDelay) and not (dodgeOnHeartsDecreased and heartsBelowNormal)
+                            local canExitDodge = ((now - lastWarningSeenTime) >= dodgeLingerDelay) or (now - dodgeStartTime > 2.0)
 
                             if canExitDodge then
                                 -- Safe! Attack has completely ended
@@ -2594,9 +2714,11 @@ local function updateHeartbeatConnection()
                                         end
                                     end
 
-                                    -- Return safely to preDodgeCFrame if farming Manatite or Mithril
+                                    -- Return safely to preDodgeCFrame if farming Manatite or Mithril ONLY IF the crystal wasn't blacklisted from damage
                                     if dodgeMethod == "Teleport Away (Surface)" and preDodgeCFrame then
-                                        if ((manatite and manatite.auto) or (mithril and mithril.auto)) then
+                                        local crystalStillValid = (manatite and manatite.auto and manatite.model and not manatite.blacklist[manatite.model])
+                                            or (mithril and mithril.auto and mithril.model and not mithril.blacklist[mithril.model])
+                                        if crystalStillValid then
                                             char:PivotTo(preDodgeCFrame)
                                             root.CFrame = preDodgeCFrame
                                             for _, part in ipairs(charBaseParts) do
@@ -2838,6 +2960,13 @@ local function updateHeartbeatConnection()
                                 if spiderId then
                                     local payloadName = "Cavern_Mob_Spider_" .. tostring(spiderId)
                                     chompEvent:FireServer(payloadName)
+                                else
+                                    local fallbackPayload = getMobPayload(mob.Name)
+                                    if fallbackPayload then
+                                        chompEvent:FireServer(fallbackPayload)
+                                    end
+                                    chompEvent:FireServer("Cavern_Mob_Spider")
+                                    chompEvent:FireServer(mob.Name)
                                 end
 
                                 if fireproximityprompt then
@@ -2943,7 +3072,7 @@ local function updateHeartbeatConnection()
                     end
                 end
 
-                -- Threat clearing detection: check if any alive hostile mobs are within 10 studs with unobstructed line of sight
+                -- Threat clearing detection: check if any alive hostile mobs are within server attack reach (10 studs) with unobstructed line of sight
                 local hasNearbyThreat = false
                 if autoChompMobs and ((manatite and manatite.auto) or (mithril and mithril.auto) or farmOn) then
                     local threatOrigin = isUnderground and (lastSurfacePos or rootPos) or rootPos
@@ -2951,7 +3080,7 @@ local function updateHeartbeatConnection()
                     for _, mob in ipairs(activeAuraMobs) do
                         if mob.Parent and isMobAlive(mob) then
                             local mobPos = getMobAttackOrigin(mob)
-                            if mobPos and get2DDistanceSq(threatOrigin, mobPos) <= MANATITE_THREAT_RADIUS_SQ then
+                            if mobPos and get3DDistanceSq(threatOrigin, mobPos) <= MANATITE_THREAT_RADIUS_SQ then
                                 if hasLineOfSight(losOrigin, mobPos, mob) then
                                     hasNearbyThreat = true
                                     break
@@ -2959,6 +3088,38 @@ local function updateHeartbeatConnection()
                             end
                         end
                     end
+                end
+
+                -- Mobs outside actual server attack reach (closestMob was nil in autoChompMobs) must NOT freeze the farm loop
+                if hasNearbyThreat and not prioritizedMobThisFrame then
+                    hasNearbyThreat = false
+                end
+
+                -- Deadlock breaker: if surrounding mobs cannot be killed or persist for > 1.5 seconds, relocate to next crystal
+                if hasNearbyThreat then
+                    if threatStartTime == 0 then
+                        threatStartTime = now
+                    elseif (now - threatStartTime > 1.5) then
+                        if manatite and manatite.auto and manatite.model then
+                            manatite.blacklist[manatite.model] = now
+                            manatite.model = nil
+                            manatite.target = nil
+                            manatite.payload = nil
+                        end
+                        if mithril and mithril.auto and mithril.model then
+                            mithril.blacklist[mithril.model] = now
+                            mithril.model = nil
+                            mithril.orePart = nil
+                            mithril.payload = nil
+                        end
+                        if root then
+                            pcall(function() root.Anchored = false end)
+                        end
+                        threatStartTime = 0
+                        hasNearbyThreat = false
+                    end
+                else
+                    threatStartTime = 0
                 end
 
                 if hasNearbyThreat and prioritizeMobsOverManatite and root.Anchored and not isUnderground then
@@ -3381,7 +3542,7 @@ MainTab:CreateToggle({
 })
 
 MainTab:CreateToggle({
-    Name = "Retreat on Hearts Decreased",
+    Name = "Retreat on Armor / Hearts Decreased",
     CurrentValue = true,
     Flag = "Toggle_DodgeHearts",
     Callback = function(Value)
