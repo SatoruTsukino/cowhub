@@ -438,7 +438,7 @@ local function getResourcesFolder()
     return rafting and rafting:FindFirstChild("Resources")
 end
 
-function cache.cache.getNodePosition(node)
+function cache.getNodePosition(node)
     local pos = cache.nodePosition[node]
     if pos then return pos end
     pos = node:IsA("Model") and node:GetPivot().Position or node.Position
@@ -446,7 +446,7 @@ function cache.cache.getNodePosition(node)
     return pos
 end
 
-function cache.cache.getGrassNodes()
+function cache.getGrassNodes()
     local now = os.clock()
     if not cache.grassFolder or not cache.grassFolder.Parent then
         cache.grassFolder = workspace:FindFirstChild("CowVirtualGrass")
@@ -458,7 +458,7 @@ function cache.cache.getGrassNodes()
     return cache.grassNodes
 end
 
-function cache.cache.getFishingSpotsFolder()
+function cache.getFishingSpotsFolder()
     if fishingSpotsFolder and fishingSpotsFolder.Parent then return fishingSpotsFolder end
     fishingSpotsFolder = workspace:FindFirstChild("Fishing Spots") or workspace:FindFirstChild("FishingSpots")
     if not fishingSpotsFolder and cache.cowWorldRef and cache.cowWorldRef.Parent then
@@ -467,7 +467,7 @@ function cache.cache.getFishingSpotsFolder()
     return fishingSpotsFolder
 end
 
-function cache.cache.getFishingSpots()
+function cache.getFishingSpots()
     local now = os.clock()
     if now - cache.lastFishingSpotsTime > 5 or #cache.fishingSpots == 0 then
         cache.lastFishingSpotsTime = now
@@ -484,7 +484,7 @@ function cache.cache.getFishingSpots()
     return cache.fishingSpots
 end
 
-function cache.cache.getSpotPosition(spot)
+function cache.getSpotPosition(spot)
     if not spot or not spot.Parent then
         cache.fishingSpotPos[spot] = nil
         return nil
@@ -498,7 +498,7 @@ function cache.cache.getSpotPosition(spot)
     return pos
 end
 
-function cache.cache.getCleanGrassName(nodeName)
+function cache.getCleanGrassName(nodeName)
     local cached = cache.nodeCleanNames[nodeName]
     if cached ~= nil then return cached end
 
@@ -515,7 +515,7 @@ function cache.cache.getCleanGrassName(nodeName)
     end
 end
 
-function cache.cache.getMobPayload(mobName)
+function cache.getMobPayload(mobName)
     local cached = cache.mobPayloads[mobName]
     if cached then return cached end
 
@@ -529,7 +529,7 @@ function cache.cache.getMobPayload(mobName)
     return cached
 end
 
-function cache.cache.cleanupNodeBlacklist(now)
+function cache.cleanupNodeBlacklist(now)
     if now - cache.lastBlacklistCleanup > 15 then
         cache.lastBlacklistCleanup = now
         for node, timestamp in pairs(cache.nodeBlacklist) do
@@ -1142,7 +1142,7 @@ function mithril.teleport(orePart, model)
 end
 
 -- Gets the cached attacking part (Head for snakes, CavernBodyVisual for spiders)
-function dodge.dodge.getMobAttackOriginPart(mob)
+function dodge.getMobAttackOriginPart(mob)
     if not mob or not mob.Parent then
         cache.mobAttackOriginPart[mob] = nil
         return nil
@@ -1186,7 +1186,7 @@ function dodge.dodge.getMobAttackOriginPart(mob)
     return nil
 end
 
-function dodge.dodge.getMobAttackOrigin(mob)
+function dodge.getMobAttackOrigin(mob)
     local part = dodge.getMobAttackOriginPart(mob)
     if part then
         return part.Position
@@ -1198,7 +1198,7 @@ function dodge.dodge.getMobAttackOrigin(mob)
 end
 
 -- Checks if there is an unobstructed line of sight (no walls, terrain, or solid geometry) between origin and mob
-function dodge.dodge.hasLineOfSight(origin, mobPos, mob)
+function dodge.hasLineOfSight(origin, mobPos, mob)
     if not origin or not mobPos or not mob then return false end
 
     local dir = mobPos - origin
@@ -1231,7 +1231,7 @@ function dodge.dodge.hasLineOfSight(origin, mobPos, mob)
 end
 
 -- Validates whether a mob is physically alive (O(1) checks, zero GetDescendants)
-function dodge.dodge.isMobAlive(mob)
+function dodge.isMobAlive(mob)
     if not mob or not mob.Parent then
         cache.mobHumanoid[mob] = nil
         return false
@@ -1292,7 +1292,7 @@ function dodge.dodge.isMobAlive(mob)
 end
 
 -- Finds CavernAttackWarning with weak caching and 0.5s throttled retries
-function dodge.dodge.findAttackWarning(mob)
+function dodge.findAttackWarning(mob)
     if not mob or not mob.Parent then
         cache.mobWarning[mob] = nil
         cache.mobWarningCheckTime[mob] = nil
@@ -1353,7 +1353,7 @@ function dodge.dodge.findAttackWarning(mob)
 end
 
 -- Checks if CavernAttackWarning (BillboardGui) is actively enabled via its "Enabled" attribute
-function dodge.dodge.isWarningActive(warning, mob)
+function dodge.isWarningActive(warning, mob)
     if not warning or not warning.Parent then return false end
 
     -- Must be strictly named CavernAttackWarning (prevents any false positives)
@@ -1394,7 +1394,7 @@ function dodge.dodge.isWarningActive(warning, mob)
 end
 
 -- Reads current hearts/health attribute from LocalPlayer, Character, or Humanoid
-function dodge.dodge.getLocalPlayerHearts()
+function dodge.getLocalPlayerHearts()
     if plr then
         for _, attr in ipairs({"Hearts", "hearts", "Heart", "heart", "Health", "health"}) do
             local val = plr:GetAttribute(attr)
@@ -1414,7 +1414,7 @@ function dodge.dodge.getLocalPlayerHearts()
 end
 
 -- Reads max/normal hearts attribute from LocalPlayer, Character, or Humanoid
-function dodge.dodge.getLocalPlayerMaxHearts()
+function dodge.getLocalPlayerMaxHearts()
     if plr then
         for _, attr in ipairs({"MaxHearts", "maxHearts", "NormalHearts", "normalHearts", "MaxHealth", "maxHealth"}) do
             local val = plr:GetAttribute(attr)
@@ -1434,7 +1434,7 @@ function dodge.dodge.getLocalPlayerMaxHearts()
 end
 
 -- Reads current armor attribute or value from LocalPlayer or Character
-function dodge.dodge.getLocalPlayerArmor()
+function dodge.getLocalPlayerArmor()
     if plr then
         for _, attr in ipairs({"Armor", "armor", "Shield", "shield", "ArmorHealth", "armorHealth", "CurrentArmor", "currentArmor"}) do
             local val = plr:GetAttribute(attr)
@@ -1463,7 +1463,7 @@ function dodge.dodge.getLocalPlayerArmor()
 end
 
 -- Reads max/normal armor attribute from LocalPlayer or Character
-function dodge.dodge.getLocalPlayerMaxArmor()
+function dodge.getLocalPlayerMaxArmor()
     if plr then
         for _, attr in ipairs({"MaxArmor", "maxArmor", "NormalArmor", "normalArmor", "MaxShield", "maxShield"}) do
             local val = plr:GetAttribute(attr)
@@ -1492,7 +1492,7 @@ function dodge.dodge.getLocalPlayerMaxArmor()
 end
 
 -- Calculates an unobstructed, safe surface retreat position avoiding walls, rocks, and cave ceilings
-function dodge.dodge.findSafeDodgePosition(originPos, preCFrame, away2D, maxDist, preferredAngle, attackingMob)
+function dodge.findSafeDodgePosition(originPos, preCFrame, away2D, maxDist, preferredAngle, attackingMob)
     if not originPos or not preCFrame or not away2D then return nil, 0, nil end
 
     local filterList = {char}
@@ -1627,7 +1627,7 @@ local function pressE()
 end
 
 -- Checks for an identifier number on Mithril cave spiders if present (e.g. 200809)
-function cache.cache.findSpiderIdentifier(mob)
+function cache.findSpiderIdentifier(mob)
     if not mob then return nil end
     local cached = cache.spiderIdentifier[mob]
     if cached ~= nil then return cached or nil end
@@ -1700,7 +1700,7 @@ function cache.cache.findSpiderIdentifier(mob)
     return nil
 end
 
-function cache.cache.getMithrilCaveSpidersFolder()
+function cache.getMithrilCaveSpidersFolder()
     if cache.cachedMithrilCaveFolder and cache.cachedMithrilCaveFolder.Parent then
         return cache.cachedMithrilCaveFolder
     end
@@ -1727,7 +1727,7 @@ function cache.cache.getMithrilCaveSpidersFolder()
     return nil
 end
 
-function dodge.dodge.isSpiderMobInstance(instance)
+function dodge.isSpiderMobInstance(instance)
     if not (instance:IsA("Model") or instance:IsA("BasePart")) then return false end
     local name = instance.Name
     if name == "Mama Spider" or string.find(name, "FjordSpider", 1, true) then
@@ -1739,7 +1739,7 @@ function dodge.dodge.isSpiderMobInstance(instance)
     return false
 end
 
-function dodge.dodge.isMithrilCaveMob(mob)
+function dodge.isMithrilCaveMob(mob)
     if not mob then return false end
     if cache.mithrilCaveMobSet[mob] then return true end
     local mFolder = cache.getMithrilCaveSpidersFolder()
@@ -1755,7 +1755,7 @@ function dodge.dodge.isMithrilCaveMob(mob)
 end
 
 -- Recursively collects living spiders from Mithril Cave chambers and rooms
-function dodge.dodge.collectSpidersFromChamber(chamber)
+function dodge.collectSpidersFromChamber(chamber)
     if not chamber then return end
     if dodge.isSpiderMobInstance(chamber) then
         if dodge.isMobAlive(chamber) and not cache.mithrilCaveMobSet[chamber] then
@@ -1780,20 +1780,20 @@ end
 -- ==========================
 -- FISHING RIPPLE TRACKING (Zero Allocation & Leak-Free)
 -- ==========================
-function cache.cache.registerRipple(ripple)
+function cache.registerRipple(ripple)
     if not ripple or not ripple.Parent then return end
     if not string.find(ripple.Name, "FishingWaterRipples", 1, true) then return end
     cache.activeRipples[ripple] = true
 end
 
-function cache.cache.unregisterRipple(ripple)
+function cache.unregisterRipple(ripple)
     if ripple then
         cache.activeRipples[ripple] = nil
         cache.ripplePos[ripple] = nil
     end
 end
 
-function cache.cache.cleanupRippleTracking()
+function cache.cleanupRippleTracking()
     for _, conn in ipairs(cache.rippleConnections) do
         pcall(function() conn:Disconnect() end)
     end
@@ -1802,7 +1802,7 @@ function cache.cache.cleanupRippleTracking()
     table.clear(cache.ripplePos)
 end
 
-function cache.cache.initRippleTracking()
+function cache.initRippleTracking()
     cache.cleanupRippleTracking()
 
     -- 1. Scan direct children / descendants of fishingSpotsFolder (tiny scope: ~50 instances)
@@ -1840,7 +1840,7 @@ function cache.cache.initRippleTracking()
 end
 
 -- Lightweight background caching for Aura Mobs (Snakes & Spiders) strictly under their clearings
-function cache.cache.cacheBackgroundElements()
+function cache.cacheBackgroundElements()
     if cache.isCachingBackground then return end
     cache.isCachingBackground = true
 
@@ -1886,7 +1886,7 @@ function cache.cache.cacheBackgroundElements()
 end
 
 
-function cache.cache.getRipplePosition(ripple)
+function cache.getRipplePosition(ripple)
     if not ripple or not ripple.Parent then
         cache.ripplePos[ripple] = nil
         return nil
@@ -2367,7 +2367,7 @@ end
 -- ==========================
 -- PERIODIC MEMORY SANITATION & GC ASSISTANCE
 -- ==========================
-function cache.cache.sanitizeMemory(now)
+function cache.sanitizeMemory(now)
     if now - cache.lastSanitationTime > 30 then
         cache.lastSanitationTime = now
 
@@ -3997,11 +3997,11 @@ ScannerTab:CreateToggle({
 -- ==========================
 ScannerTab:CreateSection({ Name = "Live Auction House Display" })
 
-function auction.auction.getLocalDisplayName()
+function auction.getLocalDisplayName()
     return tostring(plr:GetAttribute("DisplayName") or plr.DisplayName or plr.Name)
 end
 
-function auction.auction.formatRemainingTime(endsAt)
+function auction.formatRemainingTime(endsAt)
     if not endsAt or type(endsAt) ~= "number" then return "N/A" end
     local remaining = math.max(0, endsAt - os.time())
     if remaining <= 0 then
@@ -4013,7 +4013,7 @@ function auction.auction.formatRemainingTime(endsAt)
 end
 
 
-function auction.auction.getLotDisplayInfo(lotName)
+function auction.getLotDisplayInfo(lotName)
     local lot = skinAuction:FindFirstChild(lotName)
     if not lot then
         return lotName .. ": [Not Found]", "Lot folder does not exist in ReplicatedStorage."
@@ -4056,7 +4056,7 @@ function auction.auction.getLotDisplayInfo(lotName)
     return title, body
 end
 
-function auction.auction.updateLotDisplay(lotName)
+function auction.updateLotDisplay(lotName)
     local card = auction.cards[lotName]
     if not card then return end
     local title, body = auction.getLotDisplayInfo(lotName)
@@ -4070,7 +4070,7 @@ function auction.auction.updateLotDisplay(lotName)
     end)
 end
 
-function auction.auction.updateAllLotDisplays()
+function auction.updateAllLotDisplays()
     for _, lotName in ipairs(auction.lotNames) do
         auction.updateLotDisplay(lotName)
     end
@@ -4212,7 +4212,7 @@ ScannerTab:CreateButton({
 
 -- Manual Bid Buttons
 
-function auction.auction.executeBid(lotName, isManual)
+function auction.executeBid(lotName, isManual)
     if not auction.remote then
         auction.remote = cowRemotes:FindFirstChild("SkinAuctionRequest")
         if not auction.remote then
@@ -4298,7 +4298,7 @@ end
 -- AUTO OUTBID SYSTEM
 -- ==========================
 
-function auction.auction.checkAndAutoBidLot(lotName)
+function auction.checkAndAutoBidLot(lotName)
     if not (auction.autoBidAll or auction.autoBidActive[lotName]) then return end
     if not auction.remote then
         auction.remote = cowRemotes:FindFirstChild("SkinAuctionRequest")
