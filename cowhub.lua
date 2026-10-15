@@ -3985,6 +3985,152 @@ ScannerTab:CreateToggle({
     end,
 })
 
+ScannerTab:CreateSection({ Name = "Auction House Tools" })
+
+-- Show Current Auction Skins button
+ScannerTab:CreateButton({
+    Name = "Show Current Auction Skins",
+    Callback = function()
+        local lines = {}
+        for _, lotName in ipairs(lotNames) do
+            local lot = skinAuction:FindFirstChild(lotName)
+            if lot then
+                local skinName = lot:GetAttribute("SkinName")
+                local skinId = lot:GetAttribute("SkinId")
+                if skinName and skinName ~= "" and skinId and skinId ~= "" then
+                    local rarity = lot:GetAttribute("Rarity") or "?"
+                    local bid = lot:GetAttribute("Bid")
+                    local minBid = lot:GetAttribute("MinimumBid")
+                    table.insert(lines,
+                        lotName .. ": " .. tostring(skinName)
+                        .. " [" .. tostring(rarity) .. "]"
+                        .. " | Bid: " .. formatNumber(bid)
+                        .. " | Min: " .. formatNumber(minBid)
+                    )
+                else
+                    table.insert(lines, lotName .. ": Empty")
+                end
+            else
+                table.insert(lines, lotName .. ": Not Found")
+            end
+        end
+        Window:Notify({
+            Title = "Current Auction Lots",
+            Content = table.concat(lines, "\n"),
+            Duration = 10
+        })
+    end,
+})
+
+-- Auto Bid buttons for each lot
+local skinAuctionRemote = cowRemotes:FindFirstChild("SkinAuctionRequest")
+
+for i, lotName in ipairs(lotNames) do
+    ScannerTab:CreateButton({
+        Name = "Auto Bid " .. lotName,
+        Callback = function()
+            if not skinAuctionRemote then
+                Window:Notify({ Title = "Error", Content = "SkinAuctionRequest remote not found.", Duration = 4 })
+                return
+            end
+
+            local lot = skinAuction:FindFirstChild(lotName)
+            if not lot then
+                Window:Notify({ Title = "Error", Content = lotName .. " not found in SkinAuction.", Duration = 4 })
+                return
+            end
+
+            local round = lot:GetAttribute("Round")
+            local slot = lot:GetAttribute("Slot")
+            local minBid = lot:GetAttribute("MinimumBid")
+
+            if not round or not slot or not minBid then
+                Window:Notify({
+                    Title = "Error",
+                    Content = lotName .. " missing attributes (Round/Slot/MinimumBid).",
+                    Duration = 4
+                })
+                return
+            end
+
+            local success, result = pcall(function()
+                return skinAuctionRemote:InvokeServer({
+                    Slot = slot,
+                    Round = round,
+                    Action = "Bid",
+                    Amount = minBid
+                })
+            end)
+
+            if success then
+                Window:Notify({
+                    Title = "Bid Placed",
+                    Content = lotName .. " | Amount: " .. formatNumber(minBid) .. "\nRound: " .. tostring(round),
+                    Duration = 5
+                })
+            else
+                Window:Notify({
+                    Title = "Bid Failed",
+                    Content = lotName .. ": " .. tostring(result),
+                    Duration = 5
+                })
+            end
+        end,
+    })
+end
+
+ScannerTab:CreateSection({ Name = "Proximity Prompts" })
+
+for i, lotName in ipairs(lotNames) do
+    ScannerTab:CreateButton({
+        Name = "Fire Bid Prompt " .. lotName,
+        Callback = function()
+            local pedestalPath = workspace:FindFirstChild("CowWorld")
+                and workspace.CowWorld:FindFirstChild("Decorations")
+                and workspace.CowWorld.Decorations:FindFirstChild("SkinAuctionHall")
+                and workspace.CowWorld.Decorations.SkinAuctionHall:FindFirstChild(lotName)
+                and workspace.CowWorld.Decorations.SkinAuctionHall[lotName]:FindFirstChild("Pedestal")
+
+            if not pedestalPath then
+                Window:Notify({ Title = "Error", Content = "Could not find " .. lotName .. " pedestal.", Duration = 4 })
+                return
+            end
+
+            local prompt = pedestalPath:FindFirstChild("CowAuctionBid")
+                or pedestalPath:FindFirstChildWhichIsA("ProximityPrompt", true)
+
+            if not prompt then
+                Window:Notify({ Title = "Error", Content = "No proximity prompt found on " .. lotName .. " pedestal.", Duration = 4 })
+                return
+            end
+
+            local fired = false
+            if fireproximityprompt then
+                pcall(function()
+                    fireproximityprompt(prompt)
+                    fired = true
+                end)
+            end
+
+            if not fired then
+                -- Fallback: trigger via the ProximityPrompt's Triggered signal
+                pcall(function()
+                    prompt:InputHoldBegin()
+                    task.wait(prompt.HoldDuration + 0.05)
+                    prompt:InputHoldEnd()
+                    fired = true
+                end)
+            end
+
+            if fired then
+                Window:Notify({ Title = "Prompt Fired", Content = lotName .. " bid prompt activated.", Duration = 3 })
+            else
+                Window:Notify({ Title = "Error", Content = "Failed to fire " .. lotName .. " prompt.", Duration = 4 })
+            end
+        end,
+    })
+end
+
 -- ==========================
 -- UI SETUP: Settings Tab
 -- ==========================

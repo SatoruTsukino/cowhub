@@ -44,11 +44,105 @@ local CONFIG_FILE = "SkinHunterConfig.json"
 -- CONFIGURATION (defaults, overridden by UI)
 -- ============================
 local TARGET_SKIN_ID = ""
-local WEBHOOK_URL = ""
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1558179605590970441/FriRPRhVe5j2wpuBOvT5a2MGYotX8eYHaB7Zij98yZA6Su3WaiKV7JNDrAxU9uP8xslw"
 local NOTIFY_ON_HOP = false
 local HOP_DELAY = 3
 local AUCTION_WAIT_INTERVAL = 30
 local MAX_SERVERS_PER_PAGE = 100
+
+-- ============================
+-- AUCTION SKINS CATALOGUE
+-- (Extracted from ReplicatedStorage.CowGame.Shared.SkinAuctionConfig)
+-- ============================
+local DEFAULT_AUCTION_SKINS = {
+    "AngusCoat",
+    "AyrshireCoat",
+    "BeltedGallowayCoat",
+    "BlueRoanCoat",
+    "BrindleCoat",
+    "BrownSwissCoat",
+    "BubblegumCoat",
+    "BumbleCoat",
+    "BurgerCoat",
+    "CharolaisCoat",
+    "ChocolateMilkCoat",
+    "CreamHighlandCoat",
+    "DinoCoat",
+    "DutchBeltedCoat",
+    "GuernseyCoat",
+    "HerefordCoat",
+    "HolsteinCoat",
+    "JackOLanternCoat",
+    "JerseyCoat",
+    "JuicySliceCoat",
+    "LovestruckCoat",
+    "MatchaLatteCoat",
+    "MintChipCoat",
+    "MoonWalkerCoat",
+    "NeapolitanCoat",
+    "NormandeCoat",
+    "PandaCoat",
+    "PirateCoat",
+    "PlushieCoat",
+    "RainCloudCoat",
+    "RedAngusCoat",
+    "RedHolsteinCoat",
+    "RoboCoat",
+    "SheepCoat",
+    "SilverHighlandCoat",
+    "SleepyheadCoat",
+    "SpaDayCoat",
+    "SpeckleParkCoat",
+    "UnicornCoat",
+}
+
+local function getAuctionSkins()
+    local seen = {}
+    local skins = {}
+
+    local function add(id)
+        if type(id) == "string" and id ~= "" and not seen[id] then
+            seen[id] = true
+            table.insert(skins, id)
+        end
+    end
+
+    for _, id in ipairs(DEFAULT_AUCTION_SKINS) do
+        add(id)
+    end
+
+    -- Discover live or seasonal event auction skins from ReplicatedStorage if available
+    pcall(function()
+        local cowGame = ReplicatedStorage:FindFirstChild("CowGame")
+        local shared = cowGame and cowGame:FindFirstChild("Shared")
+        if shared then
+            local auctionConfigMod = shared:FindFirstChild("SkinAuctionConfig")
+            if auctionConfigMod then
+                local cfg = require(auctionConfigMod)
+                if type(cfg) == "table" then
+                    for _, tbl in ipairs({cfg.HalloweenSkins, cfg.Skins, cfg.LegacySkins, cfg.VersionThreeSkins}) do
+                        if type(tbl) == "table" then
+                            for _, id in pairs(tbl) do add(id) end
+                        end
+                    end
+                end
+            end
+
+            local halloweenMod = shared:FindFirstChild("HalloweenConfig")
+            if halloweenMod then
+                local hw = require(halloweenMod)
+                if type(hw) == "table" and type(hw.AuctionSet) == "table" then
+                    for _, id in pairs(hw.AuctionSet) do add(id) end
+                end
+            end
+        end
+    end)
+
+    table.sort(skins)
+    return skins
+end
+
+local AUCTION_SKIN_OPTIONS = getAuctionSkins()
 
 -- ============================
 -- RUNTIME STATE
@@ -66,9 +160,15 @@ local function loadConfig()
             local raw = readFileFunc(CONFIG_FILE)
             local cfg = HttpService:JSONDecode(raw)
             if cfg and type(cfg) == "table" then
-                TARGET_SKIN_ID = cfg.targetSkinId or ""
-                WEBHOOK_URL = cfg.webhookUrl or ""
-                NOTIFY_ON_HOP = cfg.notifyOnHop or false
+                if cfg.targetSkinId and cfg.targetSkinId ~= "" then
+                    TARGET_SKIN_ID = cfg.targetSkinId
+                end
+                if cfg.webhookUrl and cfg.webhookUrl ~= "" then
+                    WEBHOOK_URL = cfg.webhookUrl
+                end
+                if cfg.notifyOnHop ~= nil then
+                    NOTIFY_ON_HOP = cfg.notifyOnHop
+                end
             end
         end
     end)
@@ -86,6 +186,10 @@ local function saveConfig()
 end
 
 loadConfig()
+
+if TARGET_SKIN_ID == "" then
+    TARGET_SKIN_ID = AUCTION_SKIN_OPTIONS[1] or "HolsteinCoat"
+end
 
 -- ============================
 -- RAYFIELD UI
@@ -627,15 +731,51 @@ end
 -- ============================
 MainTab:CreateSection({ Name = "Target Configuration" })
 
+local initialSkinSelection = table.find(AUCTION_SKIN_OPTIONS, TARGET_SKIN_ID) and TARGET_SKIN_ID or AUCTION_SKIN_OPTIONS[1]
+
+MainTab:CreateDropdown({
+    Name = "Select Target Skin",
+    Options = AUCTION_SKIN_OPTIONS,
+    CurrentOption = { initialSkinSelection },
+    MultipleOptions = false,
+    Flag = "Dropdown_TargetSkin",
+    Callback = function(Option)
+        local selection = type(Option) == "table" and Option[1] or Option
+        if selection and selection ~= "" then
+            if TARGET_SKIN_ID ~= selection then
+                TARGET_SKIN_ID = selection
+                state.visitedServers = {}
+                state.sweepCount = 0
+                state.found = false
+                saveConfig()
+                saveState()
+                Window:Notify({
+                    Title = "Target Skin Selected",
+                    Content = "Now hunting: " .. selection,
+                    Duration = 3,
+                })
+                log("Selected target skin from dropdown: " .. selection)
+            end
+        end
+    end,
+})
+
 MainTab:CreateInput({
-    Name = "Target Skin ID",
-    Placeholder = TARGET_SKIN_ID ~= "" and ("Current: " .. TARGET_SKIN_ID) or "Enter the SkinId to hunt for",
+    Name = "Custom Skin ID (Manual Override)",
+    Placeholder = TARGET_SKIN_ID ~= "" and ("Current: " .. TARGET_SKIN_ID) or "Enter custom SkinId if not in dropdown",
     RemoveTextAfterFocusLost = false,
     Callback = function(Text)
         if Text and Text ~= "" then
-            TARGET_SKIN_ID = Text
-            saveConfig()
-            Window:Notify({ Title = "Skin ID Set", Content = "Now hunting: " .. Text, Duration = 3 })
+            if TARGET_SKIN_ID ~= Text then
+                TARGET_SKIN_ID = Text
+                state.visitedServers = {}
+                state.sweepCount = 0
+                state.found = false
+                saveConfig()
+                saveState()
+                Window:Notify({ Title = "Skin ID Overridden", Content = "Now hunting: " .. Text, Duration = 3 })
+                log("Manually set target skin: " .. Text)
+            end
         end
     end,
 })
