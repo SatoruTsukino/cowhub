@@ -6,7 +6,7 @@
     before sweeping again.
 
     Includes Rayfield Gen2 UI with toggles for starting/stopping,
-    Skin ID input, webhook input, and a close button.
+    Skin ID input, webhook input, rejoin button, and a close button.
 ]]
 
 -- ============================
@@ -23,7 +23,12 @@ local plr = Players.LocalPlayer
 -- ============================
 -- EXECUTOR API DETECTION
 -- ============================
-local queueOnTeleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
+local queueOnTeleport = (syn and syn.queue_on_teleport)
+    or queue_on_teleport
+    or queueonteleport
+    or (fluxus and fluxus.queue_on_teleport)
+    or (getgenv and getgenv().queue_on_teleport)
+
 local httpRequest = (request or http_request or (http and http.request) or (syn and syn.request))
 
 local readFileFunc = readfile
@@ -33,7 +38,8 @@ local isFileFunc = isfile
 -- ============================
 -- CONSTANTS
 -- ============================
-local PLACE_ID = 82507849398215
+local PLACE_ID = (game.PlaceId and game.PlaceId > 0) and game.PlaceId or 82507849398215
+local SCRIPT_SOURCE_URL = "https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/skinhunter.lua"
 local SERVERS_API = "https://games.roblox.com/v1/games/%d/servers/0?sortOrder=2&excludeFullGames=true&limit=%d"
 local LOT_NAMES = {"Lot1", "Lot2", "Lot3", "Lot4"}
 
@@ -41,7 +47,63 @@ local STATE_FILE = "SkinHunterState.json"
 local CONFIG_FILE = "SkinHunterConfig.json"
 
 -- ============================
--- CONFIGURATION (defaults, overridden by UI)
+-- UTILITY & QUEUE HELPERS
+-- ============================
+local function log(msg)
+    print("[SkinHunter] " .. tostring(msg))
+end
+
+local function countKeys(tbl)
+    if type(tbl) ~= "table" then return 0 end
+    local count = 0
+    for _ in pairs(tbl) do
+        count = count + 1
+    end
+    return count
+end
+
+local function queueReload()
+    if queueOnTeleport then
+        pcall(function()
+            queueOnTeleport(string.format([[
+                task.wait(3)
+                loadstring(game:HttpGet('%s'))()
+            ]], SCRIPT_SOURCE_URL))
+        end)
+    end
+end
+
+-- Prime queue hook immediately on script run
+queueReload()
+
+-- ============================
+-- RUNTIME STATE
+-- ============================
+local hunterRunning = false
+local hunterThread = nil
+local scriptConnections = {}
+local HunterToggle = nil
+
+-- Forward declarations
+local main
+local startHunter
+local stopHunter
+local rejoinServer
+
+-- ============================
+-- PERSISTENT STATE
+-- ============================
+local state = {
+    visitedServers = {},
+    targetSkinId = "",
+    lastAuctionSignatures = {},
+    sweepCount = 0,
+    found = false,
+    hunting = false,
+}
+
+-- ============================
+-- CONFIGURATION (defaults, overridden by saved config & UI)
 -- ============================
 local TARGET_SKIN_ID = ""
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1558179605590970441/FriRPRhVe5j2wpuBOvT5a2MGYotX8eYHaB7Zij98yZA6Su3WaiKV7JNDrAxU9uP8xslw"
@@ -49,6 +111,84 @@ local NOTIFY_ON_HOP = false
 local HOP_DELAY = 3
 local AUCTION_WAIT_INTERVAL = 30
 local MAX_SERVERS_PER_PAGE = 100
+
+-- ============================
+-- CONFIG & STATE PERSISTENCE
+-- ============================
+local function loadConfig()
+    if not isFileFunc or not readFileFunc then return end
+    pcall(function()
+        if isFileFunc(CONFIG_FILE) then
+            local raw = readFileFunc(CONFIG_FILE)
+            local cfg = HttpService:JSONDecode(raw)
+            if cfg and type(cfg) == "table" then
+                if cfg.targetSkinId and cfg.targetSkinId ~= "" then
+                    TARGET_SKIN_ID = cfg.targetSkinId
+                end
+                if cfg.webhookUrl and cfg.webhookUrl ~= "" then
+                    WEBHOOK_URL = cfg.webhookUrl
+                end
+                if cfg.notifyOnHop ~= nil then
+                    NOTIFY_ON_HOP = cfg.notifyOnHop
+                end
+                if cfg.hunting ~= nil then
+                    state.hunting = cfg.hunting
+                end
+            end
+        end
+    end)
+end
+
+local function saveConfig()
+    if not writeFileFunc then return end
+    pcall(function()
+        writeFileFunc(CONFIG_FILE, HttpService:JSONEncode({
+            targetSkinId = TARGET_SKIN_ID,
+            webhookUrl = WEBHOOK_URL,
+            notifyOnHop = NOTIFY_ON_HOP,
+            hunting = hunterRunning,
+        }))
+    end)
+end
+
+local function saveState()
+    if not writeFileFunc then return end
+    pcall(function()
+        state.targetSkinId = TARGET_SKIN_ID
+        state.hunting = hunterRunning
+        writeFileFunc(STATE_FILE, HttpService:JSONEncode(state))
+    end)
+end
+
+local function loadState()
+    if not isFileFunc or not readFileFunc then return end
+    pcall(function()
+        if isFileFunc(STATE_FILE) then
+            local raw = readFileFunc(STATE_FILE)
+            local loaded = HttpService:JSONDecode(raw)
+            if loaded and type(loaded) == "table" then
+                if TARGET_SKIN_ID == "" and loaded.targetSkinId and loaded.targetSkinId ~= "" then
+                    TARGET_SKIN_ID = loaded.targetSkinId
+                end
+                if loaded.targetSkinId == TARGET_SKIN_ID then
+                    state.visitedServers = loaded.visitedServers or {}
+                    state.lastAuctionSignatures = loaded.lastAuctionSignatures or {}
+                    state.sweepCount = loaded.sweepCount or 0
+                    state.found = loaded.found or false
+                    if loaded.hunting ~= nil then
+                        state.hunting = loaded.hunting
+                    end
+                else
+                    log("Target skin changed or new session. Starting fresh sweep.")
+                end
+            end
+        end
+    end)
+end
+
+-- Load config and state before building UI
+loadConfig()
+loadState()
 
 -- ============================
 -- AUCTION SKINS CATALOGUE
@@ -144,49 +284,6 @@ end
 
 local AUCTION_SKIN_OPTIONS = getAuctionSkins()
 
--- ============================
--- RUNTIME STATE
--- ============================
-local hunterRunning = false
-local scriptConnections = {}
-
--- ============================
--- CONFIG PERSISTENCE
--- ============================
-local function loadConfig()
-    if not isFileFunc or not readFileFunc then return end
-    pcall(function()
-        if isFileFunc(CONFIG_FILE) then
-            local raw = readFileFunc(CONFIG_FILE)
-            local cfg = HttpService:JSONDecode(raw)
-            if cfg and type(cfg) == "table" then
-                if cfg.targetSkinId and cfg.targetSkinId ~= "" then
-                    TARGET_SKIN_ID = cfg.targetSkinId
-                end
-                if cfg.webhookUrl and cfg.webhookUrl ~= "" then
-                    WEBHOOK_URL = cfg.webhookUrl
-                end
-                if cfg.notifyOnHop ~= nil then
-                    NOTIFY_ON_HOP = cfg.notifyOnHop
-                end
-            end
-        end
-    end)
-end
-
-local function saveConfig()
-    if not writeFileFunc then return end
-    pcall(function()
-        writeFileFunc(CONFIG_FILE, HttpService:JSONEncode({
-            targetSkinId = TARGET_SKIN_ID,
-            webhookUrl = WEBHOOK_URL,
-            notifyOnHop = NOTIFY_ON_HOP,
-        }))
-    end)
-end
-
-loadConfig()
-
 if TARGET_SKIN_ID == "" then
     TARGET_SKIN_ID = AUCTION_SKIN_OPTIONS[1] or "HolsteinCoat"
 end
@@ -200,7 +297,7 @@ local Window = Rayfield:CreateWindow({
     Name = "Skin Hunter",
     Subtitle = "Server-Hopping Auction Sniper",
     showIconOnly = true,
-    theme = "rose",
+    theme = "frost",
     ConfigurationSaving = { Enabled = false },
     KeySystem = false,
 })
@@ -209,7 +306,7 @@ local MainTab = Window:CreateTab({ Name = "Hunter", Icon = 4483362458 })
 local SettingsTab = Window:CreateTab({ Name = "Settings", Icon = 4483362458 })
 
 -- ============================
--- ANTI-AFK
+-- ANTI-AFK & TELEPORT SAFEGUARDS
 -- ============================
 local idleConn = plr.Idled:Connect(function()
     VirtualUser:CaptureController()
@@ -217,13 +314,21 @@ local idleConn = plr.Idled:Connect(function()
 end)
 table.insert(scriptConnections, idleConn)
 
--- ============================
--- UTILITY FUNCTIONS
--- ============================
-local function log(msg)
-    print("[SkinHunter] " .. tostring(msg))
-end
+local teleportInitConn = TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, errorMessage)
+    if player == plr then
+        log("Teleport failed (" .. tostring(teleportResult) .. "): " .. tostring(errorMessage))
+        Window:Notify({
+            Title = "Teleport Failed",
+            Content = tostring(errorMessage or "Teleport failed. Retrying..."),
+            Duration = 5,
+        })
+    end
+end)
+table.insert(scriptConnections, teleportInitConn)
 
+-- ============================
+-- WEBHOOK & FORMATTING UTILITIES
+-- ============================
 local function sendWebhook(title, description, color, fields)
     if not httpRequest or not WEBHOOK_URL or WEBHOOK_URL == "" then return end
     pcall(function()
@@ -261,40 +366,34 @@ local function formatNumber(n)
 end
 
 -- ============================
--- STATE PERSISTENCE
+-- REJOIN SERVER
 -- ============================
-local state = {
-    visitedServers = {},
-    targetSkinId = "",
-    lastAuctionSignatures = {},
-    sweepCount = 0,
-    found = false,
-}
+rejoinServer = function()
+    log("Rejoining current server: " .. tostring(game.JobId))
 
-local function saveState()
-    if not writeFileFunc then return end
-    pcall(function()
-        state.targetSkinId = TARGET_SKIN_ID
-        writeFileFunc(STATE_FILE, HttpService:JSONEncode(state))
-    end)
-end
+    Window:Notify({
+        Title = "Rejoining Server",
+        Content = "Attempting to reconnect to this server...",
+        Duration = 4,
+    })
 
-local function loadState()
-    if not isFileFunc or not readFileFunc then return end
-    pcall(function()
-        if isFileFunc(STATE_FILE) then
-            local raw = readFileFunc(STATE_FILE)
-            local loaded = HttpService:JSONDecode(raw)
-            if loaded and type(loaded) == "table" then
-                if loaded.targetSkinId == TARGET_SKIN_ID then
-                    state.visitedServers = loaded.visitedServers or {}
-                    state.lastAuctionSignatures = loaded.lastAuctionSignatures or {}
-                    state.sweepCount = loaded.sweepCount or 0
-                    state.found = loaded.found or false
-                else
-                    log("Target skin changed. Starting fresh sweep.")
-                end
+    queueReload()
+
+    task.spawn(function()
+        task.wait(0.5)
+        local success, err = pcall(function()
+            if #Players:GetPlayers() <= 1 then
+                TeleportService:Teleport(PLACE_ID, plr)
+            else
+                TeleportService:TeleportToPlaceInstance(PLACE_ID, game.JobId, plr)
             end
+        end)
+
+        if not success then
+            log("TeleportToPlaceInstance failed (" .. tostring(err) .. "), attempting standard Teleport...")
+            pcall(function()
+                TeleportService:Teleport(PLACE_ID, plr)
+            end)
         end
     end)
 end
@@ -464,16 +563,11 @@ local function hopToServer(jobId)
     log("Hopping to server: " .. tostring(jobId):sub(1, 8) .. "...")
 
     state.visitedServers[game.JobId] = true
+    state.hunting = true
     saveState()
+    saveConfig()
 
-    if queueOnTeleport then
-        pcall(function()
-            queueOnTeleport([[
-                task.wait(3)
-                loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/skinhunter.lua'))()
-            ]])
-        end)
-    end
+    queueReload()
 
     if NOTIFY_ON_HOP then
         sendWebhook(
@@ -481,7 +575,7 @@ local function hopToServer(jobId)
             "Skin not found. Hopping to next server...",
             0x5865F2,
             {
-                {["name"] = "Servers Checked", ["value"] = tostring(#state.visitedServers), ["inline"] = true},
+                {["name"] = "Servers Checked", ["value"] = tostring(countKeys(state.visitedServers)), ["inline"] = true},
                 {["name"] = "Sweep #", ["value"] = tostring(state.sweepCount), ["inline"] = true},
             }
         )
@@ -501,6 +595,7 @@ local function hopToServer(jobId)
     if not hunterRunning then return end
 
     log("Teleport may have failed. Retrying...")
+    queueReload()
     pcall(function()
         TeleportService:TeleportToPlaceInstance(PLACE_ID, jobId, plr)
     end)
@@ -509,6 +604,7 @@ local function hopToServer(jobId)
     if not hunterRunning then return end
 
     log("Teleport failed. Trying random server hop...")
+    queueReload()
     pcall(function()
         TeleportService:Teleport(PLACE_ID, plr)
     end)
@@ -531,7 +627,7 @@ local function waitForAuctionChange(skinAuction)
         "Sweep #" .. tostring(state.sweepCount) .. " complete. Waiting for auction to rotate before next sweep.",
         0xFFA500,
         {
-            {["name"] = "Servers Visited", ["value"] = tostring(#state.visitedServers), ["inline"] = true},
+            {["name"] = "Servers Visited", ["value"] = tostring(countKeys(state.visitedServers)), ["inline"] = true},
             {["name"] = "Target Skin", ["value"] = "`" .. TARGET_SKIN_ID .. "`", ["inline"] = true},
         }
     )
@@ -596,7 +692,14 @@ local function waitForAuctionChange(skinAuction)
                     })
 
                     state.found = true
+                    state.hunting = false
+                    hunterRunning = false
                     saveState()
+                    saveConfig()
+
+                    if HunterToggle and HunterToggle.Set then
+                        pcall(function() HunterToggle:Set(false) end)
+                    end
 
                     for _, c in ipairs(watchConns) do pcall(function() c:Disconnect() end) end
                     return true
@@ -624,7 +727,7 @@ end
 -- ============================
 -- MAIN LOOP
 -- ============================
-local function main()
+main = function()
     if TARGET_SKIN_ID == "" then
         Window:Notify({
             Title = "No Skin ID",
@@ -632,14 +735,18 @@ local function main()
             Duration = 4,
         })
         hunterRunning = false
+        state.hunting = false
+        saveState()
+        saveConfig()
+        if HunterToggle and HunterToggle.Set then
+            pcall(function() HunterToggle:Set(false) end)
+        end
         return
     end
 
-    log("=== Skin Hunter Started ===")
+    log("=== Skin Hunter Running ===")
     log("Target Skin ID: " .. TARGET_SKIN_ID)
     log("Current Server: " .. tostring(game.JobId))
-
-    loadState()
 
     if not game:IsLoaded() then
         game.Loaded:Wait()
@@ -653,9 +760,16 @@ local function main()
 
     if found then
         state.found = true
-        saveState()
-        log("✅ Target skin found! Staying on this server.")
+        state.hunting = false
         hunterRunning = false
+        saveState()
+        saveConfig()
+
+        if HunterToggle and HunterToggle.Set then
+            pcall(function() HunterToggle:Set(false) end)
+        end
+
+        log("✅ Target skin found! Staying on this server.")
         return
     end
 
@@ -687,7 +801,15 @@ local function main()
 
         if foundWhileWaiting then
             log("✅ Target skin found while waiting! Staying on this server.")
+            state.found = true
+            state.hunting = false
             hunterRunning = false
+            saveState()
+            saveConfig()
+
+            if HunterToggle and HunterToggle.Set then
+                pcall(function() HunterToggle:Set(false) end)
+            end
             return
         end
 
@@ -724,6 +846,56 @@ local function main()
             end
         end
     end
+end
+
+-- ============================
+-- HUNTER CONTROLLER
+-- ============================
+startHunter = function(isAutoResume)
+    if hunterRunning and hunterThread and coroutine.status(hunterThread) ~= "dead" then
+        return
+    end
+
+    if TARGET_SKIN_ID == "" then
+        Window:Notify({ Title = "No Skin ID", Content = "Enter or select a Target Skin ID first.", Duration = 4 })
+        hunterRunning = false
+        state.hunting = false
+        saveState()
+        saveConfig()
+        if HunterToggle and HunterToggle.Set then
+            pcall(function() HunterToggle:Set(false) end)
+        end
+        return
+    end
+
+    hunterRunning = true
+    state.hunting = true
+    state.found = false
+    saveState()
+    saveConfig()
+
+    Window:Notify({
+        Title = isAutoResume and "Hunter Auto-Resumed" or "Hunter Started",
+        Content = (isAutoResume and "Continuing hunt for " or "Hunting for ") .. TARGET_SKIN_ID .. "...",
+        Duration = 3,
+    })
+
+    log("Hunter started. Target: " .. TARGET_SKIN_ID)
+    hunterThread = task.spawn(main)
+end
+
+stopHunter = function()
+    hunterRunning = false
+    state.hunting = false
+    saveState()
+    saveConfig()
+
+    Window:Notify({
+        Title = "Hunter Stopped",
+        Content = "Server hopping halted.",
+        Duration = 3,
+    })
+    log("Hunter stopped by user.")
 end
 
 -- ============================
@@ -780,36 +952,23 @@ MainTab:CreateInput({
     end,
 })
 
-MainTab:CreateSection({ Name = "Server Hopping" })
+MainTab:CreateSection({ Name = "Server Hopping & Connection" })
 
-MainTab:CreateToggle({
+local initialHunterValue = (state.hunting == true and not state.found)
+
+HunterToggle = MainTab:CreateToggle({
     Name = "Start Skin Hunter",
-    CurrentValue = false,
+    CurrentValue = initialHunterValue,
     Flag = "Toggle_SkinHunter",
     Callback = function(Value)
-        hunterRunning = Value
-
-        if hunterRunning then
-            if TARGET_SKIN_ID == "" then
-                Window:Notify({ Title = "No Skin ID", Content = "Enter a Target Skin ID first.", Duration = 4 })
-                hunterRunning = false
-                return
+        if Value then
+            if not hunterRunning then
+                startHunter(false)
             end
-
-            Window:Notify({
-                Title = "Hunter Started",
-                Content = "Hunting for " .. TARGET_SKIN_ID .. "...",
-                Duration = 3,
-            })
-
-            task.spawn(main)
         else
-            Window:Notify({
-                Title = "Hunter Stopped",
-                Content = "Server hopping halted.",
-                Duration = 3,
-            })
-            log("Hunter stopped by user.")
+            if hunterRunning then
+                stopHunter()
+            end
         end
     end,
 })
@@ -821,6 +980,13 @@ MainTab:CreateToggle({
     Callback = function(Value)
         NOTIFY_ON_HOP = Value
         saveConfig()
+    end,
+})
+
+MainTab:CreateButton({
+    Name = "Rejoin Current Server",
+    Callback = function()
+        rejoinServer()
     end,
 })
 
@@ -867,10 +1033,18 @@ SettingsTab:CreateInput({
 SettingsTab:CreateSection({ Name = "Script Control" })
 
 SettingsTab:CreateButton({
+    Name = "Rejoin Current Server",
+    Callback = function()
+        rejoinServer()
+    end,
+})
+
+SettingsTab:CreateButton({
     Name = "Reset Visited Servers",
     Callback = function()
         state.visitedServers = {}
         state.sweepCount = 0
+        state.found = false
         saveState()
         Window:Notify({ Title = "Reset", Content = "Visited servers list cleared. Next sweep starts fresh.", Duration = 3 })
     end,
@@ -880,6 +1054,9 @@ SettingsTab:CreateButton({
     Name = "Close Script & Destroy UI",
     Callback = function()
         hunterRunning = false
+        state.hunting = false
+        saveState()
+        saveConfig()
 
         for _, conn in ipairs(scriptConnections) do
             if conn and conn.Disconnect then conn:Disconnect() end
@@ -889,3 +1066,21 @@ SettingsTab:CreateButton({
         Window:Unload()
     end,
 })
+
+-- ============================
+-- AUTO-RESUME HUNTER (AFTER HOP)
+-- ============================
+if state.hunting and not state.found then
+    log("Persisted state indicates hunting was active before hop. Resuming hunter on this server...")
+    task.spawn(function()
+        task.wait(1)
+        if not hunterRunning then
+            startHunter(true)
+        end
+        if HunterToggle and HunterToggle.Set then
+            pcall(function()
+                HunterToggle:Set(true)
+            end)
+        end
+    end)
+end
