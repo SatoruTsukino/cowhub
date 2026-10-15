@@ -21,6 +21,31 @@ local VirtualUser = game:GetService("VirtualUser")
 local plr = Players.LocalPlayer
 
 -- ============================
+-- SINGLE-INSTANCE & REJOIN DEBOUNCE
+-- ============================
+if getgenv then
+    local now = os.clock()
+    -- If another execution occurred less than 4 seconds ago, abort this duplicate execution immediately
+    if getgenv()._SkinHunterLastExec and (now - getgenv()._SkinHunterLastExec) < 4 then
+        print("[SkinHunter] Duplicate script execution detected within 4s. Aborting duplicate instance.")
+        return
+    end
+    getgenv()._SkinHunterLastExec = now
+
+    -- If a previous instance is registered, trigger its full cleanup
+    if getgenv()._SkinHunterCleanup then
+        pcall(getgenv()._SkinHunterCleanup)
+        getgenv()._SkinHunterCleanup = nil
+    end
+    if getgenv()._SkinHunterWindow and getgenv()._SkinHunterWindow.Unload then
+        pcall(function()
+            getgenv()._SkinHunterWindow:Unload()
+        end)
+        getgenv()._SkinHunterWindow = nil
+    end
+end
+
+-- ============================
 -- EXECUTOR API DETECTION
 -- ============================
 local queueOnTeleport = (syn and syn.queue_on_teleport)
@@ -40,7 +65,6 @@ local isFileFunc = isfile
 -- ============================
 local PLACE_ID = (game.PlaceId and game.PlaceId > 0) and game.PlaceId or 82507849398215
 local SCRIPT_SOURCE_URL = "https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/skinhunter.lua"
-local SERVERS_API = "https://games.roblox.com/v1/games/%d/servers/0?sortOrder=2&excludeFullGames=true&limit=%d"
 local LOT_NAMES = {"Lot1", "Lot2", "Lot3", "Lot4"}
 
 local STATE_FILE = "SkinHunterState.json"
@@ -62,7 +86,10 @@ local function countKeys(tbl)
     return count
 end
 
+local reloadQueued = false
 local function queueReload()
+    if reloadQueued then return end
+    reloadQueued = true
     if queueOnTeleport then
         pcall(function()
             queueOnTeleport(string.format([[
@@ -73,8 +100,61 @@ local function queueReload()
     end
 end
 
--- Prime queue hook immediately on script run
-queueReload()
+-- ============================
+-- GUI CLEANUP HELPER
+-- Ensures no duplicate Rayfield hubs remain on screen
+-- ============================
+local function cleanupExistingGuis()
+    local containers = {}
+    if typeof(gethui) == "function" then
+        local s, hui = pcall(gethui)
+        if s and hui then table.insert(containers, hui) end
+    end
+    pcall(function()
+        local coreGui = game:GetService("CoreGui")
+        if coreGui and not table.find(containers, coreGui) then
+            table.insert(containers, coreGui)
+        end
+    end)
+    pcall(function()
+        local playerGui = plr and plr:FindFirstChildOfClass("PlayerGui")
+        if playerGui and not table.find(containers, playerGui) then
+            table.insert(containers, playerGui)
+        end
+    end)
+
+    for _, container in ipairs(containers) do
+        pcall(function()
+            for _, child in ipairs(container:GetChildren()) do
+                if child:IsA("ScreenGui") then
+                    local shouldDestroy = false
+                    if child.Name == "Rayfield" or child.Name:find("Rayfield") then
+                        shouldDestroy = true
+                    elseif child:FindFirstChild("Skin Hunter") or child:FindFirstChild("Cow Hub") then
+                        shouldDestroy = true
+                    else
+                        for _, sub in ipairs(child:GetChildren()) do
+                            if sub:IsA("Frame") and (sub.Name == "Skin Hunter" or sub.Name == "Cow Hub" or sub.Name == "Rayfield") then
+                                shouldDestroy = true
+                                break
+                            end
+                            -- Rayfield window structure check
+                            if sub:IsA("Frame") and sub:FindFirstChild("Header") and (sub:FindFirstChild("Tabs") or sub:FindFirstChild("MainContainer")) then
+                                shouldDestroy = true
+                                break
+                            end
+                        end
+                    end
+
+                    if shouldDestroy then
+                        log("Destroyed existing Rayfield ScreenGui: " .. tostring(child.Name))
+                        pcall(function() child:Destroy() end)
+                    end
+                end
+            end
+        end)
+    end
+end
 
 -- ============================
 -- RUNTIME STATE
@@ -89,12 +169,17 @@ local main
 local startHunter
 local stopHunter
 local rejoinServer
+local fetchServerList
+local getNextCandidateServer
+local getRemainingCandidateServers
 
 -- ============================
 -- PERSISTENT STATE
 -- ============================
 local state = {
     visitedServers = {},
+    failedServers = {},
+    serverQueue = {},
     targetSkinId = "",
     lastAuctionSignatures = {},
     sweepCount = 0,
@@ -110,7 +195,6 @@ local WEBHOOK_URL = "https://discord.com/api/webhooks/1558179605590970441/FriRPR
 local NOTIFY_ON_HOP = false
 local HOP_DELAY = 3
 local AUCTION_WAIT_INTERVAL = 30
-local MAX_SERVERS_PER_PAGE = 100
 
 -- ============================
 -- CONFIG & STATE PERSISTENCE
@@ -172,6 +256,8 @@ local function loadState()
                 end
                 if loaded.targetSkinId == TARGET_SKIN_ID then
                     state.visitedServers = loaded.visitedServers or {}
+                    state.failedServers = loaded.failedServers or {}
+                    state.serverQueue = loaded.serverQueue or {}
                     state.lastAuctionSignatures = loaded.lastAuctionSignatures or {}
                     state.sweepCount = loaded.sweepCount or 0
                     state.found = loaded.found or false
@@ -290,7 +376,10 @@ end
 
 -- ============================
 -- RAYFIELD UI
+-- Clean up any existing Rayfield hub first to prevent clutter
 -- ============================
+cleanupExistingGuis()
+
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 
 local Window = Rayfield:CreateWindow({
@@ -301,6 +390,21 @@ local Window = Rayfield:CreateWindow({
     ConfigurationSaving = { Enabled = false },
     KeySystem = false,
 })
+
+if getgenv then
+    getgenv()._SkinHunterWindow = Window
+    getgenv()._SkinHunterCleanup = function()
+        hunterRunning = false
+        for _, conn in ipairs(scriptConnections) do
+            if conn and conn.Disconnect then conn:Disconnect() end
+        end
+        table.clear(scriptConnections)
+        if Window and Window.Unload then
+            pcall(function() Window:Unload() end)
+        end
+        cleanupExistingGuis()
+    end
+end
 
 local MainTab = Window:CreateTab({ Name = "Hunter", Icon = 4483362458 })
 local SettingsTab = Window:CreateTab({ Name = "Settings", Icon = 4483362458 })
@@ -377,6 +481,7 @@ rejoinServer = function()
         Duration = 4,
     })
 
+    reloadQueued = false
     queueReload()
 
     task.spawn(function()
@@ -496,86 +601,188 @@ local function checkForTargetSkin()
 end
 
 -- ============================
--- SERVER LIST FETCHER
+-- ROBUST SERVER LIST FETCHER
+-- Discovers ALL active public servers with automatic pagination & rate-limit handling
 -- ============================
-local function fetchAllServers()
+fetchServerList = function()
     if not httpRequest then
         log("HTTP requests not supported. Cannot fetch server list.")
         return {}
     end
 
-    local servers = {}
+    local allServers = {}
+    local seenIds = {}
     local cursor = ""
     local pageCount = 0
+    local maxPages = 10 -- Cap at 10 pages (up to 1,000 servers) to avoid infinite loops
 
     repeat
-        if not hunterRunning then return servers end
+        if not hunterRunning then return allServers end
 
-        local url = string.format(SERVERS_API, PLACE_ID, MAX_SERVERS_PER_PAGE)
+        local url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?limit=100", PLACE_ID)
         if cursor and cursor ~= "" then
-            url = url .. "&cursor=" .. cursor
+            local cleanCursor = cursor:gsub("[\r\n]", "")
+            url = url .. "&cursor=" .. cleanCursor
         end
 
-        local success, response = pcall(function()
-            return httpRequest({
-                Url = url,
-                Method = "GET",
-            })
-        end)
+        local responseData = nil
+        local retries = 0
 
-        if success and response and response.Body then
-            local data = HttpService:JSONDecode(response.Body)
-            if data and data.data then
-                for _, server in ipairs(data.data) do
-                    if server.id and server.id ~= game.JobId then
-                        if not state.visitedServers[server.id] then
-                            table.insert(servers, {
-                                jobId = server.id,
-                                playing = server.playing or 0,
-                                maxPlayers = server.maxPlayers or 0,
-                            })
-                        end
-                    end
+        while retries < 3 and not responseData and hunterRunning do
+            local success, response = pcall(function()
+                return httpRequest({
+                    Url = url,
+                    Method = "GET",
+                    Headers = {
+                        ["User-Agent"] = "Roblox/WinInet",
+                        ["Accept"] = "application/json",
+                    }
+                })
+            end)
+
+            if success and response and response.Body then
+                local decodeOk, data = pcall(function()
+                    return HttpService:JSONDecode(response.Body)
+                end)
+
+                if decodeOk and data and data.data then
+                    responseData = data
+                    break
+                elseif decodeOk and data and data.errors then
+                    log("Roblox API rate limit or error on page " .. tostring(pageCount + 1) .. ". Retrying after delay...")
+                    task.wait(2.5 + (retries * 2))
                 end
-                cursor = data.nextPageCursor
-                pageCount = pageCount + 1
             else
-                cursor = nil
+                task.wait(1.5)
+            end
+            retries = retries + 1
+        end
+
+        if responseData and responseData.data then
+            for _, s in ipairs(responseData.data) do
+                if s.id and not seenIds[s.id] then
+                    seenIds[s.id] = true
+                    table.insert(allServers, {
+                        jobId = s.id,
+                        playing = tonumber(s.playing) or 0,
+                        maxPlayers = tonumber(s.maxPlayers) or 16,
+                    })
+                end
+            end
+            cursor = responseData.nextPageCursor
+            pageCount = pageCount + 1
+            if cursor and cursor ~= "" then
+                task.wait(1) -- Respect Roblox API rate limits
             end
         else
-            log("Failed to fetch server page " .. tostring(pageCount + 1))
+            log("Failed to fetch server page " .. tostring(pageCount + 1) .. " after retries.")
             cursor = nil
         end
+    until not cursor or cursor == "" or pageCount >= maxPages or not hunterRunning
 
-        if cursor then task.wait(0.5) end
-    until not cursor or cursor == ""
+    log(string.format("Discovered %d active servers across %d page(s).", #allServers, pageCount))
+    return allServers
+end
 
-    log("Fetched " .. #servers .. " unvisited servers (page count: " .. pageCount .. ")")
-    return servers
+-- ============================
+-- QUEUE & CANDIDATE SELECTION
+-- Systematically checks ALL servers, prioritizing reachable servers with open slots
+-- ============================
+getRemainingCandidateServers = function()
+    local unvisited = {}
+    for _, s in ipairs(state.serverQueue) do
+        local id = s.jobId
+        if id and id ~= game.JobId and not state.visitedServers[id] and not state.failedServers[id] then
+            table.insert(unvisited, s)
+        end
+    end
+    return unvisited
+end
+
+getNextCandidateServer = function()
+    local unvisited = getRemainingCandidateServers()
+
+    -- If no unvisited servers left in local queue, refresh from Roblox API
+    if #unvisited == 0 then
+        log("No unvisited servers in local queue. Refreshing full server list from Roblox API...")
+        local fresh = fetchServerList()
+
+        local existingMap = {}
+        for _, s in ipairs(state.serverQueue) do
+            existingMap[s.jobId] = true
+        end
+
+        for _, s in ipairs(fresh) do
+            if not existingMap[s.jobId] then
+                table.insert(state.serverQueue, s)
+            end
+        end
+
+        if #state.serverQueue == 0 then
+            state.serverQueue = fresh
+        end
+        saveState()
+
+        unvisited = getRemainingCandidateServers()
+    end
+
+    if #unvisited == 0 then
+        return nil, 0
+    end
+
+    -- Sort candidates: Servers with available slots (playing < maxPlayers and playing > 0) come first!
+    -- This guarantees high-success joins without getting blocked by full servers.
+    table.sort(unvisited, function(a, b)
+        local aFree = a.maxPlayers - a.playing
+        local bFree = b.maxPlayers - b.playing
+        local aJoinable = (aFree > 0 and a.playing > 0)
+        local bJoinable = (bFree > 0 and b.playing > 0)
+
+        if aJoinable and not bJoinable then return true end
+        if bJoinable and not aJoinable then return false end
+
+        if aFree ~= bFree then
+            return aFree > bFree
+        end
+
+        return a.playing > b.playing
+    end)
+
+    return unvisited[1], #unvisited
 end
 
 -- ============================
 -- SERVER HOPPING
+-- Resilient hopping with failure recovery and automatic candidate advance
 -- ============================
-local function hopToServer(jobId)
+local function hopToServer(target)
     if not hunterRunning then return end
 
-    log("Hopping to server: " .. tostring(jobId):sub(1, 8) .. "...")
+    local targetJobId = type(target) == "table" and target.jobId or target
+    local playingStr = (type(target) == "table" and target.playing) and tostring(target.playing) or "?"
+    local maxPlayersStr = (type(target) == "table" and target.maxPlayers) and tostring(target.maxPlayers) or "?"
 
+    log(string.format("Hopping to server: %s (%s/%s players)...", tostring(targetJobId):sub(1, 8), playingStr, maxPlayersStr))
+
+    -- Mark CURRENT server as visited
     state.visitedServers[game.JobId] = true
     state.hunting = true
     saveState()
     saveConfig()
 
+    reloadQueued = false
     queueReload()
+
+    local remainingCandidates = getRemainingCandidateServers()
 
     if NOTIFY_ON_HOP then
         sendWebhook(
             "🔄 Server Hop",
-            "Skin not found. Hopping to next server...",
+            "Skin not found on this server. Hopping to next server...",
             0x5865F2,
             {
                 {["name"] = "Servers Checked", ["value"] = tostring(countKeys(state.visitedServers)), ["inline"] = true},
+                {["name"] = "Remaining in Queue", ["value"] = tostring(#remainingCandidates), ["inline"] = true},
                 {["name"] = "Sweep #", ["value"] = tostring(state.sweepCount), ["inline"] = true},
             }
         )
@@ -583,31 +790,45 @@ local function hopToServer(jobId)
 
     Window:Notify({
         Title = "Server Hop",
-        Content = "Skin not here. Hopping to next server...",
-        Duration = 2,
+        Content = string.format("Hopping to %s (%d remaining)...", tostring(targetJobId):sub(1, 8), #remainingCandidates),
+        Duration = 3,
     })
 
     pcall(function()
-        TeleportService:TeleportToPlaceInstance(PLACE_ID, jobId, plr)
+        TeleportService:TeleportToPlaceInstance(PLACE_ID, targetJobId, plr)
     end)
 
     task.wait(10)
     if not hunterRunning then return end
 
-    log("Teleport may have failed. Retrying...")
+    log("Teleport to " .. tostring(targetJobId):sub(1, 8) .. " didn't transition within 10s. Retrying once...")
+    reloadQueued = false
     queueReload()
     pcall(function()
-        TeleportService:TeleportToPlaceInstance(PLACE_ID, jobId, plr)
+        TeleportService:TeleportToPlaceInstance(PLACE_ID, targetJobId, plr)
     end)
 
-    task.wait(15)
+    task.wait(12)
     if not hunterRunning then return end
 
-    log("Teleport failed. Trying random server hop...")
-    queueReload()
-    pcall(function()
-        TeleportService:Teleport(PLACE_ID, plr)
-    end)
+    -- Server is unreachable (full, restricted, or closed).
+    -- Mark it as failed so we NEVER loop on it again this sweep!
+    log("Server " .. tostring(targetJobId):sub(1, 8) .. " is unreachable or full. Skipping to next candidate.")
+    state.failedServers[targetJobId] = true
+    saveState()
+
+    local nextTarget, remaining = getNextCandidateServer()
+    if nextTarget then
+        log("Proceeding to next server in queue: " .. tostring(nextTarget.jobId):sub(1, 8))
+        hopToServer(nextTarget)
+    else
+        log("No further specific candidate servers available. Trying fallback random hop...")
+        reloadQueued = false
+        queueReload()
+        pcall(function()
+            TeleportService:Teleport(PLACE_ID, plr)
+        end)
+    end
 end
 
 -- ============================
@@ -780,18 +1001,23 @@ main = function()
     state.sweepCount = state.sweepCount + (state.sweepCount == 0 and 1 or 0)
     saveState()
 
-    -- 2. Fetch remaining unvisited servers and hop
-    local servers = fetchAllServers()
+    -- 2. Pick next candidate from queue and hop
+    local nextCandidate, remainingCount = getNextCandidateServer()
 
     if not hunterRunning then return end
 
-    if #servers > 0 then
-        local target = servers[1]
-        log("Next server: " .. target.jobId:sub(1, 8) .. " (" .. target.playing .. "/" .. target.maxPlayers .. " players)")
-        hopToServer(target.jobId)
+    if nextCandidate then
+        log(string.format("Next target: %s (%s/%s players) | %d remaining in queue", 
+            nextCandidate.jobId:sub(1, 8), 
+            tostring(nextCandidate.playing), 
+            tostring(nextCandidate.maxPlayers), 
+            remainingCount
+        ))
+        hopToServer(nextCandidate)
     else
         -- All servers exhausted — wait for auction rotation
-        log("No unvisited servers remain.")
+        local totalChecked = countKeys(state.visitedServers)
+        log(string.format("All %d available servers exhausted for sweep #%d.", totalChecked, state.sweepCount))
 
         local _, skinAuction
         local lots
@@ -815,8 +1041,10 @@ main = function()
 
         if not hunterRunning then return end
 
-        -- Reset visited servers for the new sweep
+        -- Reset visited servers, failed servers, and server queue for the new sweep
         state.visitedServers = {}
+        state.failedServers = {}
+        state.serverQueue = {}
         state.sweepCount = state.sweepCount + 1
         saveState()
 
@@ -824,7 +1052,7 @@ main = function()
 
         sendWebhook(
             "🔄 New Sweep Starting",
-            "Auction rotated. Beginning sweep #" .. tostring(state.sweepCount),
+            "Auction rotated. Beginning sweep #" .. tostring(state.sweepCount) .. " across all servers.",
             0x00FF88
         )
 
@@ -834,11 +1062,11 @@ main = function()
             Duration = 3,
         })
 
-        local freshServers = fetchAllServers()
+        local freshCandidate = getNextCandidateServer()
         if not hunterRunning then return end
 
-        if #freshServers > 0 then
-            hopToServer(freshServers[1].jobId)
+        if freshCandidate then
+            hopToServer(freshCandidate)
         else
             task.wait(AUCTION_WAIT_INTERVAL)
             if hunterRunning then
@@ -917,6 +1145,8 @@ MainTab:CreateDropdown({
             if TARGET_SKIN_ID ~= selection then
                 TARGET_SKIN_ID = selection
                 state.visitedServers = {}
+                state.failedServers = {}
+                state.serverQueue = {}
                 state.sweepCount = 0
                 state.found = false
                 saveConfig()
@@ -941,6 +1171,8 @@ MainTab:CreateInput({
             if TARGET_SKIN_ID ~= Text then
                 TARGET_SKIN_ID = Text
                 state.visitedServers = {}
+                state.failedServers = {}
+                state.serverQueue = {}
                 state.sweepCount = 0
                 state.found = false
                 saveConfig()
@@ -987,6 +1219,23 @@ MainTab:CreateButton({
     Name = "Rejoin Current Server",
     Callback = function()
         rejoinServer()
+    end,
+})
+
+MainTab:CreateButton({
+    Name = "View Sweep Status & Queue",
+    Callback = function()
+        local visitedCount = countKeys(state.visitedServers)
+        local failedCount = countKeys(state.failedServers)
+        local totalInQueue = #state.serverQueue
+        local remaining = #getRemainingCandidateServers()
+
+        Window:Notify({
+            Title = "Sweep Status #" .. tostring(state.sweepCount),
+            Content = string.format("Checked: %d | Remaining: %d | Total Queued: %d (Skipped/Full: %d)", 
+                visitedCount, remaining, totalInQueue, failedCount),
+            Duration = 6,
+        })
     end,
 })
 
@@ -1040,13 +1289,15 @@ SettingsTab:CreateButton({
 })
 
 SettingsTab:CreateButton({
-    Name = "Reset Visited Servers",
+    Name = "Reset Visited Servers & Queue",
     Callback = function()
         state.visitedServers = {}
+        state.failedServers = {}
+        state.serverQueue = {}
         state.sweepCount = 0
         state.found = false
         saveState()
-        Window:Notify({ Title = "Reset", Content = "Visited servers list cleared. Next sweep starts fresh.", Duration = 3 })
+        Window:Notify({ Title = "Reset", Content = "Visited servers & queue cleared. Next sweep checks all servers fresh.", Duration = 3 })
     end,
 })
 
@@ -1058,12 +1309,19 @@ SettingsTab:CreateButton({
         saveState()
         saveConfig()
 
+        if getgenv then
+            getgenv()._SkinHunterWindow = nil
+            getgenv()._SkinHunterCleanup = nil
+            getgenv()._SkinHunterLastExec = nil
+        end
+
         for _, conn in ipairs(scriptConnections) do
             if conn and conn.Disconnect then conn:Disconnect() end
         end
         table.clear(scriptConnections)
 
         Window:Unload()
+        cleanupExistingGuis()
     end,
 })
 
