@@ -519,6 +519,7 @@ local function getAuctionData()
             local skinName = lot:GetAttribute("SkinName") or "Unknown"
             local rarity = lot:GetAttribute("Rarity") or "Unknown"
             local scope = lot:GetAttribute("Scope") or "N/A"
+            local round = lot:GetAttribute("Round") or "N/A"
             local bid = lot:GetAttribute("Bid")
             local minBid = lot:GetAttribute("MinimumBid")
             local endsAt = lot:GetAttribute("EndsAt")
@@ -530,10 +531,11 @@ local function getAuctionData()
                     skinName = skinName,
                     rarity = rarity,
                     scope = scope,
+                    round = round,
                     bid = bid,
                     minBid = minBid,
                     endsAt = endsAt,
-                    signature = tostring(skinId) .. "_" .. tostring(endsAt),
+                    signature = tostring(skinId) .. "_" .. tostring(round),
                 })
             end
         end
@@ -541,15 +543,36 @@ local function getAuctionData()
     return lots, skinAuction
 end
 
+local function isServerLot(lot, lotName)
+    if not lot or lotName == "Lot1" then
+        return false -- Never Lot 1: Lot 1 refreshes hourly (Scope is not Server)
+    end
+
+    local scope = lot:GetAttribute("Scope")
+    if scope and tostring(scope):lower() == "server" then
+        return true
+    end
+
+    -- Fallback: Lot 2 and Lot 3 are typically the Server lots if Scope attribute hasn't replicated yet
+    if not scope and (lotName == "Lot2" or lotName == "Lot3") then
+        return true
+    end
+
+    return false
+end
+
 local function getAuctionRemainingTime(skinAuction)
     local targetEndsAt = 0
     if skinAuction then
         for _, lotName in ipairs(LOT_NAMES) do
-            local lot = skinAuction:FindFirstChild(lotName)
-            if lot then
-                local endsAt = tonumber(lot:GetAttribute("EndsAt"))
-                if endsAt and endsAt > targetEndsAt then
-                    targetEndsAt = endsAt
+            -- Strictly only check endsat times for lots with Scope set as "Server" (typically Lot 2 & Lot 3, NEVER Lot 1)
+            if lotName ~= "Lot1" then
+                local lot = skinAuction:FindFirstChild(lotName)
+                if lot and isServerLot(lot, lotName) then
+                    local endsAt = tonumber(lot:GetAttribute("EndsAt"))
+                    if endsAt and endsAt > targetEndsAt then
+                        targetEndsAt = endsAt
+                    end
                 end
             end
         end
@@ -597,6 +620,8 @@ local function checkForTargetSkin()
                     {["name"] = "Skin ID", ["value"] = "`" .. tostring(lot.skinId) .. "`", ["inline"] = true},
                     {["name"] = "✨ Rarity", ["value"] = "**" .. lot.rarity .. "**", ["inline"] = true},
                     {["name"] = "Lot", ["value"] = lot.lotName, ["inline"] = true},
+                    {["name"] = "Scope", ["value"] = tostring(lot.scope or "N/A"), ["inline"] = true},
+                    {["name"] = "Round", ["value"] = tostring(lot.round or "N/A"), ["inline"] = true},
                     {["name"] = "Current Bid", ["value"] = "🪙 " .. formatNumber(lot.bid), ["inline"] = true},
                     {["name"] = "Minimum Bid", ["value"] = "🪙 " .. formatNumber(lot.minBid), ["inline"] = true},
                     {["name"] = "⏳ Ends At", ["value"] = endsAtDisplay, ["inline"] = true},
@@ -888,7 +913,7 @@ end
 -- ============================
 -- AUCTION CHANGE WATCHER (15-MINUTE SYNC)
 -- Strictly holds on current server until the 15-minute auction timer (EndsAt) expires
--- and new skins rotate, preventing rapid/premature server hopping.
+-- for lots with Scope attribute set as "Server" (typically Lot 2 & Lot 3, but never Lot 1).
 -- ============================
 local function waitForAuctionChange()
     local cowGame = ReplicatedStorage:FindFirstChild("CowGame") or ReplicatedStorage:WaitForChild("CowGame", 10)
@@ -903,7 +928,7 @@ local function waitForAuctionChange()
     local remainingTime, targetEndsAt = getAuctionRemainingTime(skinAuction)
     local remainingStr = formatRemainingTime(remainingTime)
 
-    log(string.format("All servers exhausted for sweep #%d. Waiting for 15-minute auction to rotate in %s (EndsAt: %s)...", 
+    log(string.format("All servers exhausted for sweep #%d. Waiting for 15-minute server auction to rotate in %s (EndsAt: %s)...", 
         state.sweepCount, remainingStr, tostring(targetEndsAt)))
 
     Rayfield:Notify({
@@ -915,7 +940,7 @@ local function waitForAuctionChange()
 
     sendWebhook(
         "⏸ All Servers Checked",
-        string.format("Sweep #%d complete (%d servers visited).\nStanding by on current server until the 15-minute auction rotates in **%s**.",
+        string.format("Sweep #%d complete (%d servers visited).\nStanding by on current server until the 15-minute server auction rotates in **%s**.",
             state.sweepCount, countKeys(state.visitedServers), remainingStr),
         0xFFA500,
         {
@@ -925,7 +950,7 @@ local function waitForAuctionChange()
         }
     )
 
-    -- Record baseline skin IDs of the CURRENT server (only track SkinId, NOT volatile bids/endsAt)
+    -- Record baseline skin IDs of the CURRENT server
     local baselineSkins = {}
     for _, lotName in ipairs(LOT_NAMES) do
         local lot = skinAuction:FindFirstChild(lotName)
@@ -938,27 +963,45 @@ local function waitForAuctionChange()
     local auctionUpdated = false
     local watchConns = {}
 
-    -- Hook GetAttributeChangedSignal("SkinId") exactly like cowhub.lua
+    -- Hook signals ONLY for server-scoped lots (typically Lot 2 & Lot 3, NEVER Lot 1)
     for _, lotName in ipairs(LOT_NAMES) do
-        local lot = skinAuction:FindFirstChild(lotName)
-        if lot then
-            local conn = lot:GetAttributeChangedSignal("SkinId"):Connect(function()
-                task.wait(1)
-                if not hunterRunning then return end
+        if lotName ~= "Lot1" then
+            local lot = skinAuction:FindFirstChild(lotName)
+            if lot then
+                -- 1. SkinId change listener for server lots
+                local connSkin = lot:GetAttributeChangedSignal("SkinId"):Connect(function()
+                    task.wait(1)
+                    if not hunterRunning then return end
+                    if not isServerLot(lot, lotName) then return end
 
-                local currentSkinId = lot:GetAttribute("SkinId")
-                local endsAt = tonumber(lot:GetAttribute("EndsAt")) or 0
+                    local currentSkinId = lot:GetAttribute("SkinId")
+                    local endsAt = tonumber(lot:GetAttribute("EndsAt")) or 0
 
-                -- Only trigger if SkinId genuinely changed to a new skin OR timer rolled to a new future round
-                if currentSkinId and currentSkinId ~= "" and tostring(currentSkinId) ~= baselineSkins[lotName] then
-                    log("Auction update detected on " .. lotName .. ": " .. tostring(currentSkinId))
-                    auctionUpdated = true
-                elseif targetEndsAt > 0 and endsAt > (targetEndsAt + 30) then
-                    log("New auction round detected via EndsAt roll on " .. lotName .. ": " .. tostring(endsAt))
-                    auctionUpdated = true
-                end
-            end)
-            table.insert(watchConns, conn)
+                    -- Only trigger if SkinId genuinely changed to a new skin OR timer rolled to a new future round
+                    if currentSkinId and currentSkinId ~= "" and tostring(currentSkinId) ~= baselineSkins[lotName] then
+                        log("Server auction update detected on " .. lotName .. ": " .. tostring(currentSkinId))
+                        auctionUpdated = true
+                    elseif targetEndsAt > 0 and endsAt > (targetEndsAt + 30) then
+                        log("New server auction round detected via EndsAt roll on " .. lotName .. ": " .. tostring(endsAt))
+                        auctionUpdated = true
+                    end
+                end)
+                table.insert(watchConns, connSkin)
+
+                -- 2. EndsAt change listener for server lots
+                local connEnds = lot:GetAttributeChangedSignal("EndsAt"):Connect(function()
+                    task.wait(1)
+                    if not hunterRunning then return end
+                    if not isServerLot(lot, lotName) then return end
+
+                    local endsAt = tonumber(lot:GetAttribute("EndsAt")) or 0
+                    if targetEndsAt > 0 and endsAt > (targetEndsAt + 30) then
+                        log("New server auction round detected via EndsAt change on " .. lotName .. ": " .. tostring(endsAt))
+                        auctionUpdated = true
+                    end
+                end)
+                table.insert(watchConns, connEnds)
+            end
         end
     end
 
@@ -969,9 +1012,16 @@ local function waitForAuctionChange()
         if not hunterRunning then break end
 
         local now = os.time()
-        local secsLeft, _currentEndsAt = getAuctionRemainingTime(skinAuction)
+        local secsLeft, currentEndsAt = getAuctionRemainingTime(skinAuction)
 
-        -- 1. Check if target skin appeared while waiting
+        -- Update targetEndsAt if it was 0 initially and replicated during standby
+        if targetEndsAt == 0 and currentEndsAt > 0 then
+            targetEndsAt = currentEndsAt
+            remainingTime = secsLeft
+            log(string.format("Server auction EndsAt received: %d (%s remaining)", targetEndsAt, formatRemainingTime(secsLeft)))
+        end
+
+        -- 1. Check if target skin appeared while waiting (checks ALL lots including Lot1)
         for _, lotName in ipairs(LOT_NAMES) do
             local lot = skinAuction:FindFirstChild(lotName)
             if lot then
@@ -981,6 +1031,7 @@ local function waitForAuctionChange()
 
                     local skinName = lot:GetAttribute("SkinName") or "Unknown"
                     local rarity = lot:GetAttribute("Rarity") or "Unknown"
+                    local scope = lot:GetAttribute("Scope") or "N/A"
                     local bid = lot:GetAttribute("Bid")
                     local minBid = lot:GetAttribute("MinimumBid")
                     local endsAt = lot:GetAttribute("EndsAt")
@@ -998,6 +1049,7 @@ local function waitForAuctionChange()
                             {["name"] = "Skin ID", ["value"] = "`" .. tostring(currentSkinId) .. "`", ["inline"] = true},
                             {["name"] = "✨ Rarity", ["value"] = "**" .. rarity .. "**", ["inline"] = true},
                             {["name"] = "Lot", ["value"] = lotName, ["inline"] = true},
+                            {["name"] = "Scope", ["value"] = tostring(scope), ["inline"] = true},
                             {["name"] = "Current Bid", ["value"] = "🪙 " .. formatNumber(bid), ["inline"] = true},
                             {["name"] = "Minimum Bid", ["value"] = "🪙 " .. formatNumber(minBid), ["inline"] = true},
                             {["name"] = "⏳ Ends At", ["value"] = endsAtDisplay, ["inline"] = true},
@@ -1028,13 +1080,13 @@ local function waitForAuctionChange()
             end
         end
 
-        -- 2. Has the auction timer expired or rolled over?
+        -- 2. Has the server auction timer expired or rolled over? (Only check Server lots, never Lot1)
         if targetEndsAt > 0 and now >= targetEndsAt then
             -- Timer reached! Wait a few seconds for server to rotate lots and update attributes
-            log("15-minute auction timer expired! Waiting for server to rotate lots...")
+            log("15-minute server auction timer expired! Waiting for server to rotate lots...")
             task.wait(4)
 
-            -- Check if lots changed or new EndsAt is set into the future
+            -- Check if lots changed or new EndsAt is set into the future on server lots
             local _newSecsLeft, newEndsAt = getAuctionRemainingTime(skinAuction)
             if newEndsAt > (targetEndsAt + 30) then
                 log("Server rotated auction to new round! EndsAt: " .. tostring(newEndsAt))
@@ -1043,15 +1095,24 @@ local function waitForAuctionChange()
             end
 
             for _, lotName in ipairs(LOT_NAMES) do
-                local lot = skinAuction:FindFirstChild(lotName)
-                if lot then
-                    local currentSkinId = lot:GetAttribute("SkinId")
-                    if currentSkinId and currentSkinId ~= "" and tostring(currentSkinId) ~= baselineSkins[lotName] then
-                        log("Server updated lots! New skin on " .. lotName .. ": " .. tostring(currentSkinId))
-                        auctionUpdated = true
-                        break
+                if lotName ~= "Lot1" then
+                    local lot = skinAuction:FindFirstChild(lotName)
+                    if lot and isServerLot(lot, lotName) then
+                        local currentSkinId = lot:GetAttribute("SkinId")
+                        if currentSkinId and currentSkinId ~= "" and tostring(currentSkinId) ~= baselineSkins[lotName] then
+                            log("Server updated lots! New skin on " .. lotName .. ": " .. tostring(currentSkinId))
+                            auctionUpdated = true
+                            break
+                        end
                     end
                 end
+            end
+
+            -- Timeout fallback: if 60 seconds have elapsed past EndsAt, proceed with sweep restart
+            if now >= (targetEndsAt + 60) then
+                log("Server auction timer expired over 60s ago; resuming sweep.")
+                auctionUpdated = true
+                break
             end
         end
 
@@ -1080,7 +1141,7 @@ local function waitForAuctionChange()
         return false
     end
 
-    log("15-minute auction rotation confirmed! Restarting sweep across all servers...")
+    log("15-minute server auction rotation confirmed! Restarting sweep across all servers...")
     return false
 end
 
