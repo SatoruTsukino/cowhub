@@ -626,6 +626,7 @@ local function checkForTargetSkin()
                     {["name"] = "Minimum Bid", ["value"] = "🪙 " .. formatNumber(lot.minBid), ["inline"] = true},
                     {["name"] = "⏳ Ends At", ["value"] = endsAtDisplay, ["inline"] = true},
                     {["name"] = "🌐 Server", ["value"] = "`" .. tostring(game.JobId) .. "`", ["inline"] = false},
+                    {["name"] = "🔗 Join Server", ["value"] = "[Click here to join!](roblox://experiences/start?placeId=" .. tostring(PLACE_ID) .. "&gameInstanceId=" .. tostring(game.JobId) .. ")", ["inline"] = false},
                 }
             )
 
