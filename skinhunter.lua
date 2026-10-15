@@ -861,83 +861,125 @@ end
 
 -- ============================
 -- AUCTION CHANGE WATCHER
+-- Accurately detects genuine auction updates (mirrored from cowhub.lua's scanner)
+-- Ensures the script ONLY restarts sweeps when an auction update genuinely occurs
 -- ============================
-local function waitForAuctionChange(skinAuction)
-    log("All servers exhausted. Watching for auction rotation...")
+local function waitForAuctionChange()
+    log("All servers exhausted. Standing by until a genuine auction update occurs...")
 
     Rayfield:Notify({
         Title = "⏸ Sweep Complete",
         Content = "All servers checked. Waiting for auction to rotate...",
-        Duration = 5,
+        Duration = 6,
         Image = 4483362458,
     })
 
     sendWebhook(
         "⏸ All Servers Checked",
-        "Sweep #" .. tostring(state.sweepCount) .. " complete. Waiting for auction to rotate before next sweep.",
+        "Sweep #" .. tostring(state.sweepCount) .. " complete (" .. tostring(countKeys(state.visitedServers)) .. " servers visited).\nStanding by on current server until the auction rotates.",
         0xFFA500,
         {
             {["name"] = "Servers Visited", ["value"] = tostring(countKeys(state.visitedServers)), ["inline"] = true},
             {["name"] = "Target Skin", ["value"] = "`" .. TARGET_SKIN_ID .. "`", ["inline"] = true},
+            {["name"] = "Status", ["value"] = "Waiting for auction update...", ["inline"] = false},
         }
     )
 
-    local changed = false
-    local watchConns = {}
+    local cowGame = ReplicatedStorage:FindFirstChild("CowGame") or ReplicatedStorage:WaitForChild("CowGame", 10)
+    local skinAuction = cowGame and (cowGame:FindFirstChild("SkinAuction") or cowGame:WaitForChild("SkinAuction", 10))
 
-    if skinAuction then
-        for _, lotName in ipairs(LOT_NAMES) do
-            local lot = skinAuction:FindFirstChild(lotName)
-            if lot then
-                local conn = lot:GetAttributeChangedSignal("SkinId"):Connect(function()
-                    changed = true
-                end)
-                table.insert(watchConns, conn)
+    if not skinAuction then
+        log("SkinAuction folder not found. Retrying in 10s...")
+        task.wait(10)
+        return false
+    end
+
+    -- 1. Snapshot the baseline signatures of the CURRENT server (mirrored from cowhub.lua)
+    local previousSignatures = {}
+    for _, lotName in ipairs(LOT_NAMES) do
+        local lot = skinAuction:FindFirstChild(lotName)
+        if lot then
+            local currentSkinId = lot:GetAttribute("SkinId")
+            local endsAt = lot:GetAttribute("EndsAt")
+            if currentSkinId and currentSkinId ~= "" then
+                previousSignatures[lotName] = tostring(currentSkinId) .. "_" .. tostring(endsAt)
+            else
+                previousSignatures[lotName] = "empty"
             end
         end
     end
 
-    local startSignatures = state.lastAuctionSignatures or {}
+    local auctionUpdated = false
+    local watchConns = {}
 
-    while not changed and hunterRunning do
-        task.wait(AUCTION_WAIT_INTERVAL)
+    -- 2. Hook GetAttributeChangedSignal("SkinId") on all lots exactly like cowhub.lua
+    for _, lotName in ipairs(LOT_NAMES) do
+        local lot = skinAuction:FindFirstChild(lotName)
+        if lot then
+            local conn = lot:GetAttributeChangedSignal("SkinId"):Connect(function()
+                -- Wait 1s for attributes (SkinName, EndsAt, Bid, Rarity) to replicate from server
+                task.wait(1)
+                if not hunterRunning then return end
+
+                local currentSkinId = lot:GetAttribute("SkinId")
+                local endsAt = lot:GetAttribute("EndsAt")
+                local currentSignature = tostring(currentSkinId) .. "_" .. tostring(endsAt)
+
+                if currentSkinId and currentSkinId ~= "" and currentSignature ~= previousSignatures[lotName] then
+                    previousSignatures[lotName] = currentSignature
+                    log("Auction update detected on " .. lotName .. ": " .. tostring(currentSkinId))
+                    auctionUpdated = true
+                end
+            end)
+            table.insert(watchConns, conn)
+        end
+    end
+
+    -- 3. Passive wait loop: Anti-AFK and periodic sanity check for target skin or rotation
+    while not auctionUpdated and hunterRunning do
+        task.wait(5)
         if not hunterRunning then break end
 
-        local lots = getAuctionData()
-        if lots then
-            for _, lot in ipairs(lots) do
-                local oldSig = startSignatures[lot.lotName]
-                if oldSig and lot.signature ~= oldSig then
-                    changed = true
-                    log("Auction rotation detected via polling! " .. lot.lotName .. " changed.")
-                    break
-                end
+        -- Check if target skin appeared in the current server's lots
+        for _, lotName in ipairs(LOT_NAMES) do
+            local lot = skinAuction:FindFirstChild(lotName)
+            if lot then
+                local currentSkinId = lot:GetAttribute("SkinId")
+                local endsAt = lot:GetAttribute("EndsAt")
+                local currentSignature = tostring(currentSkinId) .. "_" .. tostring(endsAt)
 
-                if tostring(lot.skinId) == tostring(TARGET_SKIN_ID) then
-                    log("🎯 TARGET SKIN APPEARED ON CURRENT SERVER!")
+                -- Did the target skin appear while waiting?
+                if tostring(currentSkinId) == tostring(TARGET_SKIN_ID) then
+                    log("🎯 TARGET SKIN APPEARED ON CURRENT SERVER WHILE WAITING!")
+
+                    local skinName = lot:GetAttribute("SkinName") or "Unknown"
+                    local rarity = lot:GetAttribute("Rarity") or "Unknown"
+                    local bid = lot:GetAttribute("Bid")
+                    local minBid = lot:GetAttribute("MinimumBid")
 
                     local endsAtDisplay = "N/A"
-                    if lot.endsAt then
-                        endsAtDisplay = "<t:" .. tostring(lot.endsAt) .. ":t> (<t:" .. tostring(lot.endsAt) .. ":R>)"
+                    if endsAt then
+                        endsAtDisplay = "<t:" .. tostring(endsAt) .. ":t> (<t:" .. tostring(endsAt) .. ":R>)"
                     end
 
                     sendWebhook(
                         "🎯 TARGET SKIN FOUND!",
-                        "**" .. lot.skinName .. "** appeared in the auction while waiting!",
+                        "**" .. skinName .. "** appeared in the auction while waiting!",
                         0xFFD700,
                         {
-                            {["name"] = "Skin ID", ["value"] = "`" .. tostring(lot.skinId) .. "`", ["inline"] = true},
-                            {["name"] = "✨ Rarity", ["value"] = "**" .. lot.rarity .. "**", ["inline"] = true},
-                            {["name"] = "Lot", ["value"] = lot.lotName, ["inline"] = true},
-                            {["name"] = "Current Bid", ["value"] = "🪙 " .. formatNumber(lot.bid), ["inline"] = true},
-                            {["name"] = "Minimum Bid", ["value"] = "🪙 " .. formatNumber(lot.minBid), ["inline"] = true},
+                            {["name"] = "Skin ID", ["value"] = "`" .. tostring(currentSkinId) .. "`", ["inline"] = true},
+                            {["name"] = "✨ Rarity", ["value"] = "**" .. rarity .. "**", ["inline"] = true},
+                            {["name"] = "Lot", ["value"] = lotName, ["inline"] = true},
+                            {["name"] = "Current Bid", ["value"] = "🪙 " .. formatNumber(bid), ["inline"] = true},
+                            {["name"] = "Minimum Bid", ["value"] = "🪙 " .. formatNumber(minBid), ["inline"] = true},
                             {["name"] = "⏳ Ends At", ["value"] = endsAtDisplay, ["inline"] = true},
+                            {["name"] = "🌐 Server", ["value"] = "`" .. tostring(game.JobId) .. "`", ["inline"] = false},
                         }
                     )
 
                     Rayfield:Notify({
                         Title = "🎯 TARGET SKIN FOUND!",
-                        Content = lot.skinName .. " appeared while waiting!",
+                        Content = skinName .. " appeared while waiting!",
                         Duration = 15,
                         Image = 4483362458,
                     })
@@ -955,9 +997,18 @@ local function waitForAuctionChange(skinAuction)
                     for _, c in ipairs(watchConns) do pcall(function() c:Disconnect() end) end
                     return true
                 end
+
+                -- Fallback check: Did lot signature change from the baseline?
+                if currentSkinId and currentSkinId ~= "" and currentSignature ~= previousSignatures[lotName] then
+                    previousSignatures[lotName] = currentSignature
+                    log("Auction rotation confirmed on " .. lotName .. ": " .. tostring(currentSkinId))
+                    auctionUpdated = true
+                    break
+                end
             end
         end
 
+        -- Keep connection alive via VirtualUser
         pcall(function()
             VirtualUser:CaptureController()
             VirtualUser:ClickButton2(Vector2.zero)
@@ -971,7 +1022,7 @@ local function waitForAuctionChange(skinAuction)
         return false
     end
 
-    log("Auction changed! Starting new sweep...")
+    log("Genuine auction update confirmed! Restarting sweep across all servers...")
     return false
 end
 
@@ -1058,9 +1109,7 @@ main = function()
         local totalInQueue = #state.serverQueue
         log(string.format("All %d/%d servers exhausted for sweep #%d.", totalChecked, totalInQueue, state.sweepCount))
 
-        local _, skinAuction = getAuctionData()
-
-        local foundWhileWaiting = waitForAuctionChange(skinAuction)
+        local foundWhileWaiting = waitForAuctionChange()
 
         if foundWhileWaiting then
             log("✅ Target skin found while waiting! Staying on this server.")
