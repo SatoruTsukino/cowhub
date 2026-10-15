@@ -612,9 +612,10 @@ local function checkForTargetSkin()
                 endsAtDisplay = "<t:" .. tostring(lot.endsAt) .. ":t> (<t:" .. tostring(lot.endsAt) .. ":R>)"
             end
 
+            local joinUrl = "https://www.roblox.com/games/" .. tostring(PLACE_ID) .. "?gameId=" .. tostring(game.JobId)
             sendWebhook(
                 "🎯 TARGET SKIN FOUND!",
-                "**" .. lot.skinName .. "** was found in the auction!",
+                "**" .. lot.skinName .. "** was found in the auction!\n[🔗 Click here to join the server!](" .. joinUrl .. ")",
                 0xFFD700,
                 {
                     {["name"] = "Skin ID", ["value"] = "`" .. tostring(lot.skinId) .. "`", ["inline"] = true},
@@ -626,7 +627,6 @@ local function checkForTargetSkin()
                     {["name"] = "Minimum Bid", ["value"] = "🪙 " .. formatNumber(lot.minBid), ["inline"] = true},
                     {["name"] = "⏳ Ends At", ["value"] = endsAtDisplay, ["inline"] = true},
                     {["name"] = "🌐 Server", ["value"] = "`" .. tostring(game.JobId) .. "`", ["inline"] = false},
-                    {["name"] = "🔗 Join Server", ["value"] = "roblox://experiences/start?placeId=" .. tostring(PLACE_ID) .. "&gameInstanceId=" .. tostring(game.JobId), ["inline"] = false},
                 }
             )
 
