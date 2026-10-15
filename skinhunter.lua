@@ -541,6 +541,32 @@ local function getAuctionData()
     return lots, skinAuction
 end
 
+local function getAuctionRemainingTime(skinAuction)
+    local targetEndsAt = 0
+    if skinAuction then
+        for _, lotName in ipairs(LOT_NAMES) do
+            local lot = skinAuction:FindFirstChild(lotName)
+            if lot then
+                local endsAt = tonumber(lot:GetAttribute("EndsAt"))
+                if endsAt and endsAt > targetEndsAt then
+                    targetEndsAt = endsAt
+                end
+            end
+        end
+    end
+    if targetEndsAt > 0 then
+        return math.max(0, targetEndsAt - os.time()), targetEndsAt
+    end
+    return 0, 0
+end
+
+local function formatRemainingTime(seconds)
+    if not seconds or seconds <= 0 then return "0m 00s" end
+    local minutes = math.floor(seconds / 60)
+    local sec = math.floor(seconds % 60)
+    return string.format("%dm %02ds", minutes, sec)
+end
+
 local function checkForTargetSkin()
     log("Checking auction lots for target skin: " .. TARGET_SKIN_ID)
 
@@ -860,74 +886,75 @@ local function hopToServer(target)
 end
 
 -- ============================
--- AUCTION CHANGE WATCHER
--- Accurately detects genuine auction updates (mirrored from cowhub.lua's scanner)
--- Ensures the script ONLY restarts sweeps when an auction update genuinely occurs
+-- AUCTION CHANGE WATCHER (15-MINUTE SYNC)
+-- Strictly holds on current server until the 15-minute auction timer (EndsAt) expires
+-- and new skins rotate, preventing rapid/premature server hopping.
 -- ============================
 local function waitForAuctionChange()
-    log("All servers exhausted. Standing by until a genuine auction update occurs...")
+    local cowGame = ReplicatedStorage:FindFirstChild("CowGame") or ReplicatedStorage:WaitForChild("CowGame", 10)
+    local skinAuction = cowGame and (cowGame:FindFirstChild("SkinAuction") or cowGame:WaitForChild("SkinAuction", 10))
+
+    if not skinAuction then
+        log("SkinAuction folder not found. Retrying in 15s...")
+        task.wait(15)
+        return false
+    end
+
+    local remainingTime, targetEndsAt = getAuctionRemainingTime(skinAuction)
+    local remainingStr = formatRemainingTime(remainingTime)
+
+    log(string.format("All servers exhausted for sweep #%d. Waiting for 15-minute auction to rotate in %s (EndsAt: %s)...", 
+        state.sweepCount, remainingStr, tostring(targetEndsAt)))
 
     Rayfield:Notify({
         Title = "⏸ Sweep Complete",
-        Content = "All servers checked. Waiting for auction to rotate...",
+        Content = string.format("All servers checked! Syncing with server: next sweep in %s.", remainingStr),
         Duration = 6,
         Image = 4483362458,
     })
 
     sendWebhook(
         "⏸ All Servers Checked",
-        "Sweep #" .. tostring(state.sweepCount) .. " complete (" .. tostring(countKeys(state.visitedServers)) .. " servers visited).\nStanding by on current server until the auction rotates.",
+        string.format("Sweep #%d complete (%d servers visited).\nStanding by on current server until the 15-minute auction rotates in **%s**.",
+            state.sweepCount, countKeys(state.visitedServers), remainingStr),
         0xFFA500,
         {
             {["name"] = "Servers Visited", ["value"] = tostring(countKeys(state.visitedServers)), ["inline"] = true},
             {["name"] = "Target Skin", ["value"] = "`" .. TARGET_SKIN_ID .. "`", ["inline"] = true},
-            {["name"] = "Status", ["value"] = "Waiting for auction update...", ["inline"] = false},
+            {["name"] = "⏳ Time Until Rotation", ["value"] = remainingStr .. (targetEndsAt > 0 and (" (<t:" .. targetEndsAt .. ":R>)") or ""), ["inline"] = false},
         }
     )
 
-    local cowGame = ReplicatedStorage:FindFirstChild("CowGame") or ReplicatedStorage:WaitForChild("CowGame", 10)
-    local skinAuction = cowGame and (cowGame:FindFirstChild("SkinAuction") or cowGame:WaitForChild("SkinAuction", 10))
-
-    if not skinAuction then
-        log("SkinAuction folder not found. Retrying in 10s...")
-        task.wait(10)
-        return false
-    end
-
-    -- 1. Snapshot the baseline signatures of the CURRENT server (mirrored from cowhub.lua)
-    local previousSignatures = {}
+    -- Record baseline skin IDs of the CURRENT server (only track SkinId, NOT volatile bids/endsAt)
+    local baselineSkins = {}
     for _, lotName in ipairs(LOT_NAMES) do
         local lot = skinAuction:FindFirstChild(lotName)
         if lot then
             local currentSkinId = lot:GetAttribute("SkinId")
-            local endsAt = lot:GetAttribute("EndsAt")
-            if currentSkinId and currentSkinId ~= "" then
-                previousSignatures[lotName] = tostring(currentSkinId) .. "_" .. tostring(endsAt)
-            else
-                previousSignatures[lotName] = "empty"
-            end
+            baselineSkins[lotName] = (currentSkinId and currentSkinId ~= "") and tostring(currentSkinId) or "None"
         end
     end
 
     local auctionUpdated = false
     local watchConns = {}
 
-    -- 2. Hook GetAttributeChangedSignal("SkinId") on all lots exactly like cowhub.lua
+    -- Hook GetAttributeChangedSignal("SkinId") exactly like cowhub.lua
     for _, lotName in ipairs(LOT_NAMES) do
         local lot = skinAuction:FindFirstChild(lotName)
         if lot then
             local conn = lot:GetAttributeChangedSignal("SkinId"):Connect(function()
-                -- Wait 1s for attributes (SkinName, EndsAt, Bid, Rarity) to replicate from server
                 task.wait(1)
                 if not hunterRunning then return end
 
                 local currentSkinId = lot:GetAttribute("SkinId")
-                local endsAt = lot:GetAttribute("EndsAt")
-                local currentSignature = tostring(currentSkinId) .. "_" .. tostring(endsAt)
+                local endsAt = tonumber(lot:GetAttribute("EndsAt")) or 0
 
-                if currentSkinId and currentSkinId ~= "" and currentSignature ~= previousSignatures[lotName] then
-                    previousSignatures[lotName] = currentSignature
+                -- Only trigger if SkinId genuinely changed to a new skin OR timer rolled to a new future round
+                if currentSkinId and currentSkinId ~= "" and tostring(currentSkinId) ~= baselineSkins[lotName] then
                     log("Auction update detected on " .. lotName .. ": " .. tostring(currentSkinId))
+                    auctionUpdated = true
+                elseif targetEndsAt > 0 and endsAt > (targetEndsAt + 30) then
+                    log("New auction round detected via EndsAt roll on " .. lotName .. ": " .. tostring(endsAt))
                     auctionUpdated = true
                 end
             end)
@@ -935,20 +962,20 @@ local function waitForAuctionChange()
         end
     end
 
-    -- 3. Passive wait loop: Anti-AFK and periodic sanity check for target skin or rotation
+    -- Passive standby loop: Count down until targetEndsAt is reached, anti-afk, and monitor
+    local lastNotifTime = os.time()
     while not auctionUpdated and hunterRunning do
-        task.wait(5)
+        task.wait(2)
         if not hunterRunning then break end
 
-        -- Check if target skin appeared in the current server's lots
+        local now = os.time()
+        local secsLeft, _currentEndsAt = getAuctionRemainingTime(skinAuction)
+
+        -- 1. Check if target skin appeared while waiting
         for _, lotName in ipairs(LOT_NAMES) do
             local lot = skinAuction:FindFirstChild(lotName)
             if lot then
                 local currentSkinId = lot:GetAttribute("SkinId")
-                local endsAt = lot:GetAttribute("EndsAt")
-                local currentSignature = tostring(currentSkinId) .. "_" .. tostring(endsAt)
-
-                -- Did the target skin appear while waiting?
                 if tostring(currentSkinId) == tostring(TARGET_SKIN_ID) then
                     log("🎯 TARGET SKIN APPEARED ON CURRENT SERVER WHILE WAITING!")
 
@@ -956,6 +983,7 @@ local function waitForAuctionChange()
                     local rarity = lot:GetAttribute("Rarity") or "Unknown"
                     local bid = lot:GetAttribute("Bid")
                     local minBid = lot:GetAttribute("MinimumBid")
+                    local endsAt = lot:GetAttribute("EndsAt")
 
                     local endsAtDisplay = "N/A"
                     if endsAt then
@@ -997,18 +1025,48 @@ local function waitForAuctionChange()
                     for _, c in ipairs(watchConns) do pcall(function() c:Disconnect() end) end
                     return true
                 end
+            end
+        end
 
-                -- Fallback check: Did lot signature change from the baseline?
-                if currentSkinId and currentSkinId ~= "" and currentSignature ~= previousSignatures[lotName] then
-                    previousSignatures[lotName] = currentSignature
-                    log("Auction rotation confirmed on " .. lotName .. ": " .. tostring(currentSkinId))
-                    auctionUpdated = true
-                    break
+        -- 2. Has the auction timer expired or rolled over?
+        if targetEndsAt > 0 and now >= targetEndsAt then
+            -- Timer reached! Wait a few seconds for server to rotate lots and update attributes
+            log("15-minute auction timer expired! Waiting for server to rotate lots...")
+            task.wait(4)
+
+            -- Check if lots changed or new EndsAt is set into the future
+            local _newSecsLeft, newEndsAt = getAuctionRemainingTime(skinAuction)
+            if newEndsAt > (targetEndsAt + 30) then
+                log("Server rotated auction to new round! EndsAt: " .. tostring(newEndsAt))
+                auctionUpdated = true
+                break
+            end
+
+            for _, lotName in ipairs(LOT_NAMES) do
+                local lot = skinAuction:FindFirstChild(lotName)
+                if lot then
+                    local currentSkinId = lot:GetAttribute("SkinId")
+                    if currentSkinId and currentSkinId ~= "" and tostring(currentSkinId) ~= baselineSkins[lotName] then
+                        log("Server updated lots! New skin on " .. lotName .. ": " .. tostring(currentSkinId))
+                        auctionUpdated = true
+                        break
+                    end
                 end
             end
         end
 
-        -- Keep connection alive via VirtualUser
+        -- Periodic in-game notification every 3 minutes so user knows time remaining
+        if now - lastNotifTime >= 180 and secsLeft > 0 then
+            lastNotifTime = now
+            Rayfield:Notify({
+                Title = "Auction Rotation Sync",
+                Content = string.format("Waiting for 15-min rotation (%s remaining)...", formatRemainingTime(secsLeft)),
+                Duration = 4,
+                Image = 4483362458,
+            })
+        end
+
+        -- Anti-AFK
         pcall(function()
             VirtualUser:CaptureController()
             VirtualUser:ClickButton2(Vector2.zero)
@@ -1022,7 +1080,7 @@ local function waitForAuctionChange()
         return false
     end
 
-    log("Genuine auction update confirmed! Restarting sweep across all servers...")
+    log("15-minute auction rotation confirmed! Restarting sweep across all servers...")
     return false
 end
 
@@ -1331,10 +1389,15 @@ MainTab:CreateButton({
         local totalInQueue = #state.serverQueue
         local remaining = #getRemainingCandidateServers()
 
+        local cowGame = ReplicatedStorage:FindFirstChild("CowGame")
+        local skinAuction = cowGame and cowGame:FindFirstChild("SkinAuction")
+        local secsLeft = getAuctionRemainingTime(skinAuction)
+        local timeInfo = secsLeft > 0 and (" | Next Sweep: " .. formatRemainingTime(secsLeft)) or ""
+
         Rayfield:Notify({
             Title = "Sweep Status #" .. tostring(state.sweepCount),
-            Content = string.format("Checked: %d | Remaining: %d | Total Queued: %d (Skipped/Full: %d)", 
-                visitedCount, remaining, totalInQueue, failedCount),
+            Content = string.format("Checked: %d | Remaining: %d | Queued: %d (Skipped: %d)%s", 
+                visitedCount, remaining, totalInQueue, failedCount, timeInfo),
             Duration = 6,
             Image = 4483362458,
         })
