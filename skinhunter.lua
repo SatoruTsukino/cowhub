@@ -5,8 +5,9 @@
     Once all servers are exhausted, waits for the auction to rotate
     before sweeping again.
 
-    Includes Rayfield Gen2 UI with toggles for starting/stopping,
-    Skin ID input, webhook input, rejoin button, and a close button.
+    Powered by Rayfield (2022) UI Library (https://docs.sirius.menu/rayfield)
+    Includes toggles for starting/stopping, Skin ID dropdown & manual input,
+    webhook notifications, rejoin button, sweep status inspector, and teardown.
 ]]
 
 -- ============================
@@ -19,46 +20,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualUser = game:GetService("VirtualUser")
 
 local plr = Players.LocalPlayer
-
--- ============================
--- SINGLE-INSTANCE & REJOIN DEBOUNCE
--- ============================
-if getgenv then
-    local now = os.clock()
-    -- If another execution occurred less than 4 seconds ago, abort this duplicate execution immediately
-    if getgenv()._SkinHunterLastExec and (now - getgenv()._SkinHunterLastExec) < 4 then
-        print("[SkinHunter] Duplicate script execution detected within 4s. Aborting duplicate instance.")
-        return
-    end
-    getgenv()._SkinHunterLastExec = now
-
-    -- If a previous instance is registered, trigger its full cleanup
-    if getgenv()._SkinHunterCleanup then
-        pcall(getgenv()._SkinHunterCleanup)
-        getgenv()._SkinHunterCleanup = nil
-    end
-    if getgenv()._SkinHunterWindow and getgenv()._SkinHunterWindow.Unload then
-        pcall(function()
-            getgenv()._SkinHunterWindow:Unload()
-        end)
-        getgenv()._SkinHunterWindow = nil
-    end
-end
-
--- ============================
--- EXECUTOR API DETECTION
--- ============================
-local queueOnTeleport = (syn and syn.queue_on_teleport)
-    or queue_on_teleport
-    or queueonteleport
-    or (fluxus and fluxus.queue_on_teleport)
-    or (getgenv and getgenv().queue_on_teleport)
-
-local httpRequest = (request or http_request or (http and http.request) or (syn and syn.request))
-
-local readFileFunc = readfile
-local writeFileFunc = writefile
-local isFileFunc = isfile
 
 -- ============================
 -- CONSTANTS
@@ -86,25 +47,22 @@ local function countKeys(tbl)
     return count
 end
 
-local reloadQueued = false
-local function queueReload()
-    if reloadQueued then return end
-    reloadQueued = true
-    if queueOnTeleport then
-        pcall(function()
-            queueOnTeleport(string.format([[
-                task.wait(3)
-                loadstring(game:HttpGet('%s'))()
-            ]], SCRIPT_SOURCE_URL))
-        end)
+-- ============================
+-- GUI CLEANUP & ANTI-DUPLICATION
+-- Targets Rayfield (2022) ScreenGui ("Rayfield" and "Rayfield-Old")
+-- ============================
+local function destroyAllRayfieldGuis()
+    -- 1. Call Rayfield:Destroy() if stored in global environment
+    if getgenv then
+        if getgenv()._SkinHunterRayfield and type(getgenv()._SkinHunterRayfield.Destroy) == "function" then
+            pcall(function()
+                getgenv()._SkinHunterRayfield:Destroy()
+            end)
+        end
+        getgenv()._SkinHunterRayfield = nil
     end
-end
 
--- ============================
--- GUI CLEANUP HELPER
--- Ensures no duplicate Rayfield hubs remain on screen
--- ============================
-local function cleanupExistingGuis()
+    -- 2. Find and destroy ALL existing Rayfield ScreenGuis across containers
     local containers = {}
     if typeof(gethui) == "function" then
         local s, hui = pcall(gethui)
@@ -127,31 +85,61 @@ local function cleanupExistingGuis()
         pcall(function()
             for _, child in ipairs(container:GetChildren()) do
                 if child:IsA("ScreenGui") then
-                    local shouldDestroy = false
-                    if child.Name == "Rayfield" or child.Name:find("Rayfield") then
-                        shouldDestroy = true
-                    elseif child:FindFirstChild("Skin Hunter") or child:FindFirstChild("Cow Hub") then
-                        shouldDestroy = true
-                    else
-                        for _, sub in ipairs(child:GetChildren()) do
-                            if sub:IsA("Frame") and (sub.Name == "Skin Hunter" or sub.Name == "Cow Hub" or sub.Name == "Rayfield") then
-                                shouldDestroy = true
-                                break
-                            end
-                            -- Rayfield window structure check
-                            if sub:IsA("Frame") and sub:FindFirstChild("Header") and (sub:FindFirstChild("Tabs") or sub:FindFirstChild("MainContainer")) then
-                                shouldDestroy = true
-                                break
-                            end
-                        end
-                    end
-
-                    if shouldDestroy then
-                        log("Destroyed existing Rayfield ScreenGui: " .. tostring(child.Name))
+                    local name = child.Name
+                    if name == "Rayfield" or name == "Rayfield-Old" or name:find("Rayfield") or name == "Skin Hunter" or child:FindFirstChild("Rayfield") then
+                        log("Destroying existing Rayfield ScreenGui: " .. tostring(name))
                         pcall(function() child:Destroy() end)
                     end
                 end
             end
+        end)
+    end
+end
+
+-- Single-execution mutex: Prevents duplicate execution on rejoin / autoexec collisions
+if getgenv then
+    if getgenv()._SkinHunterActiveSession == game.JobId and getgenv()._SkinHunterActive == true then
+        print("[SkinHunter] Active instance already running on server " .. tostring(game.JobId):sub(1, 8) .. ". Aborting duplicate instance.")
+        return
+    end
+
+    getgenv()._SkinHunterActiveSession = game.JobId
+    getgenv()._SkinHunterActive = true
+
+    if getgenv()._SkinHunterCleanup then
+        pcall(getgenv()._SkinHunterCleanup)
+        getgenv()._SkinHunterCleanup = nil
+    end
+end
+
+-- Wipe any orphaned or dangling Rayfield GUIs before loading the new one
+destroyAllRayfieldGuis()
+
+-- ============================
+-- EXECUTOR API DETECTION
+-- ============================
+local queueOnTeleport = (syn and syn.queue_on_teleport)
+    or queue_on_teleport
+    or queueonteleport
+    or (fluxus and fluxus.queue_on_teleport)
+    or (getgenv and getgenv().queue_on_teleport)
+
+local httpRequest = (request or http_request or (http and http.request) or (syn and syn.request))
+
+local readFileFunc = readfile
+local writeFileFunc = writefile
+local isFileFunc = isfile
+
+local reloadQueued = false
+local function queueReload()
+    if reloadQueued then return end
+    reloadQueued = true
+    if queueOnTeleport then
+        pcall(function()
+            queueOnTeleport(string.format([[
+                task.wait(3)
+                loadstring(game:HttpGet('%s'))()
+            ]], SCRIPT_SOURCE_URL))
         end)
     end
 end
@@ -278,7 +266,6 @@ loadState()
 
 -- ============================
 -- AUCTION SKINS CATALOGUE
--- (Extracted from ReplicatedStorage.CowGame.Shared.SkinAuctionConfig)
 -- ============================
 local DEFAULT_AUCTION_SKINS = {
     "AngusCoat",
@@ -337,7 +324,6 @@ local function getAuctionSkins()
         add(id)
     end
 
-    -- Discover live or seasonal event auction skins from ReplicatedStorage if available
     pcall(function()
         local cowGame = ReplicatedStorage:FindFirstChild("CowGame")
         local shared = cowGame and cowGame:FindFirstChild("Shared")
@@ -375,39 +361,40 @@ if TARGET_SKIN_ID == "" then
 end
 
 -- ============================
--- RAYFIELD UI
--- Clean up any existing Rayfield hub first to prevent clutter
+-- RAYFIELD (2022) UI INITIALIZATION
+-- Documentation: https://docs.sirius.menu/rayfield
 -- ============================
-cleanupExistingGuis()
-
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local Window = Rayfield:CreateWindow({
     Name = "Skin Hunter",
-    Subtitle = "Server-Hopping Auction Sniper",
-    showIconOnly = true,
-    theme = "frost",
-    ConfigurationSaving = { Enabled = false },
+    LoadingTitle = "Skin Hunter",
+    LoadingSubtitle = "Server-Hopping Auction Sniper",
+    ConfigurationSaving = {
+        Enabled = false,
+    },
+    Discord = {
+        Enabled = false,
+    },
     KeySystem = false,
 })
 
 if getgenv then
-    getgenv()._SkinHunterWindow = Window
+    getgenv()._SkinHunterRayfield = Rayfield
     getgenv()._SkinHunterCleanup = function()
         hunterRunning = false
         for _, conn in ipairs(scriptConnections) do
             if conn and conn.Disconnect then conn:Disconnect() end
         end
         table.clear(scriptConnections)
-        if Window and Window.Unload then
-            pcall(function() Window:Unload() end)
-        end
-        cleanupExistingGuis()
+        pcall(function() Rayfield:Destroy() end)
+        destroyAllRayfieldGuis()
     end
 end
 
-local MainTab = Window:CreateTab({ Name = "Hunter", Icon = 4483362458 })
-local SettingsTab = Window:CreateTab({ Name = "Settings", Icon = 4483362458 })
+-- Rayfield 2022 CreateTab takes (Title, ImageId)
+local MainTab = Window:CreateTab("Hunter", 4483362458)
+local SettingsTab = Window:CreateTab("Settings", 4483362458)
 
 -- ============================
 -- ANTI-AFK & TELEPORT SAFEGUARDS
@@ -421,10 +408,11 @@ table.insert(scriptConnections, idleConn)
 local teleportInitConn = TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, errorMessage)
     if player == plr then
         log("Teleport failed (" .. tostring(teleportResult) .. "): " .. tostring(errorMessage))
-        Window:Notify({
+        Rayfield:Notify({
             Title = "Teleport Failed",
             Content = tostring(errorMessage or "Teleport failed. Retrying..."),
             Duration = 5,
+            Image = 4483362458,
         })
     end
 end)
@@ -475,13 +463,17 @@ end
 rejoinServer = function()
     log("Rejoining current server: " .. tostring(game.JobId))
 
-    Window:Notify({
+    Rayfield:Notify({
         Title = "Rejoining Server",
         Content = "Attempting to reconnect to this server...",
         Duration = 4,
+        Image = 4483362458,
     })
 
-    reloadQueued = false
+    if getgenv then
+        getgenv()._SkinHunterActive = false
+    end
+
     queueReload()
 
     task.spawn(function()
@@ -586,10 +578,11 @@ local function checkForTargetSkin()
                 }
             )
 
-            Window:Notify({
+            Rayfield:Notify({
                 Title = "🎯 TARGET SKIN FOUND!",
                 Content = lot.skinName .. " (" .. lot.rarity .. ") in " .. lot.lotName,
                 Duration = 15,
+                Image = 4483362458,
             })
 
             return true, lot
@@ -606,7 +599,7 @@ end
 -- ============================
 fetchServerList = function()
     if not httpRequest then
-        log("HTTP requests not supported. Cannot fetch server list.")
+        log("HTTP requests not supported on this executor.")
         return {}
     end
 
@@ -614,12 +607,13 @@ fetchServerList = function()
     local seenIds = {}
     local cursor = ""
     local pageCount = 0
-    local maxPages = 10 -- Cap at 10 pages (up to 1,000 servers) to avoid infinite loops
+    local maxPages = 10
+    local placeIdStr = tostring(PLACE_ID)
 
     repeat
         if not hunterRunning then return allServers end
 
-        local url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?limit=100", PLACE_ID)
+        local url = "https://games.roblox.com/v1/games/" .. placeIdStr .. "/servers/Public?limit=100"
         if cursor and cursor ~= "" then
             local cleanCursor = cursor:gsub("[\r\n]", "")
             url = url .. "&cursor=" .. cleanCursor
@@ -650,10 +644,10 @@ fetchServerList = function()
                     break
                 elseif decodeOk and data and data.errors then
                     log("Roblox API rate limit or error on page " .. tostring(pageCount + 1) .. ". Retrying after delay...")
-                    task.wait(2.5 + (retries * 2))
+                    task.wait(3 + (retries * 2))
                 end
             else
-                task.wait(1.5)
+                task.wait(2)
             end
             retries = retries + 1
         end
@@ -672,10 +666,9 @@ fetchServerList = function()
             cursor = responseData.nextPageCursor
             pageCount = pageCount + 1
             if cursor and cursor ~= "" then
-                task.wait(1) -- Respect Roblox API rate limits
+                task.wait(1)
             end
         else
-            log("Failed to fetch server page " .. tostring(pageCount + 1) .. " after retries.")
             cursor = nil
         end
     until not cursor or cursor == "" or pageCount >= maxPages or not hunterRunning
@@ -686,7 +679,7 @@ end
 
 -- ============================
 -- QUEUE & CANDIDATE SELECTION
--- Systematically checks ALL servers, prioritizing reachable servers with open slots
+-- Systematically combs through ALL servers without dropping any
 -- ============================
 getRemainingCandidateServers = function()
     local unvisited = {}
@@ -700,38 +693,60 @@ getRemainingCandidateServers = function()
 end
 
 getNextCandidateServer = function()
+    -- 1. Try unvisited servers in current queue
     local unvisited = getRemainingCandidateServers()
 
-    -- If no unvisited servers left in local queue, refresh from Roblox API
-    if #unvisited == 0 then
-        log("No unvisited servers in local queue. Refreshing full server list from Roblox API...")
-        local fresh = fetchServerList()
-
-        local existingMap = {}
-        for _, s in ipairs(state.serverQueue) do
-            existingMap[s.jobId] = true
-        end
-
-        for _, s in ipairs(fresh) do
-            if not existingMap[s.jobId] then
-                table.insert(state.serverQueue, s)
+    -- 2. If no unvisited servers left, but we have failedServers and haven't combed all servers:
+    -- Retry failed servers in case they have slots now
+    if #unvisited == 0 and countKeys(state.failedServers) > 0 and (countKeys(state.visitedServers) + 1 < #state.serverQueue) then
+        log("Retrying previously unreachable/full servers before ending sweep...")
+        for id in pairs(state.failedServers) do
+            if id ~= game.JobId and not state.visitedServers[id] then
+                for _, s in ipairs(state.serverQueue) do
+                    if s.jobId == id then
+                        table.insert(unvisited, s)
+                        break
+                    end
+                end
             end
         end
-
-        if #state.serverQueue == 0 then
-            state.serverQueue = fresh
-        end
+        state.failedServers = {}
         saveState()
+    end
 
-        unvisited = getRemainingCandidateServers()
+    -- 3. If queue is empty or has fewer than 2 servers, refresh full list from Roblox API
+    if #unvisited == 0 and (#state.serverQueue == 0 or countKeys(state.visitedServers) >= #state.serverQueue) then
+        log("Checking for newly spawned servers from Roblox API...")
+        local fresh = fetchServerList()
+
+        if #fresh > 0 then
+            local existingMap = {}
+            for _, s in ipairs(state.serverQueue) do
+                existingMap[s.jobId] = true
+            end
+
+            local addedCount = 0
+            for _, s in ipairs(fresh) do
+                if not existingMap[s.jobId] then
+                    table.insert(state.serverQueue, s)
+                    addedCount = addedCount + 1
+                end
+            end
+
+            if #state.serverQueue == 0 then
+                state.serverQueue = fresh
+            end
+            saveState()
+
+            unvisited = getRemainingCandidateServers()
+        end
     end
 
     if #unvisited == 0 then
         return nil, 0
     end
 
-    -- Sort candidates: Servers with available slots (playing < maxPlayers and playing > 0) come first!
-    -- This guarantees high-success joins without getting blocked by full servers.
+    -- Prioritize servers with available slots
     table.sort(unvisited, function(a, b)
         local aFree = a.maxPlayers - a.playing
         local bFree = b.maxPlayers - b.playing
@@ -753,7 +768,7 @@ end
 
 -- ============================
 -- SERVER HOPPING
--- Resilient hopping with failure recovery and automatic candidate advance
+-- Strictly 1 queue_on_teleport per hop, with reliable failure recovery
 -- ============================
 local function hopToServer(target)
     if not hunterRunning then return end
@@ -770,10 +785,12 @@ local function hopToServer(target)
     saveState()
     saveConfig()
 
-    reloadQueued = false
+    -- Queue reload for the upcoming teleport
     queueReload()
 
     local remainingCandidates = getRemainingCandidateServers()
+    local totalQueueCount = #state.serverQueue
+    local visitedCount = countKeys(state.visitedServers)
 
     if NOTIFY_ON_HOP then
         sendWebhook(
@@ -781,53 +798,64 @@ local function hopToServer(target)
             "Skin not found on this server. Hopping to next server...",
             0x5865F2,
             {
-                {["name"] = "Servers Checked", ["value"] = tostring(countKeys(state.visitedServers)), ["inline"] = true},
+                {["name"] = "Servers Checked", ["value"] = string.format("%d / %d", visitedCount, totalQueueCount), ["inline"] = true},
                 {["name"] = "Remaining in Queue", ["value"] = tostring(#remainingCandidates), ["inline"] = true},
                 {["name"] = "Sweep #", ["value"] = tostring(state.sweepCount), ["inline"] = true},
             }
         )
     end
 
-    Window:Notify({
+    Rayfield:Notify({
         Title = "Server Hop",
-        Content = string.format("Hopping to %s (%d remaining)...", tostring(targetJobId):sub(1, 8), #remainingCandidates),
+        Content = string.format("Hopping to %s (%d/%d checked)...", tostring(targetJobId):sub(1, 8), visitedCount, totalQueueCount),
         Duration = 3,
+        Image = 4483362458,
     })
 
+    local teleportFailed = false
+    local failConn
+    failConn = TeleportService.TeleportInitFailed:Connect(function(player, result, msg)
+        if player == plr then
+            teleportFailed = true
+            log("TeleportInitFailed fired for " .. tostring(targetJobId):sub(1, 8) .. ": " .. tostring(msg))
+        end
+    end)
+
     pcall(function()
         TeleportService:TeleportToPlaceInstance(PLACE_ID, targetJobId, plr)
     end)
 
-    task.wait(10)
+    -- Wait up to 15 seconds ONLY for an explicit TeleportInitFailed error
+    local elapsed = 0
+    while elapsed < 15 and not teleportFailed and hunterRunning do
+        task.wait(1)
+        elapsed = elapsed + 1
+    end
+
+    if failConn then
+        pcall(function() failConn:Disconnect() end)
+    end
+
     if not hunterRunning then return end
 
-    log("Teleport to " .. tostring(targetJobId):sub(1, 8) .. " didn't transition within 10s. Retrying once...")
-    reloadQueued = false
-    queueReload()
-    pcall(function()
-        TeleportService:TeleportToPlaceInstance(PLACE_ID, targetJobId, plr)
-    end)
+    -- ONLY if teleport explicitly failed do we mark as failed and try another server
+    if teleportFailed then
+        log("Server " .. tostring(targetJobId):sub(1, 8) .. " was unreachable/full. Skipping.")
+        state.failedServers[targetJobId] = true
+        saveState()
 
-    task.wait(12)
-    if not hunterRunning then return end
-
-    -- Server is unreachable (full, restricted, or closed).
-    -- Mark it as failed so we NEVER loop on it again this sweep!
-    log("Server " .. tostring(targetJobId):sub(1, 8) .. " is unreachable or full. Skipping to next candidate.")
-    state.failedServers[targetJobId] = true
-    saveState()
-
-    local nextTarget, remaining = getNextCandidateServer()
-    if nextTarget then
-        log("Proceeding to next server in queue: " .. tostring(nextTarget.jobId):sub(1, 8))
-        hopToServer(nextTarget)
+        local nextTarget, _remaining = getNextCandidateServer()
+        if nextTarget then
+            log("Proceeding to next server in queue: " .. tostring(nextTarget.jobId):sub(1, 8))
+            hopToServer(nextTarget)
+        else
+            log("No further candidate servers available. Trying fallback random hop...")
+            pcall(function()
+                TeleportService:Teleport(PLACE_ID, plr)
+            end)
+        end
     else
-        log("No further specific candidate servers available. Trying fallback random hop...")
-        reloadQueued = false
-        queueReload()
-        pcall(function()
-            TeleportService:Teleport(PLACE_ID, plr)
-        end)
+        log("Teleport dispatched for " .. tostring(targetJobId):sub(1, 8) .. ". Awaiting arrival on new server...")
     end
 end
 
@@ -837,10 +865,11 @@ end
 local function waitForAuctionChange(skinAuction)
     log("All servers exhausted. Watching for auction rotation...")
 
-    Window:Notify({
+    Rayfield:Notify({
         Title = "⏸ Sweep Complete",
         Content = "All servers checked. Waiting for auction to rotate...",
         Duration = 5,
+        Image = 4483362458,
     })
 
     sendWebhook(
@@ -906,10 +935,11 @@ local function waitForAuctionChange(skinAuction)
                         }
                     )
 
-                    Window:Notify({
+                    Rayfield:Notify({
                         Title = "🎯 TARGET SKIN FOUND!",
                         Content = lot.skinName .. " appeared while waiting!",
                         Duration = 15,
+                        Image = 4483362458,
                     })
 
                     state.found = true
@@ -950,10 +980,11 @@ end
 -- ============================
 main = function()
     if TARGET_SKIN_ID == "" then
-        Window:Notify({
+        Rayfield:Notify({
             Title = "No Skin ID",
             Content = "Enter a Target Skin ID before starting the hunter.",
             Duration = 4,
+            Image = 4483362458,
         })
         hunterRunning = false
         state.hunting = false
@@ -977,7 +1008,7 @@ main = function()
     if not hunterRunning then return end
 
     -- 1. Check the CURRENT server first
-    local found, lotData = checkForTargetSkin()
+    local found, _lotData = checkForTargetSkin()
 
     if found then
         state.found = true
@@ -998,8 +1029,15 @@ main = function()
 
     -- Mark this server as visited
     state.visitedServers[game.JobId] = true
-    state.sweepCount = state.sweepCount + (state.sweepCount == 0 and 1 or 0)
+    if state.sweepCount == 0 then state.sweepCount = 1 end
     saveState()
+
+    -- Ensure serverQueue is populated if empty
+    if #state.serverQueue == 0 then
+        log("Initializing server queue for sweep #" .. tostring(state.sweepCount) .. "...")
+        state.serverQueue = fetchServerList()
+        saveState()
+    end
 
     -- 2. Pick next candidate from queue and hop
     local nextCandidate, remainingCount = getNextCandidateServer()
@@ -1017,11 +1055,10 @@ main = function()
     else
         -- All servers exhausted — wait for auction rotation
         local totalChecked = countKeys(state.visitedServers)
-        log(string.format("All %d available servers exhausted for sweep #%d.", totalChecked, state.sweepCount))
+        local totalInQueue = #state.serverQueue
+        log(string.format("All %d/%d servers exhausted for sweep #%d.", totalChecked, totalInQueue, state.sweepCount))
 
-        local _, skinAuction
-        local lots
-        lots, skinAuction = getAuctionData()
+        local _, skinAuction = getAuctionData()
 
         local foundWhileWaiting = waitForAuctionChange(skinAuction)
 
@@ -1056,10 +1093,11 @@ main = function()
             0x00FF88
         )
 
-        Window:Notify({
+        Rayfield:Notify({
             Title = "New Sweep",
             Content = "Auction rotated. Starting sweep #" .. tostring(state.sweepCount),
             Duration = 3,
+            Image = 4483362458,
         })
 
         local freshCandidate = getNextCandidateServer()
@@ -1085,7 +1123,12 @@ startHunter = function(isAutoResume)
     end
 
     if TARGET_SKIN_ID == "" then
-        Window:Notify({ Title = "No Skin ID", Content = "Enter or select a Target Skin ID first.", Duration = 4 })
+        Rayfield:Notify({
+            Title = "No Skin ID",
+            Content = "Enter or select a Target Skin ID first.",
+            Duration = 4,
+            Image = 4483362458,
+        })
         hunterRunning = false
         state.hunting = false
         saveState()
@@ -1102,10 +1145,11 @@ startHunter = function(isAutoResume)
     saveState()
     saveConfig()
 
-    Window:Notify({
+    Rayfield:Notify({
         Title = isAutoResume and "Hunter Auto-Resumed" or "Hunter Started",
         Content = (isAutoResume and "Continuing hunt for " or "Hunting for ") .. TARGET_SKIN_ID .. "...",
         Duration = 3,
+        Image = 4483362458,
     })
 
     log("Hunter started. Target: " .. TARGET_SKIN_ID)
@@ -1118,18 +1162,19 @@ stopHunter = function()
     saveState()
     saveConfig()
 
-    Window:Notify({
+    Rayfield:Notify({
         Title = "Hunter Stopped",
         Content = "Server hopping halted.",
         Duration = 3,
+        Image = 4483362458,
     })
     log("Hunter stopped by user.")
 end
 
 -- ============================
--- UI: MAIN TAB
+-- UI: MAIN TAB (RAYFIELD 2022)
 -- ============================
-MainTab:CreateSection({ Name = "Target Configuration" })
+MainTab:CreateSection("Target Configuration")
 
 local initialSkinSelection = table.find(AUCTION_SKIN_OPTIONS, TARGET_SKIN_ID) and TARGET_SKIN_ID or AUCTION_SKIN_OPTIONS[1]
 
@@ -1151,10 +1196,11 @@ MainTab:CreateDropdown({
                 state.found = false
                 saveConfig()
                 saveState()
-                Window:Notify({
+                Rayfield:Notify({
                     Title = "Target Skin Selected",
                     Content = "Now hunting: " .. selection,
                     Duration = 3,
+                    Image = 4483362458,
                 })
                 log("Selected target skin from dropdown: " .. selection)
             end
@@ -1164,8 +1210,9 @@ MainTab:CreateDropdown({
 
 MainTab:CreateInput({
     Name = "Custom Skin ID (Manual Override)",
-    Placeholder = TARGET_SKIN_ID ~= "" and ("Current: " .. TARGET_SKIN_ID) or "Enter custom SkinId if not in dropdown",
+    PlaceholderText = TARGET_SKIN_ID ~= "" and ("Current: " .. TARGET_SKIN_ID) or "Enter custom SkinId if not in dropdown",
     RemoveTextAfterFocusLost = false,
+    Flag = "Input_TargetSkin",
     Callback = function(Text)
         if Text and Text ~= "" then
             if TARGET_SKIN_ID ~= Text then
@@ -1177,14 +1224,19 @@ MainTab:CreateInput({
                 state.found = false
                 saveConfig()
                 saveState()
-                Window:Notify({ Title = "Skin ID Overridden", Content = "Now hunting: " .. Text, Duration = 3 })
+                Rayfield:Notify({
+                    Title = "Skin ID Overridden",
+                    Content = "Now hunting: " .. Text,
+                    Duration = 3,
+                    Image = 4483362458,
+                })
                 log("Manually set target skin: " .. Text)
             end
         end
     end,
 })
 
-MainTab:CreateSection({ Name = "Server Hopping & Connection" })
+MainTab:CreateSection("Server Hopping & Connection")
 
 local initialHunterValue = (state.hunting == true and not state.found)
 
@@ -1230,56 +1282,74 @@ MainTab:CreateButton({
         local totalInQueue = #state.serverQueue
         local remaining = #getRemainingCandidateServers()
 
-        Window:Notify({
+        Rayfield:Notify({
             Title = "Sweep Status #" .. tostring(state.sweepCount),
             Content = string.format("Checked: %d | Remaining: %d | Total Queued: %d (Skipped/Full: %d)", 
                 visitedCount, remaining, totalInQueue, failedCount),
             Duration = 6,
+            Image = 4483362458,
         })
     end,
 })
 
-MainTab:CreateSection({ Name = "Current Auction" })
+MainTab:CreateSection("Current Auction")
 
 MainTab:CreateButton({
     Name = "Check This Server's Auction",
     Callback = function()
         local lots = getAuctionData()
         if not lots or #lots == 0 then
-            Window:Notify({ Title = "Auction", Content = "No auction data found on this server.", Duration = 3 })
+            Rayfield:Notify({
+                Title = "Auction",
+                Content = "No auction data found on this server.",
+                Duration = 3,
+                Image = 4483362458,
+            })
             return
         end
         for _, lot in ipairs(lots) do
-            Window:Notify({
+            Rayfield:Notify({
                 Title = lot.lotName .. ": " .. lot.skinName,
                 Content = lot.rarity .. " — " .. tostring(lot.skinId),
                 Duration = 5,
+                Image = 4483362458,
             })
         end
     end,
 })
 
 -- ============================
--- UI: SETTINGS TAB
+-- UI: SETTINGS TAB (RAYFIELD 2022)
 -- ============================
-SettingsTab:CreateSection({ Name = "Discord Webhook" })
+SettingsTab:CreateSection("Discord Webhook")
 
 SettingsTab:CreateInput({
     Name = "Webhook URL",
-    Placeholder = WEBHOOK_URL ~= "" and "Saved webhook loaded! Paste to overwrite." or "Paste your Discord Webhook URL here",
+    PlaceholderText = WEBHOOK_URL ~= "" and "Saved webhook loaded! Paste to overwrite." or "Paste your Discord Webhook URL here",
     RemoveTextAfterFocusLost = false,
+    Flag = "Input_Webhook",
     Callback = function(Text)
         if Text:match("discord%.com/api/webhooks") then
             WEBHOOK_URL = Text
             saveConfig()
-            Window:Notify({ Title = "Webhook Saved", Content = "Your webhook URL has been saved.", Duration = 3 })
+            Rayfield:Notify({
+                Title = "Webhook Saved",
+                Content = "Your webhook URL has been saved.",
+                Duration = 3,
+                Image = 4483362458,
+            })
         else
-            Window:Notify({ Title = "Invalid URL", Content = "Please enter a valid Discord webhook URL.", Duration = 3 })
+            Rayfield:Notify({
+                Title = "Invalid URL",
+                Content = "Please enter a valid Discord webhook URL.",
+                Duration = 3,
+                Image = 4483362458,
+            })
         end
     end,
 })
 
-SettingsTab:CreateSection({ Name = "Script Control" })
+SettingsTab:CreateSection("Script Control")
 
 SettingsTab:CreateButton({
     Name = "Rejoin Current Server",
@@ -1297,7 +1367,12 @@ SettingsTab:CreateButton({
         state.sweepCount = 0
         state.found = false
         saveState()
-        Window:Notify({ Title = "Reset", Content = "Visited servers & queue cleared. Next sweep checks all servers fresh.", Duration = 3 })
+        Rayfield:Notify({
+            Title = "Reset",
+            Content = "Visited servers & queue cleared. Next sweep checks all servers fresh.",
+            Duration = 3,
+            Image = 4483362458,
+        })
     end,
 })
 
@@ -1310,9 +1385,10 @@ SettingsTab:CreateButton({
         saveConfig()
 
         if getgenv then
-            getgenv()._SkinHunterWindow = nil
+            getgenv()._SkinHunterRayfield = nil
             getgenv()._SkinHunterCleanup = nil
-            getgenv()._SkinHunterLastExec = nil
+            getgenv()._SkinHunterActive = false
+            getgenv()._SkinHunterActiveSession = nil
         end
 
         for _, conn in ipairs(scriptConnections) do
@@ -1320,8 +1396,8 @@ SettingsTab:CreateButton({
         end
         table.clear(scriptConnections)
 
-        Window:Unload()
-        cleanupExistingGuis()
+        pcall(function() Rayfield:Destroy() end)
+        destroyAllRayfieldGuis()
     end,
 })
 
