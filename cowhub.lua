@@ -99,23 +99,23 @@ local charConn = plr.CharacterAdded:Connect(function(newChar)
     char = newChar
     root = char:WaitForChild("HumanoidRootPart")
     humanoid = char:WaitForChild("Humanoid")
-    if humanoid then originalWalkSpeed = humanoid.WalkSpeed end
+    if humanoid then dodge.originalWalkSpeed = humanoid.WalkSpeed end
     raycastParams.FilterDescendantsInstances = {char}
     updateCharBaseParts(newChar)
-    isDodging = false
-    isUnderground = false
-    lastRecordedHearts = nil
-    currentAttackingMob = nil
-    preDodgePos = nil
-    preDodgeCFrame = nil
-    lastSurfaceCFrame = nil
-    lastSurfacePos = nil
-    undergroundCFrame = nil
-    currentUndergroundRetreatOffset = nil
-    isAerialRetreat = false
-    aerialRetreatCFrame = nil
-    preAerialCFrame = nil
-    aerialRetreatStartTime = 0
+    dodge.isDodging = false
+    dodge.isUnderground = false
+    dodge.lastRecordedHearts = nil
+    dodge.currentAttackingMob = nil
+    dodge.preDodgePos = nil
+    dodge.preDodgeCFrame = nil
+    dodge.lastSurfaceCFrame = nil
+    dodge.lastSurfacePos = nil
+    dodge.undergroundCFrame = nil
+    dodge.currentUndergroundRetreatOffset = nil
+    aerial.active = false
+    aerial.cframe = nil
+    aerial.preCFrame = nil
+    aerial.startTime = 0
     if manatite then
         manatite.model = nil
         manatite.target = nil
@@ -130,26 +130,149 @@ end)
 table.insert(scriptConnections, charConn)
 
 -- ==========================
--- STATE VARIABLES
 -- ==========================
--- Farming Variables
-local farmOn = false
-local autoChomp = false
-local autoChompMobs = false
-local autoFish = false
-local anchorPos = nil
-local pattern = "Guided Zigzag (Nodes)"
-local patternSpeed = 1.0
-local patternTimer = 0
-local nextRandomPos = nil
-local farmRadius = 75
-local farmRadiusSq = farmRadius * farmRadius
-local MOB_AURA_RADIUS_SQ = 100 -- Hardcoded 10 studs squared (10 * 10) - server-enforced attack reach
-local mobAuraDelay = 0.1
-local lastMoveTime = 0
+-- STATE TABLES (Grouped for Luau register optimization < 200 limit)
+-- ==========================
+local farm = {
+    on = false,
+    farm.autoChomp = false,
+    farm.autoChompMobs = false,
+    farm.autoFish = false,
+    farm.anchorPos = nil,
+    farm.pattern = "Guided Zigzag (Nodes)",
+    farm.patternSpeed = 1.0,
+    farm.patternTimer = 0,
+    farm.nextRandomPos = nil,
+    radius = 75,
+    radiusSq = 75 * 75,
+    mobAuraRadiusSq = 100, -- Hardcoded 10 studs squared (10 * 10) - server-enforced attack reach
+    farm.mobAuraDelay = 0.1,
+    farm.lastMoveTime = 0,
+    farm.currentTargetNode = nil,
+    farm.lastChompedNode = "",
+    farm.chompCooldown = 0,
+    farm.lastRaycastChompTime = 0,
+    farm.lastChompedMob = "",
+    farm.mobChompCooldown = 0,
+    farm.castCooldown = 0,
+    farm.lastFishingSearchTime = 0,
+}
+
+local dodge = {
+    auto = false,
+    method = "Underground", -- "Underground", "Run Away (Surface)", "Teleport Away (Surface)"
+    dodge.isDodging = false,
+    dodge.isUnderground = false,
+    dodge.currentAttackingMob = nil,
+    dodge.preDodgePos = nil,
+    dodge.preDodgeCFrame = nil,
+    dodge.lastSurfaceCFrame = nil,
+    dodge.lastSurfacePos = nil,
+    dodge.undergroundCFrame = nil,
+    dodge.undergroundDepth = 20,
+    dodge.currentUndergroundRetreatOffset = nil,
+    retreatDistance = 25,
+    retreatAngle = 45,
+    walkSpeed = 26,
+    dodge.originalWalkSpeed = humanoid and humanoid.WalkSpeed or 16,
+    detectionRadius = 15,
+    detectionRadiusSq = 15 * 15,
+    lingerDelay = 0.6,
+    dodge.prioritizeMobsOverManatite = true,
+    manatiteThreatRadiusSq = 100,
+    dodge.lastWarningSeenTime = 0,
+    dodge.lastTeleportDodgeDist = 0,
+    dodge.notifyOnDodge = false,
+    dodge.dodgeOnHeartsDecreased = true,
+    dodge.lastRecordedHearts = nil,
+    dodge.normalPlayerHearts = 0,
+    dodge.lastRecordedArmor = nil,
+    dodge.normalPlayerArmor = 0,
+    dodge.lastDamageRetreatTime = 0,
+    dodge.threatStartTime = 0,
+    startTime = 0,
+}
+
+local aerial = {
+    active = false,
+    startTime = 0,
+    duration = 60,   -- seconds to hover before returning
+    height = 200,    -- studs above current position
+    cframe = nil,    -- position locked while hovering
+    preCFrame = nil, -- original position to return to
+    cooldown = 10,   -- minimum seconds between aerial retreats
+    lastTime = 0,
+}
+
+local cache = {
+    cache.nodeBlacklist = setmetatable({}, { __mode = "k" }),
+    cache.lastBlacklistCleanup = 0,
+    nodeCleanNames = {},
+    mobPayloads = {},
+    nodePosition = setmetatable({}, { __mode = "k" }),
+    mobAttackOriginPart = setmetatable({}, { __mode = "kv" }),
+    mobHumanoid = setmetatable({}, { __mode = "kv" }),
+    mobWarning = setmetatable({}, { __mode = "kv" }),
+    cache.mobWarningCheckTime = setmetatable({}, { __mode = "kv" }),
+    fishingSpotPos = setmetatable({}, { __mode = "k" }),
+    grassFolder = workspace:FindFirstChild("CowVirtualGrass"),
+    grassNodes = {},
+    lastGrassTime = 0,
+    fishingSpots = {},
+    lastFishingSpotsTime = 0,
+    cache.cowWorldRef = workspace:FindFirstChild("CowWorld"),
+    cache.activeRipples = setmetatable({}, { __mode = "k" }),
+    cache.rippleConnections = {},
+    ripplePos = setmetatable({}, { __mode = "kv" }),
+    cache.activeAuraMobs = {},
+    cache.mithrilCaveMobSet = setmetatable({}, { __mode = "k" }),
+    spiderIdentifier = setmetatable({}, { __mode = "k" }),
+    cache.cachedMithrilCaveFolder = nil,
+    cache.isEPressed = false,
+    lastBackgroundTime = 0,
+    cache.isCachingBackground = false,
+    cache.lastSanitationTime = 0,
+}
+
+local auction = {
+    auction.lotNames = {"Lot1", "Lot2", "Lot3", "Lot4"},
+    previousSignatures = {},
+    auction.scannerRunning = false,
+    connections = {},
+    isChecking = false,
+    cards = {},
+    remote = nil,
+    autoBidAll = false,
+    autoBidActive = {
+        Lot1 = false,
+        Lot2 = false,
+        Lot3 = false,
+        Lot4 = false
+    },
+    auction.maxAutoBidLimit = 0,
+    auction.autoBidConnections = {},
+    auction.autoBidLoopRunning = true,
+    auction.lastAutoBidTime = {},
+    auction.isAutoBiddingLot = {},
+}
+
+local fps = {
+    capEnabled = false,
+    currentCap = 60,
+    fps.rarityColors = {
+        ["Common"] = 0xB0BEC5,
+        ["Uncommon"] = 0x66BB6A,
+        ["Rare"] = 0x42A5F5,
+        ["Super Rare"] = 0xAB47BC,
+        ["Mythic"] = 0xFF5252,
+        ["Unique"] = 0xFFD700,
+        ["Unrated"] = 0xFFFFFF,
+        ["Default"] = 0x5865F2
+    }
+}
+
 local HeartbeatConnection = nil
 
--- Manatite Farm & ESP State Table
 manatite = {
     auto = false,
     delay = 0.1,
@@ -166,7 +289,7 @@ manatite = {
     lastSearchTime = 0,
     startTime = 0,
     blacklist = setmetatable({}, { __mode = "k" }),
-    lastBlacklistCleanup = 0,
+    cache.lastBlacklistCleanup = 0,
     payloadCache = {},
     showESP = false,
     visuals = {},
@@ -212,7 +335,7 @@ mithril = {
     lastSearchTime = 0,
     startTime = 0,
     blacklist = setmetatable({}, { __mode = "k" }),
-    lastBlacklistCleanup = 0,
+    cache.lastBlacklistCleanup = 0,
     payloadCache = {},
     showESP = false,
     visuals = {},
@@ -238,102 +361,23 @@ local chestESP = {
 }
 
 -- Node Pathfinding & Memoization
-local nodeBlacklist = setmetatable({}, { __mode = "k" })
-local lastBlacklistCleanup = 0
-local currentTargetNode = nil
-local nodeCleanNameCache = {}
-local mobPayloadCache = {}
 
 -- Chomp & Aura Cooldowns
-local lastChompedNode = ""
-local chompCooldown = 0
-local lastRaycastChompTime = 0
-local lastChompedMob = ""
-local mobChompCooldown = 0
 
 -- Background Caching & Auto-Fishing Variables
-local castCooldown = 0
-local lastFishingSearchTime = 0
-local activeRipples = setmetatable({}, { __mode = "k" })
-local rippleConnections = {}
-local ripplePosCache = setmetatable({}, { __mode = "kv" })
-local activeAuraMobs = {}
-local mithrilCaveMobSet = setmetatable({}, { __mode = "k" })
-local spiderIdentifierCache = setmetatable({}, { __mode = "k" })
-local isEPressed = false
-local lastBackgroundCacheTime = 0
-local isCachingBackground = false
-local lastSanitationTime = 0
 
 -- Mob Attack Dodge Variables (Run Away & Surface Retreat)
-local autoDodgeMobs = false
-local dodgeMethod = "Underground" -- "Underground", "Run Away (Surface)", "Teleport Away (Surface)"
-local isDodging = false
-local isUnderground = false
-local currentAttackingMob = nil
-local preDodgePos = nil
-local preDodgeCFrame = nil
-local lastSurfaceCFrame = nil
-local lastSurfacePos = nil
-local undergroundCFrame = nil
-local undergroundDepth = 20
-local currentUndergroundRetreatOffset = nil
-local dodgeRetreatDistance = 25 -- Horizontal distance to retreat away from attacking mob
-local dodgeRetreatAngle = 45 -- Angle in degrees to offset retreat vector away from mob
-local dodgeWalkSpeed = 26 -- Sprint speed when running away from attack
-local originalWalkSpeed = humanoid and humanoid.WalkSpeed or 16
-local dodgeDetectionRadius = 15
-local dodgeDetectionRadiusSq = 15 * 15
-local dodgeLingerDelay = 0.6
-local prioritizeMobsOverManatite = true
-local MANATITE_THREAT_RADIUS_SQ = 100 -- 10 studs squared (10 * 10) matching server attack reach
-local lastWarningSeenTime = 0
-local lastTeleportDodgeDist = 0
-local notifyOnDodge = false
-local dodgeOnHeartsDecreased = true
-local lastRecordedHearts = nil
-local normalPlayerHearts = 0
-local lastRecordedArmor = nil
-local normalPlayerArmor = 0
-local lastDamageRetreatTime = 0
-local threatStartTime = 0
-local dodgeStartTime = 0
 
 -- Aerial Retreat Variables (Low-Health Emergency Retreat)
-local isAerialRetreat = false
-local aerialRetreatStartTime = 0
-local aerialRetreatDuration = 60   -- seconds to hover before returning
-local aerialRetreatHeight = 200    -- studs above current position
-local aerialRetreatCFrame = nil    -- position locked while hovering
-local preAerialCFrame = nil        -- original position to return to
-local aerialRetreatCooldown = 10   -- minimum seconds between aerial retreats
-local lastAerialRetreatTime = 0
 
 -- Spammer Variables
 local spamThreads = {E = 0, Q = 0}
 
 -- Scanner & File System Variables
-local lotNames = {"Lot1", "Lot2", "Lot3", "Lot4"}
 local httpRequest = (request or http_request or (http and http.request) or (syn and syn.request))
-local previousAuctionSignatures = {}
-local scannerRunning = false
-local auctionConnections = {}
-local isCheckingAuction = false
 
 -- FPS Variables
-local fpsCapEnabled = false
-local currentFpsCap = 60
 
-local rarityColors = {
-    ["Common"] = 0xB0BEC5,
-    ["Uncommon"] = 0x66BB6A,
-    ["Rare"] = 0x42A5F5,
-    ["Super Rare"] = 0xAB47BC,
-    ["Mythic"] = 0xFF5252,
-    ["Unique"] = 0xFFD700,
-    ["Unrated"] = 0xFFFFFF,
-    ["Default"] = 0x5865F2
-}
 
 -- ==========================
 -- FILE SAVING SYSTEM
@@ -384,91 +428,79 @@ end
 -- ==========================
 -- CACHE & STRING MEMOIZATIONS
 -- ==========================
-local nodePositionCache = setmetatable({}, { __mode = "k" })
-local mobAttackOriginPartCache = setmetatable({}, { __mode = "kv" })
-local mobHumanoidCache = setmetatable({}, { __mode = "kv" })
-local mobWarningCache = setmetatable({}, { __mode = "kv" })
-local mobWarningCheckTime = setmetatable({}, { __mode = "kv" })
-local fishingSpotPosCache = setmetatable({}, { __mode = "k" })
 
-local cachedGrassFolder = workspace:FindFirstChild("CowVirtualGrass")
-local cachedGrassNodes = {}
-local lastGrassCacheTime = 0
 
-local cachedFishingSpots = {}
-local lastFishingSpotsCacheTime = 0
 
-local cowWorldRef = workspace:FindFirstChild("CowWorld")
 local function getResourcesFolder()
-    if not cowWorldRef or not cowWorldRef.Parent then
-        cowWorldRef = workspace:FindFirstChild("CowWorld")
+    if not cache.cowWorldRef or not cache.cowWorldRef.Parent then
+        cache.cowWorldRef = workspace:FindFirstChild("CowWorld")
     end
-    local rafting = cowWorldRef and cowWorldRef:FindFirstChild("FjordRafting")
+    local rafting = cache.cowWorldRef and cache.cowWorldRef:FindFirstChild("FjordRafting")
     return rafting and rafting:FindFirstChild("Resources")
 end
 
-local function getNodePosition(node)
-    local pos = nodePositionCache[node]
+function cache.cache.getNodePosition(node)
+    local pos = cache.nodePosition[node]
     if pos then return pos end
     pos = node:IsA("Model") and node:GetPivot().Position or node.Position
-    nodePositionCache[node] = pos
+    cache.nodePosition[node] = pos
     return pos
 end
 
-local function getGrassNodes()
+function cache.cache.getGrassNodes()
     local now = os.clock()
-    if not cachedGrassFolder or not cachedGrassFolder.Parent then
-        cachedGrassFolder = workspace:FindFirstChild("CowVirtualGrass")
+    if not cache.grassFolder or not cache.grassFolder.Parent then
+        cache.grassFolder = workspace:FindFirstChild("CowVirtualGrass")
     end
-    if cachedGrassFolder and (now - lastGrassCacheTime > 4 or #cachedGrassNodes == 0) then
-        lastGrassCacheTime = now
-        cachedGrassNodes = cachedGrassFolder:GetChildren()
+    if cache.grassFolder and (now - cache.lastGrassTime > 4 or #cache.grassNodes == 0) then
+        cache.lastGrassTime = now
+        cache.grassNodes = cache.grassFolder:GetChildren()
     end
-    return cachedGrassNodes
+    return cache.grassNodes
 end
 
-local function getFishingSpotsFolder()
+function cache.cache.getFishingSpotsFolder()
     if fishingSpotsFolder and fishingSpotsFolder.Parent then return fishingSpotsFolder end
     fishingSpotsFolder = workspace:FindFirstChild("Fishing Spots") or workspace:FindFirstChild("FishingSpots")
-    if not fishingSpotsFolder and cowWorldRef and cowWorldRef.Parent then
-        fishingSpotsFolder = cowWorldRef:FindFirstChild("Fishing Spots", true) or cowWorldRef:FindFirstChild("FishingSpots", true)
+    if not fishingSpotsFolder and cache.cowWorldRef and cache.cowWorldRef.Parent then
+        fishingSpotsFolder = cache.cowWorldRef:FindFirstChild("Fishing Spots", true) or cache.cowWorldRef:FindFirstChild("FishingSpots", true)
     end
     return fishingSpotsFolder
 end
 
-local function getFishingSpots()
+function cache.cache.getFishingSpots()
     local now = os.clock()
-    if now - lastFishingSpotsCacheTime > 5 or #cachedFishingSpots == 0 then
-        lastFishingSpotsCacheTime = now
-        local folder = getFishingSpotsFolder()
+    if now - cache.lastFishingSpotsTime > 5 or #cache.fishingSpots == 0 then
+        cache.lastFishingSpotsTime = now
+        local folder = cache.getFishingSpotsFolder()
         if folder then
-            table.clear(cachedFishingSpots)
+            table.clear(cache.fishingSpots)
             for _, spot in ipairs(folder:GetChildren()) do
                 if (spot:IsA("BasePart") or spot:IsA("Model")) and spot.Parent then
-                    table.insert(cachedFishingSpots, spot)
+                    table.insert(cache.fishingSpots, spot)
                 end
             end
         end
     end
-    return cachedFishingSpots
+    return cache.fishingSpots
 end
 
-local function getSpotPosition(spot)
+function cache.cache.getSpotPosition(spot)
     if not spot or not spot.Parent then
-        fishingSpotPosCache[spot] = nil
+        cache.fishingSpotPos[spot] = nil
         return nil
     end
-    local pos = fishingSpotPosCache[spot]
+    local pos = cache.fishingSpotPos[spot]
     if pos then return pos end
     pos = spot:IsA("Model") and spot:GetPivot().Position or (spot:IsA("BasePart") and spot.Position)
     if pos then
-        fishingSpotPosCache[spot] = pos
+        cache.fishingSpotPos[spot] = pos
     end
     return pos
 end
 
-local function getCleanGrassName(nodeName)
-    local cached = nodeCleanNameCache[nodeName]
+function cache.cache.getCleanGrassName(nodeName)
+    local cached = cache.nodeCleanNames[nodeName]
     if cached ~= nil then return cached end
 
     local cleanName = string.gsub(nodeName, "GrassVisual", "")
@@ -476,16 +508,16 @@ local function getCleanGrassName(nodeName)
     cleanName = string.gsub(cleanName, "_+$", "")
 
     if string.match(cleanName, ".*Grass.*_[np%-]?%d+_[np%-]?%d+$") then
-        nodeCleanNameCache[nodeName] = cleanName
+        cache.nodeCleanNames[nodeName] = cleanName
         return cleanName
     else
-        nodeCleanNameCache[nodeName] = false
+        cache.nodeCleanNames[nodeName] = false
         return false
     end
 end
 
-local function getMobPayload(mobName)
-    local cached = mobPayloadCache[mobName]
+function cache.cache.getMobPayload(mobName)
+    local cached = cache.mobPayloads[mobName]
     if cached then return cached end
 
     local formattedMobName = string.gsub(mobName, "(%a+)(%d+)", "%1_%2")
@@ -494,16 +526,16 @@ local function getMobPayload(mobName)
     else
         cached = "Fjord_Mob_" .. formattedMobName
     end
-    mobPayloadCache[mobName] = cached
+    cache.mobPayloads[mobName] = cached
     return cached
 end
 
-local function cleanupNodeBlacklist(now)
-    if now - lastBlacklistCleanup > 15 then
-        lastBlacklistCleanup = now
-        for node, timestamp in pairs(nodeBlacklist) do
+function cache.cache.cleanupNodeBlacklist(now)
+    if now - cache.lastBlacklistCleanup > 15 then
+        cache.lastBlacklistCleanup = now
+        for node, timestamp in pairs(cache.nodeBlacklist) do
             if not node or not node.Parent or (now - timestamp > 10) then
-                nodeBlacklist[node] = nil
+                cache.nodeBlacklist[node] = nil
             end
         end
     end
@@ -519,8 +551,8 @@ function manatite.getFolder()
 
     -- Primary: workspace.FjordDelta.ManatiteFjordCave.ManatiteMaze.ManatiteClusters
     local fjord = workspace:FindFirstChild("FjordDelta")
-    if not fjord and cowWorldRef and cowWorldRef.Parent then
-        fjord = cowWorldRef:FindFirstChild("FjordDelta")
+    if not fjord and cache.cowWorldRef and cache.cowWorldRef.Parent then
+        fjord = cache.cowWorldRef:FindFirstChild("FjordDelta")
     end
     if not fjord then
         fjord = workspace:FindFirstChild("FjordDelta", true)
@@ -760,8 +792,8 @@ function manatite.getPayload(modelName)
 end
 
 function manatite.cleanupBlacklist(now)
-    if now - manatite.lastBlacklistCleanup > 10 then
-        manatite.lastBlacklistCleanup = now
+    if now - manatite.cache.lastBlacklistCleanup > 10 then
+        manatite.cache.lastBlacklistCleanup = now
         for model, timestamp in pairs(manatite.blacklist) do
             if not model or not model.Parent or (now - timestamp > 20) then
                 manatite.blacklist[model] = nil
@@ -901,7 +933,7 @@ function mithril.getFolder()
     end
 
     -- 2. Direct path via CowWorld
-    local cowWorld = cowWorldRef
+    local cowWorld = cache.cowWorldRef
     if not cowWorld or not cowWorld.Parent then
         cowWorld = workspace:FindFirstChild("CowWorld")
     end
@@ -1019,8 +1051,8 @@ function mithril.getPayload(modelName)
 end
 
 function mithril.cleanupBlacklist(now)
-    if now - mithril.lastBlacklistCleanup > 10 then
-        mithril.lastBlacklistCleanup = now
+    if now - mithril.cache.lastBlacklistCleanup > 10 then
+        mithril.cache.lastBlacklistCleanup = now
         for model, timestamp in pairs(mithril.blacklist) do
             if not model or not model.Parent or (now - timestamp > 20) then
                 mithril.blacklist[model] = nil
@@ -1111,43 +1143,43 @@ function mithril.teleport(orePart, model)
 end
 
 -- Gets the cached attacking part (Head for snakes, CavernBodyVisual for spiders)
-local function getMobAttackOriginPart(mob)
+function dodge.dodge.getMobAttackOriginPart(mob)
     if not mob or not mob.Parent then
-        mobAttackOriginPartCache[mob] = nil
+        cache.mobAttackOriginPart[mob] = nil
         return nil
     end
-    local cached = mobAttackOriginPartCache[mob]
+    local cached = cache.mobAttackOriginPart[mob]
     if cached and cached.Parent and cached:IsDescendantOf(mob) then
         return cached
     end
 
     local head = mob:FindFirstChild("Head")
     if head and head:IsA("BasePart") then
-        mobAttackOriginPartCache[mob] = head
+        cache.mobAttackOriginPart[mob] = head
         return head
     end
 
     local visual = mob:FindFirstChild("CavernBodyVisual")
     if visual then
         if visual:IsA("BasePart") then
-            mobAttackOriginPartCache[mob] = visual
+            cache.mobAttackOriginPart[mob] = visual
             return visual
         elseif visual:IsA("Model") then
             local primary = visual.PrimaryPart or visual:FindFirstChildWhichIsA("BasePart")
             if primary then
-                mobAttackOriginPartCache[mob] = primary
+                cache.mobAttackOriginPart[mob] = primary
                 return primary
             end
         end
     end
 
     if mob:IsA("BasePart") then
-        mobAttackOriginPartCache[mob] = mob
+        cache.mobAttackOriginPart[mob] = mob
         return mob
     elseif mob:IsA("Model") then
         local primary = mob.PrimaryPart or mob:FindFirstChildWhichIsA("BasePart")
         if primary then
-            mobAttackOriginPartCache[mob] = primary
+            cache.mobAttackOriginPart[mob] = primary
             return primary
         end
     end
@@ -1155,8 +1187,8 @@ local function getMobAttackOriginPart(mob)
     return nil
 end
 
-local function getMobAttackOrigin(mob)
-    local part = getMobAttackOriginPart(mob)
+function dodge.dodge.getMobAttackOrigin(mob)
+    local part = dodge.getMobAttackOriginPart(mob)
     if part then
         return part.Position
     end
@@ -1167,7 +1199,7 @@ local function getMobAttackOrigin(mob)
 end
 
 -- Checks if there is an unobstructed line of sight (no walls, terrain, or solid geometry) between origin and mob
-local function hasLineOfSight(origin, mobPos, mob)
+function dodge.dodge.hasLineOfSight(origin, mobPos, mob)
     if not origin or not mobPos or not mob then return false end
 
     local dir = mobPos - origin
@@ -1200,17 +1232,17 @@ local function hasLineOfSight(origin, mobPos, mob)
 end
 
 -- Validates whether a mob is physically alive (O(1) checks, zero GetDescendants)
-local function isMobAlive(mob)
+function dodge.dodge.isMobAlive(mob)
     if not mob or not mob.Parent then
-        mobHumanoidCache[mob] = nil
+        cache.mobHumanoid[mob] = nil
         return false
     end
 
     -- Check Humanoid health if mob is rigged with a humanoid
-    local hum = mobHumanoidCache[mob]
+    local hum = cache.mobHumanoid[mob]
     if hum == nil then
         hum = mob:FindFirstChildWhichIsA("Humanoid") or false
-        mobHumanoidCache[mob] = hum
+        cache.mobHumanoid[mob] = hum
     end
     if hum and hum.Parent and hum.Health <= 0 then
         return false
@@ -1225,7 +1257,7 @@ local function isMobAlive(mob)
     end
 
     -- Check transparency: check attack part or primary part (eliminates GetDescendants)
-    local checkPart = getMobAttackOriginPart(mob)
+    local checkPart = dodge.getMobAttackOriginPart(mob)
     if checkPart and checkPart.Parent and checkPart.Transparency < 0.9 then
         return true
     end
@@ -1261,35 +1293,35 @@ local function isMobAlive(mob)
 end
 
 -- Finds CavernAttackWarning with weak caching and 0.5s throttled retries
-local function findAttackWarning(mob)
+function dodge.dodge.findAttackWarning(mob)
     if not mob or not mob.Parent then
-        mobWarningCache[mob] = nil
-        mobWarningCheckTime[mob] = nil
+        cache.mobWarning[mob] = nil
+        cache.mobWarningCheckTime[mob] = nil
         return nil
     end
 
-    local cached = mobWarningCache[mob]
+    local cached = cache.mobWarning[mob]
     if cached then
         if cached.Parent and cached:IsDescendantOf(mob) then
             return cached
         else
-            mobWarningCache[mob] = nil
+            cache.mobWarning[mob] = nil
         end
     end
 
     local now = os.clock()
-    local lastCheck = mobWarningCheckTime[mob]
+    local lastCheck = cache.mobWarningCheckTime[mob]
     if lastCheck and (now - lastCheck < 0.5) then
         return nil
     end
-    mobWarningCheckTime[mob] = now
+    cache.mobWarningCheckTime[mob] = now
 
     -- Fast path for snakes: Head.CavernAttackWarning
     local head = mob:FindFirstChild("Head")
     if head then
         local w = head:FindFirstChild("CavernAttackWarning")
         if w then
-            mobWarningCache[mob] = w
+            cache.mobWarning[mob] = w
             return w
         end
     end
@@ -1299,7 +1331,7 @@ local function findAttackWarning(mob)
     if visual then
         local w = visual:FindFirstChild("CavernAttackWarning")
         if w then
-            mobWarningCache[mob] = w
+            cache.mobWarning[mob] = w
             return w
         end
     end
@@ -1307,14 +1339,14 @@ local function findAttackWarning(mob)
     -- Direct child check strictly for CavernAttackWarning
     local direct = mob:FindFirstChild("CavernAttackWarning")
     if direct then
-        mobWarningCache[mob] = direct
+        cache.mobWarning[mob] = direct
         return direct
     end
 
     -- Recursive search strictly for CavernAttackWarning
     local recursive = mob:FindFirstChild("CavernAttackWarning", true)
     if recursive then
-        mobWarningCache[mob] = recursive
+        cache.mobWarning[mob] = recursive
         return recursive
     end
 
@@ -1322,7 +1354,7 @@ local function findAttackWarning(mob)
 end
 
 -- Checks if CavernAttackWarning (BillboardGui) is actively enabled via its "Enabled" attribute
-local function isWarningActive(warning, mob)
+function dodge.dodge.isWarningActive(warning, mob)
     if not warning or not warning.Parent then return false end
 
     -- Must be strictly named CavernAttackWarning (prevents any false positives)
@@ -1363,7 +1395,7 @@ local function isWarningActive(warning, mob)
 end
 
 -- Reads current hearts/health attribute from LocalPlayer, Character, or Humanoid
-local function getLocalPlayerHearts()
+function dodge.dodge.getLocalPlayerHearts()
     if plr then
         for _, attr in ipairs({"Hearts", "hearts", "Heart", "heart", "Health", "health"}) do
             local val = plr:GetAttribute(attr)
@@ -1383,7 +1415,7 @@ local function getLocalPlayerHearts()
 end
 
 -- Reads max/normal hearts attribute from LocalPlayer, Character, or Humanoid
-local function getLocalPlayerMaxHearts()
+function dodge.dodge.getLocalPlayerMaxHearts()
     if plr then
         for _, attr in ipairs({"MaxHearts", "maxHearts", "NormalHearts", "normalHearts", "MaxHealth", "maxHealth"}) do
             local val = plr:GetAttribute(attr)
@@ -1403,7 +1435,7 @@ local function getLocalPlayerMaxHearts()
 end
 
 -- Reads current armor attribute or value from LocalPlayer or Character
-local function getLocalPlayerArmor()
+function dodge.dodge.getLocalPlayerArmor()
     if plr then
         for _, attr in ipairs({"Armor", "armor", "Shield", "shield", "ArmorHealth", "armorHealth", "CurrentArmor", "currentArmor"}) do
             local val = plr:GetAttribute(attr)
@@ -1432,7 +1464,7 @@ local function getLocalPlayerArmor()
 end
 
 -- Reads max/normal armor attribute from LocalPlayer or Character
-local function getLocalPlayerMaxArmor()
+function dodge.dodge.getLocalPlayerMaxArmor()
     if plr then
         for _, attr in ipairs({"MaxArmor", "maxArmor", "NormalArmor", "normalArmor", "MaxShield", "maxShield"}) do
             local val = plr:GetAttribute(attr)
@@ -1461,7 +1493,7 @@ local function getLocalPlayerMaxArmor()
 end
 
 -- Calculates an unobstructed, safe surface retreat position avoiding walls, rocks, and cave ceilings
-local function findSafeDodgePosition(originPos, preCFrame, away2D, maxDist, preferredAngle, attackingMob)
+function dodge.dodge.findSafeDodgePosition(originPos, preCFrame, away2D, maxDist, preferredAngle, attackingMob)
     if not originPos or not preCFrame or not away2D then return nil, 0, nil end
 
     local filterList = {char}
@@ -1568,8 +1600,8 @@ end
 
 -- Simulates an interaction keypress ('E') without blocking the render/heartbeat loop
 local function pressE()
-    if isEPressed then return end
-    isEPressed = true
+    if cache.isEPressed then return end
+    cache.isEPressed = true
     pcall(function()
         if successVIM and VirtualInput then
             VirtualInput:SendKeyEvent(true, Enum.KeyCode.E, false, game)
@@ -1591,21 +1623,21 @@ local function pressE()
                 VirtualUser:SetKeyUp("0x65")
             end
         end)
-        isEPressed = false
+        cache.isEPressed = false
     end)
 end
 
 -- Checks for an identifier number on Mithril cave spiders if present (e.g. 200809)
-local function findSpiderIdentifier(mob)
+function cache.cache.findSpiderIdentifier(mob)
     if not mob then return nil end
-    local cached = spiderIdentifierCache[mob]
+    local cached = cache.spiderIdentifier[mob]
     if cached ~= nil then return cached or nil end
 
     for _, attr in ipairs({"Id", "ID", "Identifier", "MobId", "SpiderId", "Index", "Number", "SpawnId", "NetworkId", "ServerId", "TargetId", "UID", "UUID", "EntityId"}) do
         local val = mob:GetAttribute(attr)
         if val ~= nil and tostring(val) ~= "" then
             local str = tostring(val)
-            spiderIdentifierCache[mob] = str
+            cache.spiderIdentifier[mob] = str
             return str
         end
     end
@@ -1613,7 +1645,7 @@ local function findSpiderIdentifier(mob)
     for attrName, attrVal in pairs(mob:GetAttributes()) do
         if typeof(attrVal) == "number" or (typeof(attrVal) == "string" and string.match(attrVal, "^%d%d%d+$")) then
             local str = tostring(attrVal)
-            spiderIdentifierCache[mob] = str
+            cache.spiderIdentifier[mob] = str
             return str
         end
     end
@@ -1623,7 +1655,7 @@ local function findSpiderIdentifier(mob)
             local val = child.Value
             if val and tostring(val) ~= "" then
                 local str = tostring(val)
-                spiderIdentifierCache[mob] = str
+                cache.spiderIdentifier[mob] = str
                 return str
             end
         end
@@ -1635,14 +1667,14 @@ local function findSpiderIdentifier(mob)
             local val = visual:GetAttribute(attr)
             if val ~= nil and tostring(val) ~= "" then
                 local str = tostring(val)
-                spiderIdentifierCache[mob] = str
+                cache.spiderIdentifier[mob] = str
                 return str
             end
         end
         for attrName, attrVal in pairs(visual:GetAttributes()) do
             if typeof(attrVal) == "number" or (typeof(attrVal) == "string" and string.match(attrVal, "^%d%d%d+$")) then
                 local str = tostring(attrVal)
-                spiderIdentifierCache[mob] = str
+                cache.spiderIdentifier[mob] = str
                 return str
             end
         end
@@ -1653,7 +1685,7 @@ local function findSpiderIdentifier(mob)
         for _, tag in ipairs(CollectionService:GetTags(mob)) do
             local num = string.match(tag, "(%d%d%d+)")
             if num then
-                spiderIdentifierCache[mob] = num
+                cache.spiderIdentifier[mob] = num
                 return num
             end
         end
@@ -1661,43 +1693,42 @@ local function findSpiderIdentifier(mob)
 
     local numMatch = string.match(mob.Name, "(%d%d%d+)")
     if numMatch and #numMatch >= 4 then
-        spiderIdentifierCache[mob] = numMatch
+        cache.spiderIdentifier[mob] = numMatch
         return numMatch
     end
 
-    spiderIdentifierCache[mob] = false
+    cache.spiderIdentifier[mob] = false
     return nil
 end
 
-local cachedMithrilCaveFolder = nil
-local function getMithrilCaveSpidersFolder()
-    if cachedMithrilCaveFolder and cachedMithrilCaveFolder.Parent then
-        return cachedMithrilCaveFolder
+function cache.cache.getMithrilCaveSpidersFolder()
+    if cache.cachedMithrilCaveFolder and cache.cachedMithrilCaveFolder.Parent then
+        return cache.cachedMithrilCaveFolder
     end
     local resources = getResourcesFolder()
     if resources then
         local folder = resources:FindFirstChild("MithrilCaveSpiders")
         if folder then
-            cachedMithrilCaveFolder = folder
+            cache.cachedMithrilCaveFolder = folder
             return folder
         end
     end
-    if cowWorldRef and cowWorldRef.Parent then
-        local folder = cowWorldRef:FindFirstChild("MithrilCaveSpiders", true)
+    if cache.cowWorldRef and cache.cowWorldRef.Parent then
+        local folder = cache.cowWorldRef:FindFirstChild("MithrilCaveSpiders", true)
         if folder then
-            cachedMithrilCaveFolder = folder
+            cache.cachedMithrilCaveFolder = folder
             return folder
         end
     end
     local folder = workspace:FindFirstChild("MithrilCaveSpiders", true)
     if folder then
-        cachedMithrilCaveFolder = folder
+        cache.cachedMithrilCaveFolder = folder
         return folder
     end
     return nil
 end
 
-local function isSpiderMobInstance(instance)
+function dodge.dodge.isSpiderMobInstance(instance)
     if not (instance:IsA("Model") or instance:IsA("BasePart")) then return false end
     local name = instance.Name
     if name == "Mama Spider" or string.find(name, "FjordSpider", 1, true) then
@@ -1709,12 +1740,12 @@ local function isSpiderMobInstance(instance)
     return false
 end
 
-local function isMithrilCaveMob(mob)
+function dodge.dodge.isMithrilCaveMob(mob)
     if not mob then return false end
-    if mithrilCaveMobSet[mob] then return true end
-    local mFolder = getMithrilCaveSpidersFolder()
+    if cache.mithrilCaveMobSet[mob] then return true end
+    local mFolder = cache.getMithrilCaveSpidersFolder()
     if mFolder and mob:IsDescendantOf(mFolder) then
-        mithrilCaveMobSet[mob] = true
+        cache.mithrilCaveMobSet[mob] = true
         return true
     end
     local name = mob.Name
@@ -1725,24 +1756,24 @@ local function isMithrilCaveMob(mob)
 end
 
 -- Recursively collects living spiders from Mithril Cave chambers and rooms
-local function collectSpidersFromChamber(chamber)
+function dodge.dodge.collectSpidersFromChamber(chamber)
     if not chamber then return end
-    if isSpiderMobInstance(chamber) then
-        if isMobAlive(chamber) and not mithrilCaveMobSet[chamber] then
-            table.insert(activeAuraMobs, chamber)
-            mithrilCaveMobSet[chamber] = true
+    if dodge.isSpiderMobInstance(chamber) then
+        if dodge.isMobAlive(chamber) and not cache.mithrilCaveMobSet[chamber] then
+            table.insert(cache.activeAuraMobs, chamber)
+            cache.mithrilCaveMobSet[chamber] = true
         end
         return
     end
 
     for _, child in ipairs(chamber:GetChildren()) do
-        if isSpiderMobInstance(child) then
-            if isMobAlive(child) and not mithrilCaveMobSet[child] then
-                table.insert(activeAuraMobs, child)
-                mithrilCaveMobSet[child] = true
+        if dodge.isSpiderMobInstance(child) then
+            if dodge.isMobAlive(child) and not cache.mithrilCaveMobSet[child] then
+                table.insert(cache.activeAuraMobs, child)
+                cache.mithrilCaveMobSet[child] = true
             end
         elseif child:IsA("Folder") or child:IsA("Configuration") or child:IsA("Model") then
-            collectSpidersFromChamber(child)
+            dodge.collectSpidersFromChamber(child)
         end
     end
 end
@@ -1750,88 +1781,88 @@ end
 -- ==========================
 -- FISHING RIPPLE TRACKING (Zero Allocation & Leak-Free)
 -- ==========================
-local function registerRipple(ripple)
+function cache.cache.registerRipple(ripple)
     if not ripple or not ripple.Parent then return end
     if not string.find(ripple.Name, "FishingWaterRipples", 1, true) then return end
-    activeRipples[ripple] = true
+    cache.activeRipples[ripple] = true
 end
 
-local function unregisterRipple(ripple)
+function cache.cache.unregisterRipple(ripple)
     if ripple then
-        activeRipples[ripple] = nil
-        ripplePosCache[ripple] = nil
+        cache.activeRipples[ripple] = nil
+        cache.ripplePos[ripple] = nil
     end
 end
 
-local function cleanupRippleTracking()
-    for _, conn in ipairs(rippleConnections) do
+function cache.cache.cleanupRippleTracking()
+    for _, conn in ipairs(cache.rippleConnections) do
         pcall(function() conn:Disconnect() end)
     end
-    table.clear(rippleConnections)
-    table.clear(activeRipples)
-    table.clear(ripplePosCache)
+    table.clear(cache.rippleConnections)
+    table.clear(cache.activeRipples)
+    table.clear(cache.ripplePos)
 end
 
-local function initRippleTracking()
-    cleanupRippleTracking()
+function cache.cache.initRippleTracking()
+    cache.cleanupRippleTracking()
 
     -- 1. Scan direct children / descendants of fishingSpotsFolder (tiny scope: ~50 instances)
-    local fFolder = getFishingSpotsFolder()
+    local fFolder = cache.getFishingSpotsFolder()
     if fFolder then
         for _, desc in ipairs(fFolder:GetDescendants()) do
-            registerRipple(desc)
+            cache.registerRipple(desc)
         end
-        local conn = fFolder.DescendantAdded:Connect(registerRipple)
-        table.insert(rippleConnections, conn)
-        local remConn = fFolder.DescendantRemoving:Connect(unregisterRipple)
-        table.insert(rippleConnections, remConn)
+        local conn = fFolder.DescendantAdded:Connect(cache.registerRipple)
+        table.insert(cache.rippleConnections, conn)
+        local remConn = fFolder.DescendantRemoving:Connect(cache.unregisterRipple)
+        table.insert(cache.rippleConnections, remConn)
     end
 
     -- 2. Scan direct workspace children only (not descendants! ~30 instances)
     for _, child in ipairs(workspace:GetChildren()) do
-        registerRipple(child)
+        cache.registerRipple(child)
     end
-    local wsConn = workspace.ChildAdded:Connect(registerRipple)
-    table.insert(rippleConnections, wsConn)
-    local wsRemConn = workspace.ChildRemoved:Connect(unregisterRipple)
-    table.insert(rippleConnections, wsRemConn)
+    local wsConn = workspace.ChildAdded:Connect(cache.registerRipple)
+    table.insert(cache.rippleConnections, wsConn)
+    local wsRemConn = workspace.ChildRemoved:Connect(cache.unregisterRipple)
+    table.insert(cache.rippleConnections, wsRemConn)
 
     -- 3. Scan direct CowWorld children if present (~20 instances)
-    local cWorld = cowWorldRef and cowWorldRef.Parent and cowWorldRef or workspace:FindFirstChild("CowWorld")
+    local cWorld = cache.cowWorldRef and cache.cowWorldRef.Parent and cache.cowWorldRef or workspace:FindFirstChild("CowWorld")
     if cWorld then
         for _, child in ipairs(cWorld:GetChildren()) do
-            registerRipple(child)
+            cache.registerRipple(child)
         end
-        local cwConn = cWorld.ChildAdded:Connect(registerRipple)
-        table.insert(rippleConnections, cwConn)
-        local cwRemConn = cWorld.ChildRemoved:Connect(unregisterRipple)
-        table.insert(rippleConnections, cwRemConn)
+        local cwConn = cWorld.ChildAdded:Connect(cache.registerRipple)
+        table.insert(cache.rippleConnections, cwConn)
+        local cwRemConn = cWorld.ChildRemoved:Connect(cache.unregisterRipple)
+        table.insert(cache.rippleConnections, cwRemConn)
     end
 end
 
 -- Lightweight background caching for Aura Mobs (Snakes & Spiders) strictly under their clearings
-local function cacheBackgroundElements()
-    if isCachingBackground then return end
-    isCachingBackground = true
+function cache.cache.cacheBackgroundElements()
+    if cache.isCachingBackground then return end
+    cache.isCachingBackground = true
 
-    if autoChompMobs or autoDodgeMobs then
-        table.clear(activeAuraMobs)
-        table.clear(mithrilCaveMobSet)
+    if farm.autoChompMobs or dodge.auto then
+        table.clear(cache.activeAuraMobs)
+        table.clear(cache.mithrilCaveMobSet)
         local resources = getResourcesFolder()
 
         if resources then
             for _, clearing in ipairs(resources:GetChildren()) do
                 if clearing.Name == "MithrilCaveSpiders" or string.find(clearing.Name, "Spider", 1, true) or string.find(clearing.Name, "Cave", 1, true) then
                     for _, chamber in ipairs(clearing:GetChildren()) do
-                        collectSpidersFromChamber(chamber)
+                        dodge.collectSpidersFromChamber(chamber)
                     end
                 else
                     for _, v in ipairs(clearing:GetChildren()) do
                         local name = v.Name
                         local isMob = (string.find(name, "Snake", 1, true) or string.find(name, "Spider", 1, true))
                         if isMob and (v:IsA("Model") or v:IsA("BasePart")) then
-                            if isMobAlive(v) then
-                                table.insert(activeAuraMobs, v)
+                            if dodge.isMobAlive(v) then
+                                table.insert(cache.activeAuraMobs, v)
                             end
                         end
                     end
@@ -1839,40 +1870,40 @@ local function cacheBackgroundElements()
             end
         end
 
-        local mithrilFolder = getMithrilCaveSpidersFolder()
+        local mithrilFolder = cache.getMithrilCaveSpidersFolder()
         if mithrilFolder and (not resources or not resources:FindFirstChild("MithrilCaveSpiders")) then
             for _, chamber in ipairs(mithrilFolder:GetChildren()) do
-                collectSpidersFromChamber(chamber)
+                dodge.collectSpidersFromChamber(chamber)
             end
         end
     else
-        if #activeAuraMobs > 0 then
-            table.clear(activeAuraMobs)
+        if #cache.activeAuraMobs > 0 then
+            table.clear(cache.activeAuraMobs)
         end
-        table.clear(mithrilCaveMobSet)
+        table.clear(cache.mithrilCaveMobSet)
     end
 
-    isCachingBackground = false
+    cache.isCachingBackground = false
 end
 
 
-local function getRipplePosition(ripple)
+function cache.cache.getRipplePosition(ripple)
     if not ripple or not ripple.Parent then
-        ripplePosCache[ripple] = nil
+        cache.ripplePos[ripple] = nil
         return nil
     end
-    local pos = ripplePosCache[ripple]
+    local pos = cache.ripplePos[ripple]
     if pos then return pos end
     pos = ripple:IsA("Model") and ripple:GetPivot().Position or (ripple:IsA("BasePart") and ripple.Position)
     if pos then
-        ripplePosCache[ripple] = pos
+        cache.ripplePos[ripple] = pos
     end
     return pos
 end
 
-local function isSpotAvailable(spot)
+function cache.isSpotAvailable(spot)
     if not spot or not spot.Parent then return false end
-    local spotPos = getSpotPosition(spot)
+    local spotPos = cache.getSpotPosition(spot)
     if not spotPos then return false end
 
     -- 1. Check direct surface on spot first (fastest non-allocating check)
@@ -1891,9 +1922,9 @@ local function isSpotAvailable(spot)
     end
 
     -- 3. Check tracked active ripples (within 7 studs squared = 49 or descendant)
-    for ripple, _ in pairs(activeRipples) do
+    for ripple, _ in pairs(cache.activeRipples) do
         if ripple and ripple.Parent then
-            local ripplePos = getRipplePosition(ripple)
+            local ripplePos = cache.getRipplePosition(ripple)
             if ripplePos and (get3DDistanceSq(spotPos, ripplePos) <= 49 or ripple:IsDescendantOf(spot)) then
                 local surfaceGui = ripple:FindFirstChild("FishingWaterSurface")
                 if (surfaceGui and surfaceGui.Enabled) or not surfaceGui then
@@ -1901,8 +1932,8 @@ local function isSpotAvailable(spot)
                 end
             end
         else
-            activeRipples[ripple] = nil
-            ripplePosCache[ripple] = nil
+            cache.activeRipples[ripple] = nil
+            cache.ripplePos[ripple] = nil
         end
     end
 
@@ -1910,7 +1941,7 @@ local function isSpotAvailable(spot)
 end
 
 function penESP.update()
-    if penESP.show and farmOn and anchorPos then
+    if penESP.show and farm.on and farm.anchorPos then
         if not penESP.visualizer then
             penESP.visualizer = Instance.new("Part")
             penESP.visualizer.Name = "CowPenESP"
@@ -1923,8 +1954,8 @@ function penESP.update()
             penESP.visualizer.CastShadow = false
             penESP.visualizer.Parent = workspace
         end
-        penESP.visualizer.Size = Vector3.new(0.5, farmRadius * 2, farmRadius * 2)
-        penESP.visualizer.CFrame = CFrame.new(anchorPos) * CFrame.Angles(0, 0, math.rad(90))
+        penESP.visualizer.Size = Vector3.new(0.5, farm.radius * 2, farm.radius * 2)
+        penESP.visualizer.CFrame = CFrame.new(farm.anchorPos) * CFrame.Angles(0, 0, math.rad(90))
     else
         if penESP.visualizer then
             penESP.visualizer:Destroy()
@@ -2264,10 +2295,10 @@ local function formatNumber(n)
     return formatted
 end
 
-local function checkAuctionLots()
+function auction.checkLots()
     if not httpRequest or WEBHOOK_URL == "" then return end
 
-    for _, lotName in ipairs(lotNames) do
+    for _, lotName in ipairs(auction.lotNames) do
         local lot = skinAuction:FindFirstChild(lotName)
 
         if lot then
@@ -2276,8 +2307,8 @@ local function checkAuctionLots()
 
             local currentSignature = tostring(currentSkinId) .. "_" .. tostring(endsAt)
 
-            if currentSkinId and currentSkinId ~= "" and currentSignature ~= previousAuctionSignatures[lotName] then
-                previousAuctionSignatures[lotName] = currentSignature
+            if currentSkinId and currentSkinId ~= "" and currentSignature ~= auction.previousSignatures[lotName] then
+                auction.previousSignatures[lotName] = currentSignature
 
                 local skinName = lot:GetAttribute("SkinName") or "Unknown Skin"
                 local rarity = lot:GetAttribute("Rarity") or "Default"
@@ -2285,7 +2316,7 @@ local function checkAuctionLots()
                 local bid = lot:GetAttribute("Bid")
                 local minBid = lot:GetAttribute("MinimumBid")
 
-                local embedColor = rarityColors[rarity] or rarityColors["Default"]
+                local embedColor = fps.rarityColors[rarity] or fps.rarityColors["Default"]
 
                 local endsAtDisplay = "N/A"
                 if endsAt then
@@ -2325,52 +2356,52 @@ local function checkAuctionLots()
     end
 end
 
-local function debouncedCheckAuctionLots()
-    if isCheckingAuction then return end
-    isCheckingAuction = true
+function auction.debouncedCheckLots()
+    if auction.isChecking then return end
+    auction.isChecking = true
     task.spawn(function()
-        checkAuctionLots()
-        isCheckingAuction = false
+        auction.checkLots()
+        auction.isChecking = false
     end)
 end
 
 -- ==========================
 -- PERIODIC MEMORY SANITATION & GC ASSISTANCE
 -- ==========================
-local function sanitizeMemory(now)
-    if now - lastSanitationTime > 30 then
-        lastSanitationTime = now
+function cache.cache.sanitizeMemory(now)
+    if now - cache.lastSanitationTime > 30 then
+        cache.lastSanitationTime = now
 
-        for node, _ in pairs(nodePositionCache) do
+        for node, _ in pairs(cache.nodePosition) do
             if not node or not node.Parent then
-                nodePositionCache[node] = nil
+                cache.nodePosition[node] = nil
             end
         end
 
-        for spot, _ in pairs(fishingSpotPosCache) do
+        for spot, _ in pairs(cache.fishingSpotPos) do
             if not spot or not spot.Parent then
-                fishingSpotPosCache[spot] = nil
+                cache.fishingSpotPos[spot] = nil
             end
         end
 
-        for ripple, _ in pairs(activeRipples) do
+        for ripple, _ in pairs(cache.activeRipples) do
             if not ripple or not ripple.Parent then
-                activeRipples[ripple] = nil
-                ripplePosCache[ripple] = nil
+                cache.activeRipples[ripple] = nil
+                cache.ripplePos[ripple] = nil
             end
         end
 
-        for mob, _ in pairs(mobAttackOriginPartCache) do
+        for mob, _ in pairs(cache.mobAttackOriginPart) do
             if not mob or not mob.Parent then
-                mobAttackOriginPartCache[mob] = nil
-                mobHumanoidCache[mob] = nil
-                mobWarningCache[mob] = nil
-                mobWarningCheckTime[mob] = nil
-                spiderIdentifierCache[mob] = nil
+                cache.mobAttackOriginPart[mob] = nil
+                cache.mobHumanoid[mob] = nil
+                cache.mobWarning[mob] = nil
+                cache.mobWarningCheckTime[mob] = nil
+                cache.spiderIdentifier[mob] = nil
             end
         end
 
-        cleanupNodeBlacklist(now)
+        cache.cleanupNodeBlacklist(now)
         if manatite and manatite.cleanupBlacklist then
             manatite.cleanupBlacklist(now)
         end
@@ -2389,18 +2420,855 @@ end
 -- ==========================
 -- MAIN ENGINE HEARTBEAT LOOP
 -- ==========================
+-- ==========================
+-- HEARTBEAT SUB-SYSTEM HANDLERS (Modularized for Luau frame register limits < 200)
+-- ==========================
+function aerial.process(now, rootPos)
+    local elapsed = now - aerial.startTime
+    if elapsed < aerial.duration then
+        if aerial.cframe and root and root.Parent then
+            char:PivotTo(aerial.cframe)
+            root.CFrame = aerial.cframe
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+        end
+    else
+        aerial.active = false
+        if root and root.Parent then
+            root.Anchored = false
+            if aerial.preCFrame then
+                char:PivotTo(aerial.preCFrame)
+                root.CFrame = aerial.preCFrame
+                for _, part in ipairs(charBaseParts) do
+                    part.AssemblyLinearVelocity = Vector3.zero
+                    part.AssemblyAngularVelocity = Vector3.zero
+                end
+            end
+        end
+        aerial.cframe = nil
+        aerial.preCFrame = nil
+        if dodge.notifyOnDodge then
+            Window:Notify({
+                Title = "Aerial Retreat: Complete",
+                Content = "Returned to mining position. Resuming autofarm.",
+                Duration = 2,
+            })
+        end
+    end
+end
+
+function aerial.checkHealth(now, rootPos)
+    local currentHearts = dodge.getLocalPlayerHearts()
+    if currentHearts and dodge.lastRecordedHearts ~= nil and currentHearts < dodge.lastRecordedHearts then
+        if (now - aerial.lastTime) >= aerial.cooldown and not aerial.active then
+            aerial.active = true
+            aerial.startTime = now
+            aerial.lastTime = now
+            aerial.preCFrame = root.CFrame
+            local hoverPos = rootPos + Vector3.new(0, aerial.height, 0)
+            aerial.cframe = CFrame.new(hoverPos) * root.CFrame.Rotation
+            char:PivotTo(aerial.cframe)
+            root.CFrame = aerial.cframe
+            root.Anchored = true
+            for _, part in ipairs(charBaseParts) do
+                part.AssemblyLinearVelocity = Vector3.zero
+                part.AssemblyAngularVelocity = Vector3.zero
+            end
+            if manatite and manatite.auto and manatite.model then
+                manatite.blacklist[manatite.model] = now
+                manatite.model = nil
+                manatite.target = nil
+                manatite.payload = nil
+            end
+            if mithril and mithril.auto and mithril.model then
+                mithril.blacklist[mithril.model] = now
+                mithril.model = nil
+                mithril.orePart = nil
+                mithril.payload = nil
+            end
+            if dodge.notifyOnDodge then
+                Window:Notify({
+                    Title = "Aerial Retreat: Low Health!",
+                    Content = string.format("Retreating %d studs up for %ds. Mining paused.", aerial.height, aerial.duration),
+                    Duration = 3,
+                })
+            end
+        end
+    end
+    dodge.lastRecordedHearts = currentHearts
+end
+
+function dodge.process(now, rootPos)
+    local currentHearts = dodge.getLocalPlayerHearts()
+    local heartsDecreased = false
+    local heartsBelowNormal = false
+
+    if currentHearts then
+        if dodge.normalPlayerHearts == 0 or currentHearts > dodge.normalPlayerHearts then
+            dodge.normalPlayerHearts = currentHearts
+        end
+        local maxAttr = dodge.getLocalPlayerMaxHearts()
+        if maxAttr and maxAttr > dodge.normalPlayerHearts then
+            dodge.normalPlayerHearts = maxAttr
+        end
+
+        if dodge.lastRecordedHearts ~= nil and currentHearts < dodge.lastRecordedHearts then
+            heartsDecreased = true
+        end
+        if dodge.normalPlayerHearts > 0 and (dodge.normalPlayerHearts - currentHearts) > 0.05 then
+            heartsBelowNormal = true
+        end
+        dodge.lastRecordedHearts = currentHearts
+    end
+
+    local currentArmor = dodge.getLocalPlayerArmor()
+    local armorDecreased = false
+    local armorAtZero = false
+
+    if currentArmor ~= nil then
+        if dodge.normalPlayerArmor == 0 or currentArmor > dodge.normalPlayerArmor then
+            dodge.normalPlayerArmor = currentArmor
+        end
+        local maxArmorAttr = dodge.getLocalPlayerMaxArmor()
+        if maxArmorAttr and maxArmorAttr > dodge.normalPlayerArmor then
+            dodge.normalPlayerArmor = maxArmorAttr
+        end
+
+        if dodge.lastRecordedArmor ~= nil and currentArmor < dodge.lastRecordedArmor then
+            armorDecreased = true
+        end
+        if currentArmor <= 0.05 then
+            armorAtZero = true
+        end
+        dodge.lastRecordedArmor = currentArmor
+    else
+        armorAtZero = true
+    end
+
+    local attackingMobFound = false
+    local attackingMobInstance = nil
+
+    local checkOrigin = (dodge.isUnderground and dodge.lastSurfacePos) or rootPos
+    local losOrigin = checkOrigin + Vector3.new(0, 0.5, 0)
+    for _, mob in ipairs(cache.activeAuraMobs) do
+        if mob.Parent then
+            local mobPos = dodge.getMobAttackOrigin(mob)
+            if mobPos and get2DDistanceSq(checkOrigin, mobPos) <= dodge.detectionRadiusSq then
+                if dodge.isMobAlive(mob) then
+                    local warning = dodge.findAttackWarning(mob)
+                    if dodge.isWarningActive(warning, mob) then
+                        if dodge.hasLineOfSight(losOrigin, mobPos, mob) then
+                            attackingMobFound = true
+                            attackingMobInstance = mob
+                            dodge.currentAttackingMob = mob
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local damageRetreatTriggered = false
+    if dodge.dodgeOnHeartsDecreased then
+        if armorDecreased and armorAtZero then
+            damageRetreatTriggered = true
+            dodge.lastDamageRetreatTime = now
+        elseif armorAtZero and heartsBelowNormal and not dodge.isDodging and (now - dodge.lastDamageRetreatTime > 2.0) then
+            damageRetreatTriggered = true
+            dodge.lastDamageRetreatTime = now
+        end
+    end
+
+    local shouldRetreat = (attackingMobFound and attackingMobInstance) or damageRetreatTriggered
+
+    if shouldRetreat then
+        dodge.lastWarningSeenTime = now
+
+        if not dodge.isDodging then
+            dodge.isDodging = true
+            dodge.startTime = now
+            dodge.preDodgePos = rootPos
+            dodge.preDodgeCFrame = root.CFrame
+
+            if farm.on then
+                farm.currentTargetNode = nil
+            end
+
+            if dodge.notifyOnDodge then
+                Window:Notify({
+                    Title = "Mob Attack Incoming!",
+                    Content = string.format("Evading attack (%s).", dodge.method),
+                    Duration = 2,
+                })
+            end
+
+            if dodge.method == "Underground" then
+                dodge.lastSurfaceCFrame = root.CFrame
+                dodge.lastSurfacePos = rootPos
+
+                local attackOrigin = (attackingMobInstance and dodge.getMobAttackOrigin(attackingMobInstance)) or rootPos
+                local awayDir = rootPos - attackOrigin
+                local away2D = Vector3.new(awayDir.X, 0, awayDir.Z)
+                away2D = (away2D.Magnitude > 0.1) and away2D.Unit or Vector3.new(0, 0, 1)
+
+                local horizontalOffset = away2D * 15
+                dodge.currentUndergroundRetreatOffset = horizontalOffset
+                dodge.undergroundCFrame = CFrame.new(rootPos + horizontalOffset - Vector3.new(0, dodge.undergroundDepth, 0)) * root.CFrame.Rotation
+
+                char:PivotTo(dodge.undergroundCFrame)
+                root.CFrame = dodge.undergroundCFrame
+                root.Anchored = true
+                dodge.isUnderground = true
+
+                for _, part in ipairs(charBaseParts) do
+                    part.AssemblyLinearVelocity = Vector3.zero
+                    part.AssemblyAngularVelocity = Vector3.zero
+                    if part.Name == "HumanoidRootPart" or part.Name == "UpperTorso" or part.Name == "Torso" then
+                        part.CanCollide = false
+                    end
+                end
+            elseif dodge.method == "Run Away (Surface)" then
+                if humanoid then
+                    dodge.originalWalkSpeed = humanoid.WalkSpeed
+                    humanoid.WalkSpeed = dodge.walkSpeed
+
+                    local attackOrigin = (attackingMobInstance and dodge.getMobAttackOrigin(attackingMobInstance)) or rootPos
+                    local awayDir = rootPos - attackOrigin
+                    local away2D = Vector3.new(awayDir.X, 0, awayDir.Z)
+                    away2D = (away2D.Magnitude > 0.1) and away2D.Unit or Vector3.new(0, 0, 1)
+
+                    local rotatedAway = CFrame.Angles(0, math.rad(dodge.retreatAngle), 0):VectorToWorldSpace(away2D)
+                    humanoid:Move(rotatedAway, false)
+                end
+            elseif dodge.method == "Teleport Away (Surface)" then
+                local attackOrigin = (attackingMobInstance and dodge.getMobAttackOrigin(attackingMobInstance)) or rootPos
+                local awayDir = rootPos - attackOrigin
+                local away2D = Vector3.new(awayDir.X, 0, awayDir.Z)
+                away2D = (away2D.Magnitude > 0.1) and away2D.Unit or Vector3.new(0, 0, 1)
+
+                local safeDodgeCFrame, safeDodgeDist = dodge.findSafeDodgePosition(rootPos, root.CFrame, away2D, 25, attackingMobInstance)
+
+                if safeDodgeCFrame then
+                    char:PivotTo(safeDodgeCFrame)
+                    root.CFrame = safeDodgeCFrame
+                    dodge.lastTeleportDodgeDist = safeDodgeDist
+
+                    for _, part in ipairs(charBaseParts) do
+                        part.AssemblyLinearVelocity = Vector3.zero
+                        part.AssemblyAngularVelocity = Vector3.zero
+                    end
+                    if humanoid then
+                        humanoid:Move(Vector3.zero, false)
+                    end
+                else
+                    dodge.lastSurfaceCFrame = root.CFrame
+                    dodge.lastSurfacePos = rootPos
+                    dodge.undergroundCFrame = CFrame.new(rootPos - Vector3.new(0, dodge.undergroundDepth, 0)) * root.CFrame.Rotation
+                    char:PivotTo(dodge.undergroundCFrame)
+                    root.CFrame = dodge.undergroundCFrame
+                    root.Anchored = true
+                    dodge.isUnderground = true
+                    for _, part in ipairs(charBaseParts) do
+                        part.AssemblyLinearVelocity = Vector3.zero
+                        part.AssemblyAngularVelocity = Vector3.zero
+                        if part.Name == "HumanoidRootPart" or part.Name == "UpperTorso" or part.Name == "Torso" then
+                            part.CanCollide = false
+                        end
+                    end
+                end
+            end
+        else
+            if dodge.method == "Underground" and dodge.isUnderground and dodge.undergroundCFrame then
+                char:PivotTo(dodge.undergroundCFrame)
+                root.CFrame = dodge.undergroundCFrame
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            elseif dodge.method == "Run Away (Surface)" then
+                if humanoid then
+                    if humanoid.WalkSpeed ~= dodge.walkSpeed then
+                        humanoid.WalkSpeed = dodge.walkSpeed
+                    end
+                    local attackOrigin = (attackingMobInstance and dodge.getMobAttackOrigin(attackingMobInstance)) or (dodge.preDodgePos or rootPos)
+                    local currentDist = get2DDistance(rootPos, attackOrigin)
+                    if currentDist < dodge.retreatDistance then
+                        local awayDir = rootPos - attackOrigin
+                        local away2D = Vector3.new(awayDir.X, 0, awayDir.Z)
+                        away2D = (away2D.Magnitude > 0.1) and away2D.Unit or Vector3.new(0, 0, 1)
+                        local rotatedAway = CFrame.Angles(0, math.rad(dodge.retreatAngle), 0):VectorToWorldSpace(away2D)
+                        humanoid:Move(rotatedAway, false)
+                    else
+                        humanoid:Move(Vector3.zero, false)
+                    end
+                end
+            end
+        end
+    else
+        if dodge.isDodging then
+            if (now - dodge.lastWarningSeenTime >= dodge.lingerDelay) then
+                if dodge.method == "Underground" and dodge.isUnderground then
+                    if dodge.lastSurfaceCFrame then
+                        local surfaceTarget = dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
+                        char:PivotTo(surfaceTarget)
+                        root.CFrame = surfaceTarget
+                    end
+                    root.Anchored = false
+                    for _, part in ipairs(charBaseParts) do
+                        part.AssemblyLinearVelocity = Vector3.zero
+                        part.AssemblyAngularVelocity = Vector3.zero
+                        if part.Name == "HumanoidRootPart" or part.Name == "UpperTorso" or part.Name == "Torso" then
+                            part.CanCollide = true
+                        end
+                    end
+                    dodge.isUnderground = false
+                    dodge.lastSurfaceCFrame = nil
+                    dodge.lastSurfacePos = nil
+                    dodge.undergroundCFrame = nil
+                elseif dodge.method == "Run Away (Surface)" then
+                    if humanoid then
+                        humanoid.WalkSpeed = dodge.originalWalkSpeed or 16
+                        if not farm.on then
+                            humanoid:Move(Vector3.zero, false)
+                        end
+                    end
+                elseif dodge.method == "Teleport Away (Surface)" then
+                    if humanoid then
+                        humanoid.WalkSpeed = dodge.originalWalkSpeed or 16
+                    end
+                    if dodge.preDodgeCFrame then
+                        local crystalStillValid = (manatite and manatite.auto and manatite.model and not manatite.blacklist[manatite.model])
+                            or (mithril and mithril.auto and mithril.model and not mithril.blacklist[mithril.model])
+                        if crystalStillValid then
+                            char:PivotTo(dodge.preDodgeCFrame)
+                            root.CFrame = dodge.preDodgeCFrame
+                            for _, part in ipairs(charBaseParts) do
+                                part.AssemblyLinearVelocity = Vector3.zero
+                                part.AssemblyAngularVelocity = Vector3.zero
+                            end
+                            if ((manatite and manatite.auto and manatite.anchor) or (mithril and mithril.auto and mithril.anchor)) and not dodge.hasNearbyThreat then
+                                pcall(function() root.Anchored = true end)
+                            end
+                        end
+                    end
+                end
+
+                dodge.isDodging = false
+                dodge.currentAttackingMob = nil
+                dodge.preDodgePos = nil
+                dodge.preDodgeCFrame = nil
+
+                if farm.on then
+                    farm.currentTargetNode = nil
+                end
+
+                if dodge.notifyOnDodge then
+                    Window:Notify({
+                        Title = "Attack Cleared",
+                        Content = "Safe from attack. Resumed normal activity.",
+                        Duration = 1.2,
+                    })
+                end
+            else
+                if dodge.method == "Run Away (Surface)" then
+                    if humanoid then
+                        if humanoid.WalkSpeed ~= dodge.walkSpeed then
+                            humanoid.WalkSpeed = dodge.walkSpeed
+                        end
+                        local attackOrigin = (dodge.currentAttackingMob and dodge.getMobAttackOrigin(dodge.currentAttackingMob)) or (dodge.preDodgePos or rootPos)
+                        local currentDist = get2DDistance(rootPos, attackOrigin)
+                        if currentDist < dodge.retreatDistance then
+                            local awayDir = rootPos - attackOrigin
+                            local away2D = Vector3.new(awayDir.X, 0, awayDir.Z)
+                            away2D = (away2D.Magnitude > 0.1) and away2D.Unit or Vector3.new(0, 0, 1)
+                            humanoid:Move(away2D, false)
+                        else
+                            humanoid:Move(Vector3.zero, false)
+                        end
+                    end
+                elseif dodge.method == "Underground" and dodge.isUnderground and dodge.undergroundCFrame then
+                    char:PivotTo(dodge.undergroundCFrame)
+                    root.CFrame = dodge.undergroundCFrame
+                    root.AssemblyLinearVelocity = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
+                end
+            end
+        end
+    end
+end
+
+function dodge.cleanup()
+    if dodge.isUnderground then
+        if dodge.lastSurfaceCFrame then
+            local surfaceTarget = dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
+            char:PivotTo(surfaceTarget)
+            root.CFrame = surfaceTarget
+        end
+        root.Anchored = false
+        for _, part in ipairs(charBaseParts) do
+            part.AssemblyLinearVelocity = Vector3.zero
+            part.AssemblyAngularVelocity = Vector3.zero
+            if part.Name == "HumanoidRootPart" or part.Name == "UpperTorso" or part.Name == "Torso" then
+                part.CanCollide = true
+            end
+        end
+        dodge.isUnderground = false
+        dodge.lastSurfaceCFrame = nil
+        dodge.lastSurfacePos = nil
+        dodge.undergroundCFrame = nil
+    end
+    if humanoid then
+        humanoid.WalkSpeed = dodge.originalWalkSpeed or 16
+        if not farm.on then
+            humanoid:Move(Vector3.zero, false)
+        end
+    end
+    if dodge.method == "Teleport Away (Surface)" and dodge.preDodgeCFrame then
+        if ((manatite and manatite.auto) or (mithril and mithril.auto)) then
+            char:PivotTo(dodge.preDodgeCFrame)
+            root.CFrame = dodge.preDodgeCFrame
+            for _, part in ipairs(charBaseParts) do
+                part.AssemblyLinearVelocity = Vector3.zero
+                part.AssemblyAngularVelocity = Vector3.zero
+            end
+            if ((manatite and manatite.auto and manatite.anchor) or (mithril and mithril.auto and mithril.anchor)) then
+                pcall(function() root.Anchored = true end)
+            end
+        end
+    end
+    dodge.isDodging = false
+    dodge.currentAttackingMob = nil
+    dodge.preDodgePos = nil
+    dodge.preDodgeCFrame = nil
+end
+
+function dodge.checkNearbyThreat(now, rootPos, prioritizedMobThisFrame)
+    local hasNearbyThreat = false
+    if farm.autoChompMobs and ((manatite and manatite.auto) or (mithril and mithril.auto) or farm.on) then
+        local threatOrigin = dodge.isUnderground and (dodge.lastSurfacePos or rootPos) or rootPos
+        local losOrigin = threatOrigin + Vector3.new(0, 0.5, 0)
+        for _, mob in ipairs(cache.activeAuraMobs) do
+            if mob.Parent and dodge.isMobAlive(mob) then
+                local mobPos = dodge.getMobAttackOrigin(mob)
+                if mobPos and get3DDistanceSq(threatOrigin, mobPos) <= dodge.manatiteThreatRadiusSq then
+                    if dodge.hasLineOfSight(losOrigin, mobPos, mob) then
+                        hasNearbyThreat = true
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    if hasNearbyThreat and not prioritizedMobThisFrame then
+        hasNearbyThreat = false
+    end
+
+    if hasNearbyThreat then
+        if dodge.threatStartTime == 0 then
+            dodge.threatStartTime = now
+        elseif (now - dodge.threatStartTime > 1.5) then
+            if manatite and manatite.auto and manatite.model then
+                manatite.blacklist[manatite.model] = now
+                manatite.model = nil
+                manatite.target = nil
+                manatite.payload = nil
+            end
+            if mithril and mithril.auto and mithril.model then
+                mithril.blacklist[mithril.model] = now
+                mithril.model = nil
+                mithril.orePart = nil
+                mithril.payload = nil
+            end
+            if root then
+                pcall(function() root.Anchored = false end)
+            end
+            dodge.threatStartTime = 0
+            hasNearbyThreat = false
+        end
+    else
+        dodge.threatStartTime = 0
+    end
+
+    if hasNearbyThreat and dodge.prioritizeMobsOverManatite and root.Anchored and not dodge.isUnderground then
+        pcall(function() root.Anchored = false end)
+    end
+
+    return hasNearbyThreat
+end
+
+function farm.processMovement(dt, now, rootPos)
+    farm.patternTimer = farm.patternTimer + (dt * farm.patternSpeed)
+    local targetPos
+
+    if farm.pattern == "Guided Zigzag (Nodes)" then
+        local ghostX = math.sin(farm.patternTimer * 1.3) * farm.radius
+        local ghostZ = math.cos(farm.patternTimer * 1.9) * farm.radius
+        local ghostPos = farm.anchorPos + Vector3.new(ghostX, 0, ghostZ)
+
+        local needNewNode = false
+        if not farm.currentTargetNode or not farm.currentTargetNode.Parent then
+            needNewNode = true
+        else
+            local tPos = cache.getNodePosition(farm.currentTargetNode)
+            if get2DDistanceSq(rootPos, tPos) < 16 then
+                needNewNode = true
+            end
+        end
+
+        if needNewNode then
+            local nearestDistSq = math.huge
+            local nearestNode = nil
+            local grassNodes = cache.getGrassNodes()
+
+            for _, node in ipairs(grassNodes) do
+                if node.Parent then
+                    local nodePos = cache.getNodePosition(node)
+                    if get2DDistanceSq(farm.anchorPos, nodePos) <= farm.radiusSq then
+                        local cleanName = cache.getCleanGrassName(node.Name)
+                        if cleanName then
+                            local distFromGhostSq = get2DDistanceSq(ghostPos, nodePos)
+                            local blacklistedAt = cache.nodeBlacklist[node]
+                            if distFromGhostSq < nearestDistSq and (not blacklistedAt or now - blacklistedAt > 10) then
+                                nearestDistSq = distFromGhostSq
+                                nearestNode = node
+                            end
+                        end
+                    end
+                end
+            end
+
+            if nearestNode then
+                farm.currentTargetNode = nearestNode
+                cache.nodeBlacklist[nearestNode] = now
+            else
+                farm.currentTargetNode = nil
+                if not farm.nextRandomPos or get2DDistanceSq(rootPos, farm.nextRandomPos) < 25 then
+                    local angle = math.random() * (math.pi * 2)
+                    farm.nextRandomPos = farm.anchorPos + Vector3.new(math.cos(angle) * farm.radius, 0, math.sin(angle) * farm.radius)
+                end
+            end
+        end
+
+        if farm.currentTargetNode and farm.currentTargetNode.Parent then
+            targetPos = cache.getNodePosition(farm.currentTargetNode)
+        else
+            targetPos = farm.nextRandomPos
+        end
+
+    elseif farm.pattern == "Circle" then
+        local currentRadius = farm.radius * math.abs(math.sin(farm.patternTimer * 0.2))
+        local angle = farm.patternTimer * 1.5
+        targetPos = farm.anchorPos + Vector3.new(math.cos(angle) * currentRadius, 0, math.sin(angle) * currentRadius)
+
+    elseif farm.pattern == "Square" then
+        targetPos = farm.anchorPos + Vector3.new(math.sin(farm.patternTimer * 1.8) * farm.radius, 0, math.cos(farm.patternTimer * 0.2) * farm.radius)
+
+    elseif farm.pattern == "Zigzag" then
+        targetPos = farm.anchorPos + Vector3.new(math.sin(farm.patternTimer * 1.3) * farm.radius, 0, math.cos(farm.patternTimer * 1.9) * farm.radius)
+
+    elseif farm.pattern == "Random" then
+        if not farm.nextRandomPos or get2DDistanceSq(rootPos, farm.nextRandomPos) < 25 then
+            local angle = math.random() * (math.pi * 2)
+            farm.nextRandomPos = farm.anchorPos + Vector3.new(math.cos(angle) * farm.radius, 0, math.sin(angle) * farm.radius)
+        end
+        targetPos = farm.nextRandomPos
+    end
+
+    if targetPos and (now - farm.lastMoveTime > 0.05) then
+        local offX = targetPos.X - farm.anchorPos.X
+        local offZ = targetPos.Z - farm.anchorPos.Z
+        local distSq = offX * offX + offZ * offZ
+        if distSq > farm.radiusSq then
+            local scale = farm.radius / math.sqrt(distSq)
+            targetPos = Vector3.new(farm.anchorPos.X + offX * scale, targetPos.Y, farm.anchorPos.Z + offZ * scale)
+        end
+
+        humanoid:MoveTo(targetPos)
+        farm.lastMoveTime = now
+    end
+end
+
+function farm.processMobAura(now, rootPos)
+    local auraOrigin = dodge.isUnderground and (dodge.lastSurfacePos or rootPos) or rootPos
+    local losOrigin = (dodge.isUnderground and dodge.lastSurfacePos or rootPos) + Vector3.new(0, 0.5, 0)
+    local closestMob = nil
+    local closestDistSq = math.huge
+    local closestMobPos = nil
+
+    for _, mob in ipairs(cache.activeAuraMobs) do
+        if mob.Parent then
+            local mobPos = dodge.getMobAttackOrigin(mob)
+            if mobPos then
+                local distSq = get3DDistanceSq(auraOrigin, mobPos)
+                if distSq <= farm.mobAuraRadiusSq and distSq < closestDistSq then
+                    if dodge.isMobAlive(mob) and dodge.hasLineOfSight(losOrigin, mobPos, mob) then
+                        closestDistSq = distSq
+                        closestMob = mob
+                        closestMobPos = mobPos
+                    end
+                end
+            end
+        end
+    end
+
+    if closestMob then
+        local mob = closestMob
+        local mobPos = closestMobPos
+        local isCaveMob = dodge.isMithrilCaveMob(mob)
+
+        if isCaveMob then
+            if (now - farm.mobChompCooldown > farm.mobAuraDelay) or (farm.lastChompedMob ~= mob) then
+                if not dodge.isUnderground and not dodge.isDodging then
+                    local lookDx = mobPos.X - rootPos.X
+                    local lookDz = mobPos.Z - rootPos.Z
+                    if (lookDx * lookDx + lookDz * lookDz) > 0.01 then
+                        root.CFrame = CFrame.lookAt(rootPos, Vector3.new(mobPos.X, rootPos.Y, mobPos.Z))
+                    end
+                end
+
+                local spiderId = cache.findSpiderIdentifier(mob)
+                if spiderId then
+                    local payloadName = "Cavern_Mob_Spider_" .. tostring(spiderId)
+                    chompEvent:FireServer(payloadName)
+                else
+                    local fallbackPayload = cache.getMobPayload(mob.Name)
+                    if fallbackPayload then
+                        chompEvent:FireServer(fallbackPayload)
+                    end
+                    chompEvent:FireServer("Cavern_Mob_Spider")
+                    chompEvent:FireServer(mob.Name)
+                end
+
+                if fireproximityprompt then
+                    local prompt = mob:FindFirstChildWhichIsA("ProximityPrompt", true)
+                    if prompt and prompt.Enabled then
+                        pcall(function() fireproximityprompt(prompt) end)
+                    end
+                end
+
+                pressE()
+
+                farm.lastChompedMob = mob
+                farm.mobChompCooldown = now
+                return true
+            else
+                return true
+            end
+        else
+            local payloadName = cache.getMobPayload(mob.Name)
+
+            if payloadName ~= farm.lastChompedMob or (now - farm.mobChompCooldown > farm.mobAuraDelay) then
+                if not dodge.isUnderground and not dodge.isDodging then
+                    local lookDx = mobPos.X - rootPos.X
+                    local lookDz = mobPos.Z - rootPos.Z
+                    if (lookDx * lookDx + lookDz * lookDz) > 0.01 then
+                        root.CFrame = CFrame.lookAt(rootPos, Vector3.new(mobPos.X, rootPos.Y, mobPos.Z))
+                    end
+                end
+                chompEvent:FireServer(payloadName)
+                farm.lastChompedMob = payloadName
+                farm.mobChompCooldown = now
+                return true
+            else
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function farm.processGrassChomp(now, rootPos)
+    if (now - farm.lastRaycastChompTime > 0.04) then
+        farm.lastRaycastChompTime = now
+        local hit = workspace:Raycast(rootPos, RAYCAST_DOWN, raycastParams)
+
+        if hit and hit.Instance then
+            local actualNode = hit.Instance
+
+            if not string.find(actualNode.Name, "Grass", 1, true) and actualNode.Parent then
+                if string.find(actualNode.Parent.Name, "Grass", 1, true) then
+                    actualNode = actualNode.Parent
+                end
+            end
+
+            local nodeName = actualNode.Name
+            if string.find(nodeName, "Grass", 1, true) then
+                local cleanName = cache.getCleanGrassName(nodeName)
+                if cleanName then
+                    if cleanName ~= farm.lastChompedNode or (now - farm.chompCooldown > 1) then
+                        chompEvent:FireServer(cleanName)
+                        farm.lastChompedNode = cleanName
+                        farm.chompCooldown = now
+
+                        if farm.currentTargetNode and farm.currentTargetNode.Name == nodeName then
+                            farm.currentTargetNode = nil
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+function farm.processFishing(now, rootPos)
+    if not fishingEvent and cowRemotes then
+        fishingEvent = cowRemotes:FindFirstChild("FishingRequest")
+    end
+    if fishingEvent and (now - farm.castCooldown > 3) and (now - farm.lastFishingSearchTime > 0.3) then
+        farm.lastFishingSearchTime = now
+        local nearestSpot = nil
+        local shortestDistSq = 2500
+        local fishingSpots = cache.getFishingSpots()
+
+        for _, spot in ipairs(fishingSpots) do
+            if spot.Parent then
+                local spotPos = cache.getSpotPosition(spot)
+                if spotPos then
+                    local distSq = get2DDistanceSq(rootPos, spotPos)
+                    if distSq < shortestDistSq and cache.isSpotAvailable(spot) then
+                        shortestDistSq = distSq
+                        nearestSpot = spot
+                    end
+                end
+            end
+        end
+
+        if nearestSpot then
+            fishingEvent:FireServer("Cast", nearestSpot)
+            farm.castCooldown = now
+        end
+    end
+end
+
+function manatite.process(now, rootPos)
+    manatite.cleanupBlacklist(now)
+
+    local targetValid = manatite.model
+        and manatite.target
+        and manatite.model.Parent
+        and manatite.target.Parent
+        and manatite.isAvailable(manatite.target, manatite.model)
+        and (now - manatite.startTime <= 15)
+
+    if not targetValid then
+        if manatite.model and (now - manatite.startTime > 15) then
+            manatite.blacklist[manatite.model] = now
+        end
+
+        manatite.model = nil
+        manatite.target = nil
+        manatite.payload = nil
+
+        if manatite.anchor and root then
+            pcall(function() root.Anchored = false end)
+        end
+
+        if (now - manatite.lastSearchTime > 0.1) then
+            manatite.lastSearchTime = now
+            local nextModel, nextTarget = manatite.findNext(rootPos)
+            if nextModel and nextTarget then
+                manatite.model = nextModel
+                manatite.target = nextTarget
+                manatite.payload = manatite.getPayload(nextModel.Name)
+                manatite.startTime = now
+                manatite.teleport(nextTarget, nextModel)
+                manatite.lastTeleportTime = now
+                manatite.lastChompTime = 0
+            end
+        end
+    else
+        local targetPos = manatite.target.Position + Vector3.new(0, manatite.heightOffset, 0)
+
+        if get3DDistanceSq(rootPos, targetPos) > 36 then
+            if (now - manatite.lastTeleportTime > 0.4) then
+                manatite.teleport(manatite.target, manatite.model)
+                manatite.lastTeleportTime = now
+            end
+        else
+            if manatite.anchor and not root.Anchored and not dodge.isDodging and not dodge.isUnderground and not dodge.hasNearbyThreat then
+                pcall(function() root.Anchored = true end)
+            end
+        end
+
+        if (now - manatite.lastChompTime >= manatite.delay) then
+            manatite.lastChompTime = now
+            chompEvent:FireServer(manatite.payload)
+        end
+    end
+end
+
+function mithril.process(now, rootPos)
+    mithril.cleanupBlacklist(now)
+
+    local targetValid = mithril.model
+        and mithril.orePart
+        and mithril.model.Parent
+        and mithril.orePart.Parent
+        and mithril.isAvailable(mithril.orePart, mithril.model)
+        and (now - mithril.startTime <= 15)
+
+    if not targetValid then
+        if mithril.model and (now - mithril.startTime > 15) then
+            mithril.blacklist[mithril.model] = now
+        end
+
+        mithril.model = nil
+        mithril.orePart = nil
+        mithril.payload = nil
+
+        if mithril.anchor and root then
+            pcall(function() root.Anchored = false end)
+        end
+
+        if (now - mithril.lastSearchTime > 0.1) then
+            mithril.lastSearchTime = now
+            local nextModel, nextOre = mithril.findNext(rootPos)
+            if nextModel and nextOre then
+                mithril.model = nextModel
+                mithril.orePart = nextOre
+                mithril.payload = mithril.getPayload(nextModel.Name)
+                mithril.startTime = now
+                mithril.teleport(nextOre, nextModel)
+                mithril.lastTeleportTime = now
+                mithril.lastChompTime = 0
+            end
+        end
+    else
+        local targetPos = mithril.orePart.Position + Vector3.new(0, mithril.heightOffset, 0)
+
+        if get3DDistanceSq(rootPos, targetPos) > 36 then
+            if (now - mithril.lastTeleportTime > 0.4) then
+                mithril.teleport(mithril.orePart, mithril.model)
+                mithril.lastTeleportTime = now
+            end
+        else
+            if mithril.anchor and not root.Anchored and not dodge.isDodging and not dodge.isUnderground and not dodge.hasNearbyThreat then
+                pcall(function() root.Anchored = true end)
+            end
+        end
+
+        if (now - mithril.lastChompTime >= mithril.delay) then
+            mithril.lastChompTime = now
+            chompEvent:FireServer(mithril.payload)
+        end
+    end
+end
+
+-- ==========================
+-- MAIN ENGINE HEARTBEAT LOOP (Concise Dispatcher)
+-- ==========================
 local function updateHeartbeatConnection()
-    if farmOn or autoChomp or autoFish or autoChompMobs or autoDodgeMobs or (manatite and manatite.auto) or (mithril and mithril.auto) then
+    if farm.on or farm.autoChomp or farm.autoFish or farm.autoChompMobs or dodge.auto or (manatite and manatite.auto) or (mithril and mithril.auto) then
         if not HeartbeatConnection then
             HeartbeatConnection = RunService.Heartbeat:Connect(function(dt)
                 if not root or not humanoid or not root.Parent or not humanoid.Parent or humanoid.Health <= 0 then
-                    if isUnderground then
-                        isUnderground = false
+                    if dodge.isUnderground then
+                        dodge.isUnderground = false
                         pcall(function() if root then root.Anchored = false end end)
                     end
-                    if isDodging then
-                        isDodging = false
-                        currentAttackingMob = nil
+                    if dodge.isDodging then
+                        dodge.isDodging = false
+                        dodge.currentAttackingMob = nil
                     end
                     if manatite then
                         manatite.model = nil
@@ -2419,921 +3287,61 @@ local function updateHeartbeatConnection()
                 local rootPos = root.Position
 
                 -- Targeted background caches refresh (only when mobs need caching)
-                if (autoChompMobs or autoDodgeMobs) and (now - lastBackgroundCacheTime > 1.5) then
-                    lastBackgroundCacheTime = now
-                    task.spawn(cacheBackgroundElements)
+                if (farm.autoChompMobs or dodge.auto) and (now - cache.lastBackgroundTime > 1.5) then
+                    cache.lastBackgroundTime = now
+                    task.spawn(cache.cacheBackgroundElements)
                 end
 
                 -- Comprehensive memory sanitation
-                sanitizeMemory(now)
+                cache.sanitizeMemory(now)
 
                 -- 0. Priority Mob Attack Warning & Dodge Logic (Run Away & Surface Retreat)
                 -- === AERIAL RETREAT: Low-Health Emergency Hover ===
-                -- Triggered when hearts decrease; independently of autoDodgeMobs.
-                -- Teleports player 200 studs up, pauses mining for 60s, then returns.
-                if isAerialRetreat then
-                    local elapsed = now - aerialRetreatStartTime
-                    if elapsed < aerialRetreatDuration then
-                        -- Lock the character at the aerial hover position
-                        if aerialRetreatCFrame and root and root.Parent then
-                            char:PivotTo(aerialRetreatCFrame)
-                            root.CFrame = aerialRetreatCFrame
-                            root.AssemblyLinearVelocity = Vector3.zero
-                            root.AssemblyAngularVelocity = Vector3.zero
-                        end
-                    else
-                        -- 60 seconds elapsed: return to pre-retreat position and resume mining
-                        isAerialRetreat = false
-                        if root and root.Parent then
-                            root.Anchored = false
-                            if preAerialCFrame then
-                                char:PivotTo(preAerialCFrame)
-                                root.CFrame = preAerialCFrame
-                                for _, part in ipairs(charBaseParts) do
-                                    part.AssemblyLinearVelocity = Vector3.zero
-                                    part.AssemblyAngularVelocity = Vector3.zero
-                                end
-                            end
-                        end
-                        aerialRetreatCFrame = nil
-                        preAerialCFrame = nil
-                        if notifyOnDodge then
-                            Window:Notify({
-                                Title = "Aerial Retreat: Complete",
-                                Content = "Returned to mining position. Resuming autofarm.",
-                                Duration = 2,
-                            })
-                        end
-                    end
-                elseif autoDodgeMobs and dodgeOnHeartsDecreased then
-                    -- Quick health check to trigger aerial retreat (runs even without full autoDodge scan)
-                    local currentHearts = getLocalPlayerHearts()
-                    if currentHearts and lastRecordedHearts ~= nil and currentHearts < lastRecordedHearts then
-                        if (now - lastAerialRetreatTime) >= aerialRetreatCooldown and not isAerialRetreat then
-                            -- Save position and teleport 200 studs up
-                            isAerialRetreat = true
-                            aerialRetreatStartTime = now
-                            lastAerialRetreatTime = now
-                            preAerialCFrame = root.CFrame
-                            local hoverPos = rootPos + Vector3.new(0, aerialRetreatHeight, 0)
-                            aerialRetreatCFrame = CFrame.new(hoverPos) * root.CFrame.Rotation
-                            char:PivotTo(aerialRetreatCFrame)
-                            root.CFrame = aerialRetreatCFrame
-                            root.Anchored = true
-                            for _, part in ipairs(charBaseParts) do
-                                part.AssemblyLinearVelocity = Vector3.zero
-                                part.AssemblyAngularVelocity = Vector3.zero
-                            end
-                            -- Blacklist current ore nodes so bot finds new ones on return
-                            if manatite and manatite.auto and manatite.model then
-                                manatite.blacklist[manatite.model] = now
-                                manatite.model = nil
-                                manatite.target = nil
-                                manatite.payload = nil
-                            end
-                            if mithril and mithril.auto and mithril.model then
-                                mithril.blacklist[mithril.model] = now
-                                mithril.model = nil
-                                mithril.orePart = nil
-                                mithril.payload = nil
-                            end
-                            if notifyOnDodge then
-                                Window:Notify({
-                                    Title = "Aerial Retreat: Low Health!",
-                                    Content = string.format("Retreating %d studs up for %ds. Mining paused.", aerialRetreatHeight, aerialRetreatDuration),
-                                    Duration = 3,
-                                })
-                            end
-                        end
-                    end
-                    lastRecordedHearts = currentHearts
+                if aerial.active then
+                    aerial.process(now, rootPos)
+                elseif dodge.auto and dodge.dodgeOnHeartsDecreased then
+                    aerial.checkHealth(now, rootPos)
                 end
 
-                if autoDodgeMobs and not isAerialRetreat then
-                    local currentHearts = getLocalPlayerHearts()
-                    local heartsDecreased = false
-                    local heartsBelowNormal = false
-
-                    if currentHearts then
-                        if normalPlayerHearts == 0 or currentHearts > normalPlayerHearts then
-                            normalPlayerHearts = currentHearts
-                        end
-                        local maxAttr = getLocalPlayerMaxHearts()
-                        if maxAttr and maxAttr > normalPlayerHearts then
-                            normalPlayerHearts = maxAttr
-                        end
-
-                        if lastRecordedHearts ~= nil and currentHearts < lastRecordedHearts then
-                            heartsDecreased = true
-                        end
-                        if normalPlayerHearts > 0 and (normalPlayerHearts - currentHearts) > 0.05 then
-                            heartsBelowNormal = true
-                        end
-                        lastRecordedHearts = currentHearts
-                    end
-
-                    local currentArmor = getLocalPlayerArmor()
-                    local armorDecreased = false
-                    local armorAtZero = false
-
-                    if currentArmor ~= nil then
-                        if normalPlayerArmor == 0 or currentArmor > normalPlayerArmor then
-                            normalPlayerArmor = currentArmor
-                        end
-                        local maxArmorAttr = getLocalPlayerMaxArmor()
-                        if maxArmorAttr and maxArmorAttr > normalPlayerArmor then
-                            normalPlayerArmor = maxArmorAttr
-                        end
-
-                        if lastRecordedArmor ~= nil and currentArmor < lastRecordedArmor then
-                            armorDecreased = true
-                        end
-                        if currentArmor <= 0.05 then
-                            armorAtZero = true
-                        end
-                        lastRecordedArmor = currentArmor
-                    else
-                        -- No armor attribute or system detected: player is unarmored
-                        armorAtZero = true
-                    end
-
-                    local attackingMobFound = false
-                    local attackingMobInstance = nil
-
-                    -- Chained multi-mob dodging: scan activeAuraMobs for ANY active attack warning relative to current position
-                    local checkOrigin = (isUnderground and lastSurfacePos) or rootPos
-                    local losOrigin = checkOrigin + Vector3.new(0, 0.5, 0)
-                    for _, mob in ipairs(activeAuraMobs) do
-                        if mob.Parent then
-                            local mobPos = getMobAttackOrigin(mob)
-                            if mobPos and get2DDistanceSq(checkOrigin, mobPos) <= dodgeDetectionRadiusSq then
-                                if isMobAlive(mob) then
-                                    local warning = findAttackWarning(mob)
-                                    if isWarningActive(warning, mob) then
-                                        if hasLineOfSight(losOrigin, mobPos, mob) then
-                                            attackingMobFound = true
-                                            attackingMobInstance = mob
-                                            currentAttackingMob = mob
-                                            break
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-
-                    local damageRetreatTriggered = false
-                    if dodgeOnHeartsDecreased then
-                        if armorDecreased and armorAtZero then
-                            damageRetreatTriggered = true
-                            lastDamageRetreatTime = now
-                        elseif armorAtZero and heartsBelowNormal and not isDodging and (now - lastDamageRetreatTime > 2.0) then
-                            damageRetreatTriggered = true
-                            lastDamageRetreatTime = now
-                        end
-                        -- Note: heartsDecreased is now handled exclusively by the Aerial Retreat system above.
-                    end
-
-                    local shouldRetreat = (attackingMobFound and attackingMobInstance) or damageRetreatTriggered
-
-                    if shouldRetreat then
-                        lastWarningSeenTime = now
-
-                        -- If attacking mob is outside server attack range (10 studs), or if damaged while mining:
-                        -- The current crystal is infested and cannot be cleared from here.
-                        -- Blacklist it immediately so the bot relocates to a clean crystal in another cavern chamber.
-                        if (manatite and manatite.auto and manatite.model) or (mithril and mithril.auto and mithril.model) then
-                            if manatite and manatite.auto and manatite.model then
-                                manatite.blacklist[manatite.model] = now
-                                manatite.model = nil
-                                manatite.target = nil
-                                manatite.payload = nil
-                            end
-                            if mithril and mithril.auto and mithril.model then
-                                mithril.blacklist[mithril.model] = now
-                                mithril.model = nil
-                                mithril.orePart = nil
-                                mithril.payload = nil
-                            end
-                        end
-
-                        -- Force unanchor during surface dodges so evasion is never locked
-                        if root.Anchored and dodgeMethod ~= "Underground" then
-                            pcall(function() root.Anchored = false end)
-                        end
-
-                        -- Determine threat position to retreat away from
-                        local attackOrigin = nil
-                        if attackingMobInstance then
-                            attackOrigin = getMobAttackOrigin(attackingMobInstance)
-                        else
-                            local closestDistSq = math.huge
-                            for _, mob in ipairs(activeAuraMobs) do
-                                if mob.Parent and isMobAlive(mob) then
-                                    local mobPos = getMobAttackOrigin(mob)
-                                    if mobPos then
-                                        local distSq = get2DDistanceSq(rootPos, mobPos)
-                                        if distSq < closestDistSq then
-                                            closestDistSq = distSq
-                                            attackingMobInstance = mob
-                                            attackOrigin = mobPos
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                        attackOrigin = attackOrigin or (preDodgePos or rootPos)
-
-                        local awayDir = rootPos - attackOrigin
-                        local away2D = Vector3.new(awayDir.X, 0, awayDir.Z)
-
-                        if away2D.Magnitude > 0.1 then
-                            away2D = away2D.Unit
-                        else
-                            local look = root.CFrame.LookVector
-                            away2D = Vector3.new(-look.X, 0, -look.Z)
-                            if away2D.Magnitude > 0.1 then
-                                away2D = away2D.Unit
-                            else
-                                away2D = Vector3.new(0, 0, 1)
-                            end
-                        end
-
-                        if not isDodging or (isDodging and damageRetreatTriggered) then
-                            if not isDodging then
-                                isDodging = true
-                                dodgeStartTime = now
-                                preDodgePos = rootPos
-                                preDodgeCFrame = root.CFrame
-                                if humanoid then
-                                    originalWalkSpeed = humanoid.WalkSpeed
-                                end
-                            end
-
-                            local safeDodgeCFrame, safeDodgeDist, safeDodgeDir = findSafeDodgePosition(preDodgePos or rootPos, preDodgeCFrame or root.CFrame, away2D, dodgeRetreatDistance, dodgeRetreatAngle, attackingMobInstance)
-                            local retreatDir = safeDodgeDir or away2D
-                            local actualRetreatDist = safeDodgeDist or dodgeRetreatDistance
-
-                            if dodgeMethod == "Run Away (Surface)" then
-                                if humanoid then
-                                    humanoid.WalkSpeed = dodgeWalkSpeed
-                                end
-                                root.Anchored = false
-                            elseif dodgeMethod == "Teleport Away (Surface)" then
-                                local targetCFrame = nil
-                                local actualDist = 0
-
-                                if safeDodgeCFrame and safeDodgeDist and safeDodgeDist >= 2.0 then
-                                    targetCFrame = safeDodgeCFrame
-                                    actualDist = safeDodgeDist
-                                end
-
-                                -- If damage occurred, retreat regardless of obstacle clearance
-                                if not targetCFrame and (damageRetreatTriggered or (safeDodgeDist and safeDodgeDist < 2.0)) then
-                                    local fallbackOffset = retreatDir * dodgeRetreatDistance
-                                    local fallbackPos = (preDodgePos or rootPos) + fallbackOffset
-                                    local floorRay = workspace:Raycast(fallbackPos + Vector3.new(0, 2.0, 0), Vector3.new(0, -10, 0), raycastParams)
-                                    local groundY = floorRay and (floorRay.Position.Y + 2.8) or (preDodgePos and preDodgePos.Y or rootPos.Y)
-                                    targetCFrame = CFrame.new(Vector3.new(fallbackPos.X, groundY, fallbackPos.Z)) * (preDodgeCFrame and preDodgeCFrame.Rotation or root.CFrame.Rotation)
-                                    actualDist = dodgeRetreatDistance
-                                end
-
-                                if targetCFrame then
-                                    char:PivotTo(targetCFrame)
-                                    root.CFrame = targetCFrame
-                                    for _, part in ipairs(charBaseParts) do
-                                        part.AssemblyLinearVelocity = Vector3.zero
-                                        part.AssemblyAngularVelocity = Vector3.zero
-                                    end
-                                    lastTeleportDodgeDist = actualDist
-                                else
-                                    lastTeleportDodgeDist = 0
-                                end
-                                root.Anchored = false
-                            elseif dodgeMethod == "Underground" then
-                                isUnderground = true
-                                lastSurfaceCFrame = root.CFrame
-                                lastSurfacePos = rootPos
-
-                                local retreatOffset = retreatDir * (actualRetreatDist > 0 and actualRetreatDist or dodgeRetreatDistance)
-                                currentUndergroundRetreatOffset = retreatOffset
-                                local targetPos = lastSurfacePos + retreatOffset - Vector3.new(0, undergroundDepth, 0)
-                                undergroundCFrame = CFrame.new(targetPos) * (lastSurfaceCFrame.Rotation)
-
-                                char:PivotTo(undergroundCFrame)
-                                root.CFrame = undergroundCFrame
-                                root.Anchored = true
-
-                                for _, part in ipairs(charBaseParts) do
-                                    part.AssemblyLinearVelocity = Vector3.zero
-                                    part.AssemblyAngularVelocity = Vector3.zero
-                                    if part ~= root then
-                                        part.CanCollide = false
-                                    end
-                                end
-                            end
-
-                            if notifyOnDodge then
-                                local reason = (armorAtZero and (heartsDecreased or heartsBelowNormal) and " [Armor Broken & Hearts Decreased]")
-                                    or ((heartsDecreased or heartsBelowNormal) and " [Hearts Decreased]")
-                                    or ""
-                                local methodDesc = (dodgeMethod == "Run Away (Surface)" and "Running away " .. tostring(dodgeRetreatDistance) .. " studs" .. reason .. ".")
-                                    or (dodgeMethod == "Teleport Away (Surface)" and (lastTeleportDodgeDist > 0 and string.format("Teleported %.1f studs away%s.", lastTeleportDodgeDist, reason) or "Retreated away."))
-                                    or ("Retreated underground (" .. tostring(math.floor(dodgeRetreatDistance)) .. " studs away" .. reason .. ").")
-                                Window:Notify({
-                                    Title = "Attack Warning Detected",
-                                    Content = methodDesc,
-                                    Duration = 1.5,
-                                })
-                            end
-                        end
-
-                        -- Ongoing evasion while warning is active
-                        if dodgeMethod == "Run Away (Surface)" then
-                            if humanoid then
-                                if humanoid.WalkSpeed ~= dodgeWalkSpeed then
-                                    humanoid.WalkSpeed = dodgeWalkSpeed
-                                end
-                                root.Anchored = false
-                                local currentDist = get2DDistance(rootPos, attackOrigin)
-                                if currentDist < dodgeRetreatDistance then
-                                    local retreatTarget = attackOrigin + (away2D * (dodgeRetreatDistance + 5))
-                                    humanoid:Move(away2D, false)
-                                    humanoid:MoveTo(retreatTarget)
-                                else
-                                    humanoid:Move(Vector3.zero, false)
-                                end
-                            end
-                        elseif dodgeMethod == "Underground" and isUnderground and undergroundCFrame then
-                            char:PivotTo(undergroundCFrame)
-                            root.CFrame = undergroundCFrame
-                            root.AssemblyLinearVelocity = Vector3.zero
-                            root.AssemblyAngularVelocity = Vector3.zero
-                        end
-                    else
-                        -- No active attack warning or damage hit this frame: check if currently dodging
-                        if isDodging then
-                            local canExitDodge = ((now - lastWarningSeenTime) >= dodgeLingerDelay) or (now - dodgeStartTime > 2.0)
-
-                            if canExitDodge then
-                                -- Safe! Attack has completely ended
-                                if dodgeMethod == "Underground" and isUnderground then
-                                    if lastSurfaceCFrame then
-                                        local surfaceRetreatPos = lastSurfacePos and (lastSurfacePos + (currentUndergroundRetreatOffset or Vector3.zero)) or lastSurfaceCFrame.Position
-                                        local rayHit = workspace:Raycast(surfaceRetreatPos + Vector3.new(0, 4, 0), Vector3.new(0, -20, 0), raycastParams)
-                                        local groundY = rayHit and (rayHit.Position.Y + 3) or (lastSurfacePos and (lastSurfacePos.Y + 0.5) or surfaceRetreatPos.Y)
-                                        local surfaceTarget = CFrame.new(Vector3.new(surfaceRetreatPos.X, groundY, surfaceRetreatPos.Z)) * lastSurfaceCFrame.Rotation
-                                        char:PivotTo(surfaceTarget)
-                                        root.CFrame = surfaceTarget
-                                    end
-                                    root.Anchored = false
-                                    for _, part in ipairs(charBaseParts) do
-                                        part.AssemblyLinearVelocity = Vector3.zero
-                                        part.AssemblyAngularVelocity = Vector3.zero
-                                        if part.Name == "HumanoidRootPart" or part.Name == "UpperTorso" or part.Name == "Torso" then
-                                            part.CanCollide = true
-                                        end
-                                    end
-                                    isUnderground = false
-                                    lastSurfaceCFrame = nil
-                                    lastSurfacePos = nil
-                                    undergroundCFrame = nil
-                                    currentUndergroundRetreatOffset = nil
-                                else
-                                    -- Surface / Run Away cleanup
-                                    if humanoid then
-                                        humanoid.WalkSpeed = originalWalkSpeed or 16
-                                        if not farmOn then
-                                            humanoid:Move(Vector3.zero, false)
-                                        end
-                                    end
-
-                                    -- Return safely to preDodgeCFrame if farming Manatite or Mithril ONLY IF the crystal wasn't blacklisted from damage
-                                    if dodgeMethod == "Teleport Away (Surface)" and preDodgeCFrame then
-                                        local crystalStillValid = (manatite and manatite.auto and manatite.model and not manatite.blacklist[manatite.model])
-                                            or (mithril and mithril.auto and mithril.model and not mithril.blacklist[mithril.model])
-                                        if crystalStillValid then
-                                            char:PivotTo(preDodgeCFrame)
-                                            root.CFrame = preDodgeCFrame
-                                            for _, part in ipairs(charBaseParts) do
-                                                part.AssemblyLinearVelocity = Vector3.zero
-                                                part.AssemblyAngularVelocity = Vector3.zero
-                                            end
-                                            if ((manatite and manatite.auto and manatite.anchor) or (mithril and mithril.auto and mithril.anchor)) and not hasNearbyThreat then
-                                                pcall(function() root.Anchored = true end)
-                                            end
-                                        end
-                                    end
-                                end
-
-                                isDodging = false
-                                currentAttackingMob = nil
-                                preDodgePos = nil
-                                preDodgeCFrame = nil
-
-                                if farmOn then
-                                    currentTargetNode = nil
-                                end
-
-                                if notifyOnDodge then
-                                    Window:Notify({
-                                        Title = "Attack Cleared",
-                                        Content = "Safe from attack. Resumed normal activity.",
-                                        Duration = 1.2,
-                                    })
-                                end
-                            else
-                                -- Still lingering (mob strike animation playing): maintain evasion
-                                if dodgeMethod == "Run Away (Surface)" then
-                                    if humanoid then
-                                        if humanoid.WalkSpeed ~= dodgeWalkSpeed then
-                                            humanoid.WalkSpeed = dodgeWalkSpeed
-                                        end
-                                        local attackOrigin = (currentAttackingMob and getMobAttackOrigin(currentAttackingMob)) or (preDodgePos or rootPos)
-                                        local currentDist = get2DDistance(rootPos, attackOrigin)
-                                        if currentDist < dodgeRetreatDistance then
-                                            local awayDir = rootPos - attackOrigin
-                                            local away2D = Vector3.new(awayDir.X, 0, awayDir.Z)
-                                            away2D = (away2D.Magnitude > 0.1) and away2D.Unit or Vector3.new(0, 0, 1)
-                                            humanoid:Move(away2D, false)
-                                        else
-                                            humanoid:Move(Vector3.zero, false)
-                                        end
-                                    end
-                                elseif dodgeMethod == "Underground" and isUnderground and undergroundCFrame then
-                                    char:PivotTo(undergroundCFrame)
-                                    root.CFrame = undergroundCFrame
-                                    root.AssemblyLinearVelocity = Vector3.zero
-                                    root.AssemblyAngularVelocity = Vector3.zero
-                                end
-                            end
-                        end
-                    end
-                elseif isDodging or isUnderground then
-                    -- autoDodgeMobs was disabled while dodging
-                    if isUnderground then
-                        if lastSurfaceCFrame then
-                            local surfaceTarget = lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
-                            char:PivotTo(surfaceTarget)
-                            root.CFrame = surfaceTarget
-                        end
-                        root.Anchored = false
-                        for _, part in ipairs(charBaseParts) do
-                            part.AssemblyLinearVelocity = Vector3.zero
-                            part.AssemblyAngularVelocity = Vector3.zero
-                            if part.Name == "HumanoidRootPart" or part.Name == "UpperTorso" or part.Name == "Torso" then
-                                part.CanCollide = true
-                            end
-                        end
-                        isUnderground = false
-                        lastSurfaceCFrame = nil
-                        lastSurfacePos = nil
-                        undergroundCFrame = nil
-                    end
-                    if humanoid then
-                        humanoid.WalkSpeed = originalWalkSpeed or 16
-                        if not farmOn then
-                            humanoid:Move(Vector3.zero, false)
-                        end
-                    end
-                    if dodgeMethod == "Teleport Away (Surface)" and preDodgeCFrame then
-                        if ((manatite and manatite.auto) or (mithril and mithril.auto)) then
-                            char:PivotTo(preDodgeCFrame)
-                            root.CFrame = preDodgeCFrame
-                            for _, part in ipairs(charBaseParts) do
-                                part.AssemblyLinearVelocity = Vector3.zero
-                                part.AssemblyAngularVelocity = Vector3.zero
-                            end
-                            if ((manatite and manatite.auto and manatite.anchor) or (mithril and mithril.auto and mithril.anchor)) then
-                                pcall(function() root.Anchored = true end)
-                            end
-                        end
-                    end
-                    isDodging = false
-                    currentAttackingMob = nil
-                    preDodgePos = nil
-                    preDodgeCFrame = nil
+                if dodge.auto and not aerial.active then
+                    dodge.process(now, rootPos)
+                elseif dodge.isDodging or dodge.isUnderground then
+                    dodge.cleanup()
                 end
 
                 -- 1. Movement Logic
-                if farmOn and not (manatite and manatite.auto) and not (mithril and mithril.auto) and anchorPos and not isDodging and not isUnderground then
-                    patternTimer = patternTimer + (dt * patternSpeed)
-                    local targetPos
-
-                    if pattern == "Guided Zigzag (Nodes)" then
-                        local ghostX = math.sin(patternTimer * 1.3) * farmRadius
-                        local ghostZ = math.cos(patternTimer * 1.9) * farmRadius
-                        local ghostPos = anchorPos + Vector3.new(ghostX, 0, ghostZ)
-
-                        local needNewNode = false
-                        if not currentTargetNode or not currentTargetNode.Parent then
-                            needNewNode = true
-                        else
-                            local tPos = getNodePosition(currentTargetNode)
-                            if get2DDistanceSq(rootPos, tPos) < 16 then
-                                needNewNode = true
-                            end
-                        end
-
-                        if needNewNode then
-                            local nearestDistSq = math.huge
-                            local nearestNode = nil
-                            local grassNodes = getGrassNodes()
-
-                            for _, node in ipairs(grassNodes) do
-                                if node.Parent then
-                                    local nodePos = getNodePosition(node)
-                                    -- Distance check FIRST: only parse strings if inside farm radius
-                                    if get2DDistanceSq(anchorPos, nodePos) <= farmRadiusSq then
-                                        local cleanName = getCleanGrassName(node.Name)
-                                        if cleanName then
-                                            local distFromGhostSq = get2DDistanceSq(ghostPos, nodePos)
-                                            local blacklistedAt = nodeBlacklist[node]
-                                            if distFromGhostSq < nearestDistSq and (not blacklistedAt or now - blacklistedAt > 10) then
-                                                nearestDistSq = distFromGhostSq
-                                                nearestNode = node
-                                            end
-                                        end
-                                    end
-                                end
-                            end
-
-                            if nearestNode then
-                                currentTargetNode = nearestNode
-                                nodeBlacklist[nearestNode] = now
-                            else
-                                currentTargetNode = nil
-                                if not nextRandomPos or get2DDistanceSq(rootPos, nextRandomPos) < 25 then
-                                    local angle = math.random() * (math.pi * 2)
-                                    nextRandomPos = anchorPos + Vector3.new(math.cos(angle) * farmRadius, 0, math.sin(angle) * farmRadius)
-                                end
-                            end
-                        end
-
-                        if currentTargetNode and currentTargetNode.Parent then
-                            targetPos = getNodePosition(currentTargetNode)
-                        else
-                            targetPos = nextRandomPos
-                        end
-
-                    elseif pattern == "Circle" then
-                        local currentRadius = farmRadius * math.abs(math.sin(patternTimer * 0.2))
-                        local angle = patternTimer * 1.5
-                        targetPos = anchorPos + Vector3.new(math.cos(angle) * currentRadius, 0, math.sin(angle) * currentRadius)
-
-                    elseif pattern == "Square" then
-                        targetPos = anchorPos + Vector3.new(math.sin(patternTimer * 1.8) * farmRadius, 0, math.cos(patternTimer * 0.2) * farmRadius)
-
-                    elseif pattern == "Zigzag" then
-                        targetPos = anchorPos + Vector3.new(math.sin(patternTimer * 1.3) * farmRadius, 0, math.cos(patternTimer * 1.9) * farmRadius)
-
-                    elseif pattern == "Random" then
-                        if not nextRandomPos or get2DDistanceSq(rootPos, nextRandomPos) < 25 then
-                            local angle = math.random() * (math.pi * 2)
-                            nextRandomPos = anchorPos + Vector3.new(math.cos(angle) * farmRadius, 0, math.sin(angle) * farmRadius)
-                        end
-                        targetPos = nextRandomPos
-                    end
-
-                    if targetPos and (now - lastMoveTime > 0.05) then
-                        local offX = targetPos.X - anchorPos.X
-                        local offZ = targetPos.Z - anchorPos.Z
-                        local distSq = offX * offX + offZ * offZ
-                        if distSq > farmRadiusSq then
-                            local scale = farmRadius / math.sqrt(distSq)
-                            targetPos = Vector3.new(anchorPos.X + offX * scale, targetPos.Y, anchorPos.Z + offZ * scale)
-                        end
-
-                        humanoid:MoveTo(targetPos)
-                        lastMoveTime = now
-                    end
+                if farm.on and not (manatite and manatite.auto) and not (mithril and mithril.auto) and farm.anchorPos and not dodge.isDodging and not dodge.isUnderground then
+                    farm.processMovement(dt, now, rootPos)
                 end
 
                 local prioritizedMobThisFrame = false
 
-                -- 2. Priority Mob Aura Logic (unobstructed line of sight only)
-                if autoChompMobs then
-                    local auraOrigin = isUnderground and (lastSurfacePos or rootPos) or rootPos
-                    local losOrigin = (isUnderground and lastSurfacePos or rootPos) + Vector3.new(0, 0.5, 0)
-                    local closestMob = nil
-                    local closestDistSq = math.huge
-                    local closestMobPos = nil
-
-                    for _, mob in ipairs(activeAuraMobs) do
-                        if mob.Parent then
-                            local mobPos = getMobAttackOrigin(mob)
-                            if mobPos then
-                                local distSq = get3DDistanceSq(auraOrigin, mobPos)
-                                if distSq <= MOB_AURA_RADIUS_SQ and distSq < closestDistSq then
-                                    if isMobAlive(mob) and hasLineOfSight(losOrigin, mobPos, mob) then
-                                        closestDistSq = distSq
-                                        closestMob = mob
-                                        closestMobPos = mobPos
-                                    end
-                                end
-                            end
-                        end
-                    end
-
-                    if closestMob then
-                        local mob = closestMob
-                        local mobPos = closestMobPos
-                        local isCaveMob = isMithrilCaveMob(mob)
-
-                        if isCaveMob then
-                            if (now - mobChompCooldown > mobAuraDelay) or (lastChompedMob ~= mob) then
-                                if not isUnderground and not isDodging then
-                                    local lookDx = mobPos.X - rootPos.X
-                                    local lookDz = mobPos.Z - rootPos.Z
-                                    if (lookDx * lookDx + lookDz * lookDz) > 0.01 then
-                                        root.CFrame = CFrame.lookAt(rootPos, Vector3.new(mobPos.X, rootPos.Y, mobPos.Z))
-                                    end
-                                end
-
-                                local spiderId = findSpiderIdentifier(mob)
-                                if spiderId then
-                                    local payloadName = "Cavern_Mob_Spider_" .. tostring(spiderId)
-                                    chompEvent:FireServer(payloadName)
-                                else
-                                    local fallbackPayload = getMobPayload(mob.Name)
-                                    if fallbackPayload then
-                                        chompEvent:FireServer(fallbackPayload)
-                                    end
-                                    chompEvent:FireServer("Cavern_Mob_Spider")
-                                    chompEvent:FireServer(mob.Name)
-                                end
-
-                                if fireproximityprompt then
-                                    local prompt = mob:FindFirstChildWhichIsA("ProximityPrompt", true)
-                                    if prompt and prompt.Enabled then
-                                        pcall(function() fireproximityprompt(prompt) end)
-                                    end
-                                end
-
-                                pressE()
-
-                                lastChompedMob = mob
-                                mobChompCooldown = now
-                                prioritizedMobThisFrame = true
-                            else
-                                prioritizedMobThisFrame = true
-                            end
-                        else
-                            local payloadName = getMobPayload(mob.Name)
-
-                            if payloadName ~= lastChompedMob or (now - mobChompCooldown > mobAuraDelay) then
-                                if not isUnderground and not isDodging then
-                                    local lookDx = mobPos.X - rootPos.X
-                                    local lookDz = mobPos.Z - rootPos.Z
-                                    if (lookDx * lookDx + lookDz * lookDz) > 0.01 then
-                                        root.CFrame = CFrame.lookAt(rootPos, Vector3.new(mobPos.X, rootPos.Y, mobPos.Z))
-                                    end
-                                end
-                                chompEvent:FireServer(payloadName)
-                                lastChompedMob = payloadName
-                                mobChompCooldown = now
-                                prioritizedMobThisFrame = true
-                            else
-                                prioritizedMobThisFrame = true
-                            end
-                        end
-                    end
+                -- 2. Priority Mob Aura Logic
+                if farm.autoChompMobs then
+                    prioritizedMobThisFrame = farm.processMobAura(now, rootPos)
                 end
 
                 -- 3. Raycast Grass Chomp Logic (Yields to Mobs & Dodging)
-                if autoChomp and not (manatite and manatite.auto) and not (mithril and mithril.auto) and not prioritizedMobThisFrame and not isUnderground and not isDodging then
-                    if (now - lastRaycastChompTime > 0.04) then
-                        lastRaycastChompTime = now
-                        local hit = workspace:Raycast(rootPos, RAYCAST_DOWN, raycastParams)
-
-                        if hit and hit.Instance then
-                            local actualNode = hit.Instance
-
-                            if not string.find(actualNode.Name, "Grass", 1, true) and actualNode.Parent then
-                                if string.find(actualNode.Parent.Name, "Grass", 1, true) then
-                                    actualNode = actualNode.Parent
-                                end
-                            end
-
-                            local nodeName = actualNode.Name
-                            if string.find(nodeName, "Grass", 1, true) then
-                                local cleanName = getCleanGrassName(nodeName)
-                                if cleanName then
-                                    if cleanName ~= lastChompedNode or (now - chompCooldown > 1) then
-                                        chompEvent:FireServer(cleanName)
-                                        lastChompedNode = cleanName
-                                        chompCooldown = now
-
-                                        if currentTargetNode and currentTargetNode.Name == nodeName then
-                                            currentTargetNode = nil
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
+                if farm.autoChomp and not (manatite and manatite.auto) and not (mithril and mithril.auto) and not prioritizedMobThisFrame and not dodge.isUnderground and not dodge.isDodging then
+                    farm.processGrassChomp(now, rootPos)
                 end
 
                 -- 4. Auto-Fishing Logic
-                if autoFish and not (manatite and manatite.auto) and not (mithril and mithril.auto) then
-                    if not fishingEvent and cowRemotes then
-                        fishingEvent = cowRemotes:FindFirstChild("FishingRequest")
-                    end
-                    if fishingEvent and (now - castCooldown > 3) and (now - lastFishingSearchTime > 0.3) then
-                        lastFishingSearchTime = now
-                        local nearestSpot = nil
-                        local shortestDistSq = 2500 -- 50 studs squared
-                        local fishingSpots = getFishingSpots()
-
-                        for _, spot in ipairs(fishingSpots) do
-                            if spot.Parent then
-                                local spotPos = getSpotPosition(spot)
-                                if spotPos then
-                                    local distSq = get2DDistanceSq(rootPos, spotPos)
-
-                                    if distSq < shortestDistSq and isSpotAvailable(spot) then
-                                        shortestDistSq = distSq
-                                        nearestSpot = spot
-                                    end
-                                end
-                            end
-                        end
-
-                        if nearestSpot then
-                            fishingEvent:FireServer("Cast", nearestSpot)
-                            castCooldown = now
-                        end
-                    end
+                if farm.autoFish and not (manatite and manatite.auto) and not (mithril and mithril.auto) then
+                    farm.processFishing(now, rootPos)
                 end
 
-                -- Threat clearing detection: check if any alive hostile mobs are within server attack reach (10 studs) with unobstructed line of sight
-                local hasNearbyThreat = false
-                if autoChompMobs and ((manatite and manatite.auto) or (mithril and mithril.auto) or farmOn) then
-                    local threatOrigin = isUnderground and (lastSurfacePos or rootPos) or rootPos
-                    local losOrigin = threatOrigin + Vector3.new(0, 0.5, 0)
-                    for _, mob in ipairs(activeAuraMobs) do
-                        if mob.Parent and isMobAlive(mob) then
-                            local mobPos = getMobAttackOrigin(mob)
-                            if mobPos and get3DDistanceSq(threatOrigin, mobPos) <= MANATITE_THREAT_RADIUS_SQ then
-                                if hasLineOfSight(losOrigin, mobPos, mob) then
-                                    hasNearbyThreat = true
-                                    break
-                                end
-                            end
-                        end
-                    end
+                -- Threat clearing detection
+                local hasNearbyThreat = dodge.checkNearbyThreat(now, rootPos, prioritizedMobThisFrame)
+
+                -- 5. Manatite Farm Logic
+                if manatite and manatite.auto and not dodge.isUnderground and not dodge.isDodging and not aerial.active and not (dodge.prioritizeMobsOverManatite and hasNearbyThreat) then
+                    manatite.process(now, rootPos)
                 end
 
-                -- Mobs outside actual server attack reach (closestMob was nil in autoChompMobs) must NOT freeze the farm loop
-                if hasNearbyThreat and not prioritizedMobThisFrame then
-                    hasNearbyThreat = false
-                end
-
-                -- Deadlock breaker: if surrounding mobs cannot be killed or persist for > 1.5 seconds, relocate to next crystal
-                if hasNearbyThreat then
-                    if threatStartTime == 0 then
-                        threatStartTime = now
-                    elseif (now - threatStartTime > 1.5) then
-                        if manatite and manatite.auto and manatite.model then
-                            manatite.blacklist[manatite.model] = now
-                            manatite.model = nil
-                            manatite.target = nil
-                            manatite.payload = nil
-                        end
-                        if mithril and mithril.auto and mithril.model then
-                            mithril.blacklist[mithril.model] = now
-                            mithril.model = nil
-                            mithril.orePart = nil
-                            mithril.payload = nil
-                        end
-                        if root then
-                            pcall(function() root.Anchored = false end)
-                        end
-                        threatStartTime = 0
-                        hasNearbyThreat = false
-                    end
-                else
-                    threatStartTime = 0
-                end
-
-                if hasNearbyThreat and prioritizeMobsOverManatite and root.Anchored and not isUnderground then
-                    pcall(function() root.Anchored = false end)
-                end
-
-                -- 5. Manatite Farm Logic (Sea Maze Teleport & Autochomp)
-                if manatite and manatite.auto and not isUnderground and not isDodging and not isAerialRetreat and not (prioritizeMobsOverManatite and hasNearbyThreat) then
-                    manatite.cleanupBlacklist(now)
-
-                    local targetValid = manatite.model
-                        and manatite.target
-                        and manatite.model.Parent
-                        and manatite.target.Parent
-                        and manatite.isAvailable(manatite.target, manatite.model)
-                        and (now - manatite.startTime <= 15)
-
-                    if not targetValid then
-                        if manatite.model and (now - manatite.startTime > 15) then
-                            manatite.blacklist[manatite.model] = now
-                        end
-
-                        manatite.model = nil
-                        manatite.target = nil
-                        manatite.payload = nil
-
-                        if manatite.anchor and root then
-                            pcall(function() root.Anchored = false end)
-                        end
-
-                        if (now - manatite.lastSearchTime > 0.1) then
-                            manatite.lastSearchTime = now
-                            local nextModel, nextTarget = manatite.findNext(rootPos)
-                            if nextModel and nextTarget then
-                                manatite.model = nextModel
-                                manatite.target = nextTarget
-                                manatite.payload = manatite.getPayload(nextModel.Name)
-                                manatite.startTime = now
-                                manatite.teleport(nextTarget, nextModel)
-                                manatite.lastTeleportTime = now
-                                manatite.lastChompTime = 0
-                            end
-                        end
-                    else
-                        local targetPos = manatite.target.Position + Vector3.new(0, manatite.heightOffset, 0)
-
-                        if get3DDistanceSq(rootPos, targetPos) > 36 then
-                            if (now - manatite.lastTeleportTime > 0.4) then
-                                manatite.teleport(manatite.target, manatite.model)
-                                manatite.lastTeleportTime = now
-                            end
-                        else
-                            if manatite.anchor and not root.Anchored and not isDodging and not isUnderground and not hasNearbyThreat then
-                                pcall(function() root.Anchored = true end)
-                            end
-                        end
-
-                        if (now - manatite.lastChompTime >= manatite.delay) then
-                            manatite.lastChompTime = now
-                            chompEvent:FireServer(manatite.payload)
-                        end
-                    end
-                end
-
-                -- 6. Mithril Ore Farm Logic (Crystal Geode Ores Teleport & Autochomp)
-                if mithril and mithril.auto and not isUnderground and not isDodging and not isAerialRetreat and not (prioritizeMobsOverManatite and hasNearbyThreat) then
-                    mithril.cleanupBlacklist(now)
-
-                    local targetValid = mithril.model
-                        and mithril.orePart
-                        and mithril.model.Parent
-                        and mithril.orePart.Parent
-                        and mithril.isAvailable(mithril.orePart, mithril.model)
-                        and (now - mithril.startTime <= 15)
-
-                    if not targetValid then
-                        if mithril.model and (now - mithril.startTime > 15) then
-                            mithril.blacklist[mithril.model] = now
-                        end
-
-                        mithril.model = nil
-                        mithril.orePart = nil
-                        mithril.payload = nil
-
-                        if mithril.anchor and root then
-                            pcall(function() root.Anchored = false end)
-                        end
-
-                        if (now - mithril.lastSearchTime > 0.1) then
-                            mithril.lastSearchTime = now
-                            local nextModel, nextOre = mithril.findNext(rootPos)
-                            if nextModel and nextOre then
-                                mithril.model = nextModel
-                                mithril.orePart = nextOre
-                                mithril.payload = mithril.getPayload(nextModel.Name)
-                                mithril.startTime = now
-                                mithril.teleport(nextOre, nextModel)
-                                mithril.lastTeleportTime = now
-                                mithril.lastChompTime = 0
-                            end
-                        end
-                    else
-                        local targetPos = mithril.orePart.Position + Vector3.new(0, mithril.heightOffset, 0)
-
-                        if get3DDistanceSq(rootPos, targetPos) > 36 then
-                            if (now - mithril.lastTeleportTime > 0.4) then
-                                mithril.teleport(mithril.orePart, mithril.model)
-                                mithril.lastTeleportTime = now
-                            end
-                        else
-                            if mithril.anchor and not root.Anchored and not isDodging and not isUnderground and not hasNearbyThreat then
-                                pcall(function() root.Anchored = true end)
-                            end
-                        end
-
-                        if (now - mithril.lastChompTime >= mithril.delay) then
-                            mithril.lastChompTime = now
-                            chompEvent:FireServer(mithril.payload)
-                        end
-                    end
+                -- 6. Mithril Ore Farm Logic
+                if mithril and mithril.auto and not dodge.isUnderground and not dodge.isDodging and not aerial.active and not (dodge.prioritizeMobsOverManatite and hasNearbyThreat) then
+                    mithril.process(now, rootPos)
                 end
             end)
         end
@@ -3342,8 +3350,8 @@ local function updateHeartbeatConnection()
             HeartbeatConnection:Disconnect()
             HeartbeatConnection = nil
         end
-        if isUnderground and root and lastSurfaceCFrame then
-            root.CFrame = lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
+        if dodge.isUnderground and root and dodge.lastSurfaceCFrame then
+            root.CFrame = dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
             root.Anchored = false
             for _, part in ipairs(charBaseParts) do
                 part.AssemblyLinearVelocity = Vector3.zero
@@ -3352,17 +3360,17 @@ local function updateHeartbeatConnection()
                     part.CanCollide = true
                 end
             end
-            isUnderground = false
-            lastSurfaceCFrame = nil
-            lastSurfacePos = nil
-            undergroundCFrame = nil
+            dodge.isUnderground = false
+            dodge.lastSurfaceCFrame = nil
+            dodge.lastSurfacePos = nil
+            dodge.undergroundCFrame = nil
         end
-        if isDodging then
-            if humanoid then humanoid.WalkSpeed = originalWalkSpeed or 16 end
-            isDodging = false
-            currentAttackingMob = nil
-            preDodgePos = nil
-            preDodgeCFrame = nil
+        if dodge.isDodging then
+            if humanoid then humanoid.WalkSpeed = dodge.originalWalkSpeed or 16 end
+            dodge.isDodging = false
+            dodge.currentAttackingMob = nil
+            dodge.preDodgePos = nil
+            dodge.preDodgeCFrame = nil
         end
         if manatite and not manatite.auto and manatite.anchor and root then
             pcall(function() root.Anchored = false end)
@@ -3370,7 +3378,7 @@ local function updateHeartbeatConnection()
         if mithril and not mithril.auto and mithril.anchor and root then
             pcall(function() root.Anchored = false end)
         end
-        if not farmOn and humanoid then humanoid:Move(Vector3.zero, false) end
+        if not farm.on and humanoid then humanoid:Move(Vector3.zero, false) end
     end
 end
 
@@ -3386,13 +3394,13 @@ MainTab:CreateToggle({
     CurrentValue = false,
     Flag = "Toggle_Farm",
     Callback = function(Value)
-        farmOn = Value
-        patternTimer = 0
-        nextRandomPos = nil
-        currentTargetNode = nil
+        farm.on = Value
+        farm.patternTimer = 0
+        farm.nextRandomPos = nil
+        farm.currentTargetNode = nil
 
         if Value then
-            anchorPos = root.Position
+            farm.anchorPos = root.Position
 
             Window:Notify({
                 Title = "Autofarm Enabled",
@@ -3412,7 +3420,7 @@ MainTab:CreateToggle({
     CurrentValue = false,
     Flag = "Toggle_Chomp",
     Callback = function(Value)
-        autoChomp = Value
+        farm.autoChomp = Value
         updateHeartbeatConnection()
     end,
 })
@@ -3423,7 +3431,7 @@ MainTab:CreateToggle({
     CurrentValue = false,
     Flag = "Toggle_MobAura",
     Callback = function(Value)
-        autoChompMobs = Value
+        farm.autoChompMobs = Value
         updateHeartbeatConnection()
     end,
 })
@@ -3433,11 +3441,11 @@ MainTab:CreateToggle({
     CurrentValue = false,
     Flag = "Toggle_Fish",
     Callback = function(Value)
-        autoFish = Value
+        farm.autoFish = Value
         if Value then
-            initRippleTracking()
+            cache.initRippleTracking()
         else
-            cleanupRippleTracking()
+            cache.cleanupRippleTracking()
         end
         updateHeartbeatConnection()
     end,
@@ -3448,10 +3456,10 @@ MainTab:CreateToggle({
     CurrentValue = false,
     Flag = "Toggle_AutoDodge",
     Callback = function(Value)
-        autoDodgeMobs = Value
+        dodge.auto = Value
         if not Value then
-            if isUnderground and root and lastSurfaceCFrame then
-                root.CFrame = lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
+            if dodge.isUnderground and root and dodge.lastSurfaceCFrame then
+                root.CFrame = dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
                 root.Anchored = false
                 root.AssemblyLinearVelocity = Vector3.zero
                 root.AssemblyAngularVelocity = Vector3.zero
@@ -3460,18 +3468,18 @@ MainTab:CreateToggle({
                         part.CanCollide = true
                     end
                 end
-                isUnderground = false
-                lastSurfaceCFrame = nil
-                lastSurfacePos = nil
-                undergroundCFrame = nil
+                dodge.isUnderground = false
+                dodge.lastSurfaceCFrame = nil
+                dodge.lastSurfacePos = nil
+                dodge.undergroundCFrame = nil
             end
-            if isDodging then
-                if humanoid then humanoid.WalkSpeed = originalWalkSpeed or 16 end
-                isDodging = false
-                currentAttackingMob = nil
-                preDodgePos = nil
-                preDodgeCFrame = nil
-                if not farmOn and humanoid then humanoid:Move(Vector3.zero, false) end
+            if dodge.isDodging then
+                if humanoid then humanoid.WalkSpeed = dodge.originalWalkSpeed or 16 end
+                dodge.isDodging = false
+                dodge.currentAttackingMob = nil
+                dodge.preDodgePos = nil
+                dodge.preDodgeCFrame = nil
+                if not farm.on and humanoid then humanoid:Move(Vector3.zero, false) end
             end
         end
         updateHeartbeatConnection()
@@ -3489,9 +3497,9 @@ MainTab:CreateDropdown({
     Flag = "Dropdown_MobSpeed",
     Callback = function(Option)
         local selection = type(Option) == "table" and Option[1] or Option
-        if selection == "Slow (1.0s)" then mobAuraDelay = 1.0
-        elseif selection == "Normal (0.5s)" then mobAuraDelay = 0.5
-        elseif selection == "Fast (0.1s)" then mobAuraDelay = 0.1
+        if selection == "Slow (1.0s)" then farm.mobAuraDelay = 1.0
+        elseif selection == "Normal (0.5s)" then farm.mobAuraDelay = 0.5
+        elseif selection == "Fast (0.1s)" then farm.mobAuraDelay = 0.1
         end
     end,
 })
@@ -3502,7 +3510,7 @@ MainTab:CreateDropdown({
     CurrentOption = {"Guided Zigzag (Nodes)"},
     MultipleOptions = false,
     Flag = "Dropdown_Pattern",
-    Callback = function(Option) pattern = type(Option) == "table" and Option[1] or Option end,
+    Callback = function(Option) farm.pattern = type(Option) == "table" and Option[1] or Option end,
 })
 
 MainTab:CreateSlider({
@@ -3513,8 +3521,8 @@ MainTab:CreateSlider({
     CurrentValue = 75,
     Flag = "Slider_Radius",
     Callback = function(Value)
-        farmRadius = Value
-        farmRadiusSq = farmRadius * farmRadius
+        farm.radius = Value
+        farm.radiusSq = farm.radius * farm.radius
         updatePenVisualizer()
     end,
 })
@@ -3527,10 +3535,10 @@ MainTab:CreateDropdown({
     Flag = "Dropdown_Speed",
     Callback = function(Option)
         local selection = type(Option) == "table" and Option[1] or Option
-        if selection == "Very Slow (0.4x)" then patternSpeed = 0.4
-        elseif selection == "Slow (0.6x)" then patternSpeed = 0.6
-        elseif selection == "Normal (1.0x)" then patternSpeed = 1.0
-        elseif selection == "Fast (1.6x)" then patternSpeed = 1.6
+        if selection == "Very Slow (0.4x)" then farm.patternSpeed = 0.4
+        elseif selection == "Slow (0.6x)" then farm.patternSpeed = 0.6
+        elseif selection == "Normal (1.0x)" then farm.patternSpeed = 1.0
+        elseif selection == "Fast (1.6x)" then farm.patternSpeed = 1.6
         end
     end,
 })
@@ -3544,11 +3552,11 @@ MainTab:CreateDropdown({
     MultipleOptions = false,
     Flag = "Dropdown_DodgeMethod",
     Callback = function(Option)
-        dodgeMethod = type(Option) == "table" and Option[1] or Option
-        if dodgeMethod ~= "Underground" and isUnderground and root and lastSurfaceCFrame then
-            root.CFrame = lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
+        dodge.method = type(Option) == "table" and Option[1] or Option
+        if dodge.method ~= "Underground" and dodge.isUnderground and root and dodge.lastSurfaceCFrame then
+            root.CFrame = dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
             root.Anchored = false
-            isUnderground = false
+            dodge.isUnderground = false
         end
     end,
 })
@@ -3561,7 +3569,7 @@ MainTab:CreateSlider({
     CurrentValue = 25,
     Flag = "Slider_DodgeRetreat",
     Callback = function(Value)
-        dodgeRetreatDistance = Value
+        dodge.retreatDistance = Value
     end,
 })
 
@@ -3573,7 +3581,7 @@ MainTab:CreateSlider({
     CurrentValue = 45,
     Flag = "Slider_DodgeAngle",
     Callback = function(Value)
-        dodgeRetreatAngle = Value
+        dodge.retreatAngle = Value
     end,
 })
 
@@ -3585,7 +3593,7 @@ MainTab:CreateSlider({
     CurrentValue = 26,
     Flag = "Slider_DodgeSpeed",
     Callback = function(Value)
-        dodgeWalkSpeed = Value
+        dodge.walkSpeed = Value
     end,
 })
 
@@ -3597,7 +3605,7 @@ MainTab:CreateSlider({
     CurrentValue = 20,
     Flag = "Slider_DodgeDepth",
     Callback = function(Value)
-        undergroundDepth = Value
+        dodge.undergroundDepth = Value
     end,
 })
 
@@ -3609,8 +3617,8 @@ MainTab:CreateSlider({
     CurrentValue = 15,
     Flag = "Slider_DodgeRange",
     Callback = function(Value)
-        dodgeDetectionRadius = Value
-        dodgeDetectionRadiusSq = Value * Value
+        dodge.detectionRadius = Value
+        dodge.detectionRadiusSq = Value * Value
     end,
 })
 
@@ -3622,7 +3630,7 @@ MainTab:CreateSlider({
     CurrentValue = 0.6,
     Flag = "Slider_DodgeLinger",
     Callback = function(Value)
-        dodgeLingerDelay = Value
+        dodge.lingerDelay = Value
     end,
 })
 
@@ -3631,7 +3639,7 @@ MainTab:CreateToggle({
     CurrentValue = false,
     Flag = "Toggle_DodgeNotify",
     Callback = function(Value)
-        notifyOnDodge = Value
+        dodge.notifyOnDodge = Value
     end,
 })
 
@@ -3640,7 +3648,7 @@ MainTab:CreateToggle({
     CurrentValue = true,
     Flag = "Toggle_DodgeHearts",
     Callback = function(Value)
-        dodgeOnHeartsDecreased = Value
+        dodge.dodgeOnHeartsDecreased = Value
     end,
 })
 
@@ -3788,7 +3796,7 @@ MiningTab:CreateToggle({
     Flag = "Toggle_ManatiteAnchor",
     Callback = function(Value)
         manatite.anchor = Value
-        if not Value and root and not isUnderground then
+        if not Value and root and not dodge.isUnderground then
             pcall(function() root.Anchored = false end)
         end
     end,
@@ -3808,7 +3816,7 @@ MiningTab:CreateToggle({
     CurrentValue = true,
     Flag = "Toggle_PrioritizeMobsManatite",
     Callback = function(Value)
-        prioritizeMobsOverManatite = Value
+        dodge.prioritizeMobsOverManatite = Value
     end,
 })
 
@@ -3911,7 +3919,7 @@ MiningTab:CreateToggle({
     Flag = "Toggle_MithrilAnchor",
     Callback = function(Value)
         mithril.anchor = Value
-        if not Value and root and not isUnderground then
+        if not Value and root and not dodge.isUnderground then
             pcall(function() root.Anchored = false end)
         end
     end,
@@ -3953,35 +3961,150 @@ ScannerTab:CreateToggle({
     CurrentValue = true,
     Flag = "ScannerToggle",
     Callback = function(Value)
-        scannerRunning = Value
+        auction.scannerRunning = Value
 
-        if scannerRunning then
+        if auction.scannerRunning then
             if not httpRequest then
                 Window:Notify({ Title = "Unsupported", Content = "Your executor does not support HTTP requests.", Duration = 4 })
-                scannerRunning = false
+                auction.scannerRunning = false
                 return
             elseif WEBHOOK_URL == "" then
                 Window:Notify({ Title = "No Webhook", Content = "Please enter a valid Discord Webhook URL first.", Duration = 4 })
-                scannerRunning = false
+                auction.scannerRunning = false
                 return
             end
 
-            for _, lotName in ipairs(lotNames) do
+            for _, lotName in ipairs(auction.lotNames) do
                 local lot = skinAuction:FindFirstChild(lotName)
                 if lot then
                     local conn = lot:GetAttributeChangedSignal("SkinId"):Connect(function()
                         task.wait(1)
-                        if scannerRunning then debouncedCheckAuctionLots() end
+                        if auction.scannerRunning then auction.debouncedCheckLots() end
                     end)
-                    table.insert(auctionConnections, conn)
+                    table.insert(auction.connections, conn)
                 end
             end
 
-            debouncedCheckAuctionLots()
+            auction.debouncedCheckLots()
         else
-            for _, conn in ipairs(auctionConnections) do conn:Disconnect() end
-            table.clear(auctionConnections)
+            for _, conn in ipairs(auction.connections) do conn:Disconnect() end
+            table.clear(auction.connections)
         end
+    end,
+})
+
+-- ==========================
+-- LIVE AUCTION HOUSE DISPLAY
+-- ==========================
+ScannerTab:CreateSection({ Name = "Live Auction House Display" })
+
+function auction.auction.getLocalDisplayName()
+    return tostring(plr:GetAttribute("DisplayName") or plr.DisplayName or plr.Name)
+end
+
+function auction.auction.formatRemainingTime(endsAt)
+    if not endsAt or type(endsAt) ~= "number" then return "N/A" end
+    local remaining = math.max(0, endsAt - os.time())
+    if remaining <= 0 then
+        return "Ended / Rotating"
+    end
+    local minutes = math.floor(remaining / 60)
+    local seconds = remaining % 60
+    return string.format("%dm %02ds", minutes, seconds)
+end
+
+
+function auction.auction.getLotDisplayInfo(lotName)
+    local lot = skinAuction:FindFirstChild(lotName)
+    if not lot then
+        return lotName .. ": [Not Found]", "Lot folder does not exist in ReplicatedStorage."
+    end
+
+    local skinName = lot:GetAttribute("SkinName")
+    local skinId = lot:GetAttribute("SkinId")
+    if not skinId or skinId == "" or skinId == "None" then
+        return lotName .. ": [Empty / Inactive]", "No skin currently on auction in this lot."
+    end
+
+    local rarity = lot:GetAttribute("Rarity") or "Common"
+    local bid = lot:GetAttribute("Bid")
+    local minBid = lot:GetAttribute("MinimumBid")
+    local round = lot:GetAttribute("Round") or "N/A"
+    local endsAt = lot:GetAttribute("EndsAt")
+    local leaderName = lot:GetAttribute("LeaderName")
+
+    local myDisplayName = auction.getLocalDisplayName()
+    local myUsername = plr.Name
+
+    local leaderStatus
+    if not leaderName or leaderName == "" or leaderName == "None" then
+        leaderStatus = "None (No bids yet)"
+    elseif leaderName == myDisplayName or leaderName == myUsername or leaderName == plr.DisplayName then
+        leaderStatus = "⭐ YOU (" .. tostring(leaderName) .. ") - Leading"
+    else
+        leaderStatus = "👤 " .. tostring(leaderName) .. " (Outbid)"
+    end
+
+    local title = string.format("%s: %s [%s]", lotName, tostring(skinName or skinId), tostring(rarity))
+    local body = string.format("Current Bid: 🪙 %s | Next Min: 🪙 %s\nLeader: %s\nRound: %s | Ends In: %s",
+        formatNumber(bid),
+        formatNumber(minBid),
+        leaderStatus,
+        tostring(round),
+        auction.formatRemainingTime(endsAt)
+    )
+
+    return title, body
+end
+
+function auction.auction.updateLotDisplay(lotName)
+    local card = auction.cards[lotName]
+    if not card then return end
+    local title, body = auction.getLotDisplayInfo(lotName)
+    pcall(function()
+        if card.SetTitle then
+            card:SetTitle(title)
+            card:Set(body)
+        elseif card.Set then
+            card:Set({ Title = title, Content = body })
+        end
+    end)
+end
+
+function auction.auction.updateAllLotDisplays()
+    for _, lotName in ipairs(auction.lotNames) do
+        auction.updateLotDisplay(lotName)
+    end
+end
+
+-- Create live cards for each lot in Rayfield Gen2
+for _, lotName in ipairs(auction.lotNames) do
+    local initialTitle, initialBody = auction.getLotDisplayInfo(lotName)
+    local card = nil
+    if ScannerTab.CreateText then
+        pcall(function()
+            card = ScannerTab:CreateText({
+                name = initialTitle,
+                text = initialBody
+            })
+        end)
+    end
+    if not card and ScannerTab.CreateParagraph then
+        pcall(function()
+            card = ScannerTab:CreateParagraph({
+                Title = initialTitle,
+                Content = initialBody
+            })
+        end)
+    end
+    auction.cards[lotName] = card
+end
+
+ScannerTab:CreateButton({
+    Name = "Refresh Auction Display",
+    Callback = function()
+        auction.updateAllLotDisplays()
+        Window:Notify({ Title = "Refreshed", Content = "Auction lot displays updated.", Duration = 2 })
     end,
 })
 
@@ -3992,7 +4115,7 @@ ScannerTab:CreateButton({
     Name = "Show Current Auction Skins",
     Callback = function()
         local lines = {}
-        for _, lotName in ipairs(lotNames) do
+        for _, lotName in ipairs(auction.lotNames) do
             local lot = skinAuction:FindFirstChild(lotName)
             if lot then
                 local skinName = lot:GetAttribute("SkinName")
@@ -4001,10 +4124,11 @@ ScannerTab:CreateButton({
                     local rarity = lot:GetAttribute("Rarity") or "?"
                     local bid = lot:GetAttribute("Bid")
                     local minBid = lot:GetAttribute("MinimumBid")
+                    local leader = lot:GetAttribute("LeaderName") or "None"
                     table.insert(lines,
                         lotName .. ": " .. tostring(skinName)
                         .. " [" .. tostring(rarity) .. "]"
-                        .. " | Bid: " .. formatNumber(bid)
+                        .. " | Leader: " .. tostring(leader)
                         .. " | Min: " .. formatNumber(minBid)
                     )
                 else
@@ -4022,114 +4146,317 @@ ScannerTab:CreateButton({
     end,
 })
 
--- Auto Bid buttons for each lot
-local skinAuctionRemote = cowRemotes:FindFirstChild("SkinAuctionRequest")
+-- Single Open Auction House Proximity Prompt Button
+ScannerTab:CreateButton({
+    Name = "Open Auction House",
+    Callback = function()
+        local prompt = nil
+        pcall(function()
+            prompt = workspace.CowWorld.Decorations.SkinAuctionHall.Lot1.Pedestal.CowAuctionBid
+        end)
 
-for i, lotName in ipairs(lotNames) do
-    ScannerTab:CreateButton({
-        Name = "Auto Bid " .. lotName,
-        Callback = function()
-            if not skinAuctionRemote then
-                Window:Notify({ Title = "Error", Content = "SkinAuctionRequest remote not found.", Duration = 4 })
-                return
-            end
-
-            local lot = skinAuction:FindFirstChild(lotName)
-            if not lot then
-                Window:Notify({ Title = "Error", Content = lotName .. " not found in SkinAuction.", Duration = 4 })
-                return
-            end
-
-            local round = lot:GetAttribute("Round")
-            local slot = lot:GetAttribute("Slot")
-            local minBid = lot:GetAttribute("MinimumBid")
-
-            if not round or not slot or not minBid then
-                Window:Notify({
-                    Title = "Error",
-                    Content = lotName .. " missing attributes (Round/Slot/MinimumBid).",
-                    Duration = 4
-                })
-                return
-            end
-
-            local success, result = pcall(function()
-                return skinAuctionRemote:InvokeServer({
-                    Slot = slot,
-                    Round = round,
-                    Action = "Bid",
-                    Amount = minBid
-                })
+        if not prompt then
+            pcall(function()
+                local pedestal = workspace:FindFirstChild("CowWorld")
+                    and workspace.CowWorld:FindFirstChild("Decorations")
+                    and workspace.CowWorld.Decorations:FindFirstChild("SkinAuctionHall")
+                    and workspace.CowWorld.Decorations.SkinAuctionHall:FindFirstChild("Lot1")
+                    and workspace.CowWorld.Decorations.SkinAuctionHall.Lot1:FindFirstChild("Pedestal")
+                if pedestal then
+                    prompt = pedestal:FindFirstChild("CowAuctionBid")
+                        or pedestal:FindFirstChildWhichIsA("ProximityPrompt", true)
+                end
             end)
+        end
 
-            if success then
-                Window:Notify({
-                    Title = "Bid Placed",
-                    Content = lotName .. " | Amount: " .. formatNumber(minBid) .. "\nRound: " .. tostring(round),
-                    Duration = 5
-                })
-            else
-                Window:Notify({
-                    Title = "Bid Failed",
-                    Content = lotName .. ": " .. tostring(result),
-                    Duration = 5
-                })
+        if not prompt then
+            pcall(function()
+                local hall = workspace:FindFirstChild("CowWorld")
+                    and workspace.CowWorld:FindFirstChild("Decorations")
+                    and workspace.CowWorld.Decorations:FindFirstChild("SkinAuctionHall")
+                if hall then
+                    prompt = hall:FindFirstChild("CowAuctionBid", true)
+                        or hall:FindFirstChildWhichIsA("ProximityPrompt", true)
+                end
+            end)
+        end
+
+        if not prompt then
+            Window:Notify({ Title = "Error", Content = "Auction House proximity prompt (CowAuctionBid) not found.", Duration = 4 })
+            return
+        end
+
+        local fired = false
+        if fireproximityprompt then
+            pcall(function()
+                fireproximityprompt(prompt)
+                fired = true
+            end)
+        end
+
+        if not fired then
+            pcall(function()
+                prompt:InputHoldBegin()
+                task.wait(prompt.HoldDuration + 0.05)
+                prompt:InputHoldEnd()
+                fired = true
+            end)
+        end
+
+        if fired then
+            Window:Notify({ Title = "Prompt Fired", Content = "Auction House prompt opened.", Duration = 3 })
+        else
+            Window:Notify({ Title = "Error", Content = "Failed to fire auction prompt.", Duration = 4 })
+        end
+    end,
+})
+
+-- Manual Bid Buttons
+
+function auction.auction.executeBid(lotName, isManual)
+    if not auction.remote then
+        auction.remote = cowRemotes:FindFirstChild("SkinAuctionRequest")
+        if not auction.remote then
+            if isManual then
+                Window:Notify({ Title = "Error", Content = "SkinAuctionRequest remote not found.", Duration = 4 })
             end
-        end,
-    })
+            return false
+        end
+    end
+
+    local lot = skinAuction:FindFirstChild(lotName)
+    if not lot then
+        if isManual then
+            Window:Notify({ Title = "Error", Content = lotName .. " not found in SkinAuction.", Duration = 4 })
+        end
+        return false
+    end
+
+    local skinId = lot:GetAttribute("SkinId")
+    if not skinId or skinId == "" or skinId == "None" then
+        if isManual then
+            Window:Notify({ Title = "Error", Content = lotName .. " has no active skin.", Duration = 4 })
+        end
+        return false
+    end
+
+    local round = lot:GetAttribute("Round")
+    local slot = lot:GetAttribute("Slot") or tonumber(lotName:match("%d+")) or 1
+    local minBid = lot:GetAttribute("MinimumBid")
+
+    if not round or not minBid or type(minBid) ~= "number" or minBid <= 0 then
+        if isManual then
+            Window:Notify({ Title = "Error", Content = lotName .. " missing valid Round/MinimumBid.", Duration = 4 })
+        end
+        return false
+    end
+
+    local success, result = pcall(function()
+        return auction.remote:InvokeServer({
+            Slot = slot,
+            Round = round,
+            Action = "Bid",
+            Amount = minBid
+        })
+    end)
+
+    if success then
+        local skinName = lot:GetAttribute("SkinName") or skinId
+        Window:Notify({
+            Title = isManual and "Manual Bid Placed" or "Auto Bid Placed!",
+            Content = lotName .. " (" .. tostring(skinName) .. ") | Amount: " .. formatNumber(minBid),
+            Duration = 4
+        })
+        task.spawn(function()
+            task.wait(0.5)
+            auction.updateLotDisplay(lotName)
+        end)
+        return true
+    else
+        if isManual then
+            Window:Notify({
+                Title = "Bid Failed",
+                Content = lotName .. ": " .. tostring(result),
+                Duration = 4
+            })
+        end
+        return false
+    end
 end
 
-ScannerTab:CreateSection({ Name = "Proximity Prompts" })
+ScannerTab:CreateSection({ Name = "Manual Bidding" })
 
-for i, lotName in ipairs(lotNames) do
+for _, lotName in ipairs(auction.lotNames) do
     ScannerTab:CreateButton({
-        Name = "Fire Bid Prompt " .. lotName,
+        Name = "Bid " .. lotName,
         Callback = function()
-            local pedestalPath = workspace:FindFirstChild("CowWorld")
-                and workspace.CowWorld:FindFirstChild("Decorations")
-                and workspace.CowWorld.Decorations:FindFirstChild("SkinAuctionHall")
-                and workspace.CowWorld.Decorations.SkinAuctionHall:FindFirstChild(lotName)
-                and workspace.CowWorld.Decorations.SkinAuctionHall[lotName]:FindFirstChild("Pedestal")
+            auction.executeBid(lotName, true)
+        end,
+    })
+end
 
-            if not pedestalPath then
-                Window:Notify({ Title = "Error", Content = "Could not find " .. lotName .. " pedestal.", Duration = 4 })
-                return
+-- ==========================
+-- AUTO OUTBID SYSTEM
+-- ==========================
+
+function auction.auction.checkAndAutoBidLot(lotName)
+    if not (auction.autoBidAll or auction.autoBidActive[lotName]) then return end
+    if not auction.remote then
+        auction.remote = cowRemotes:FindFirstChild("SkinAuctionRequest")
+        if not auction.remote then return end
+    end
+
+    local lot = skinAuction:FindFirstChild(lotName)
+    if not lot then return end
+
+    local skinId = lot:GetAttribute("SkinId")
+    if not skinId or skinId == "" or skinId == "None" then return end
+
+    local round = lot:GetAttribute("Round")
+    local slot = lot:GetAttribute("Slot") or tonumber(lotName:match("%d+")) or 1
+    local minBid = lot:GetAttribute("MinimumBid")
+    if not round or not minBid or type(minBid) ~= "number" or minBid <= 0 then return end
+
+    if auction.maxAutoBidLimit > 0 and minBid > auction.maxAutoBidLimit then
+        return
+    end
+
+    local leaderName = lot:GetAttribute("LeaderName")
+    local myDisplayName = auction.getLocalDisplayName()
+    local myUsername = plr.Name
+
+    -- Check if we are already leading
+    if leaderName and (leaderName == myDisplayName or leaderName == myUsername or leaderName == plr.DisplayName) then
+        return
+    end
+
+    -- Throttle to avoid duplicate rapid requests
+    local now = os.clock()
+    if auction.isAutoBiddingLot[lotName] then return end
+    if auction.lastAutoBidTime[lotName] and (now - auction.lastAutoBidTime[lotName] < 1.5) then return end
+
+    auction.isAutoBiddingLot[lotName] = true
+    auction.lastAutoBidTime[lotName] = now
+
+    task.spawn(function()
+        local success, result = pcall(function()
+            return auction.remote:InvokeServer({
+                Slot = slot,
+                Round = round,
+                Action = "Bid",
+                Amount = minBid
+            })
+        end)
+
+        auction.isAutoBiddingLot[lotName] = false
+
+        if success then
+            local skinName = lot:GetAttribute("SkinName") or skinId
+            Window:Notify({
+                Title = "Auto Outbid Placed!",
+                Content = lotName .. " (" .. tostring(skinName) .. ")\nAmount: " .. formatNumber(minBid) .. "\nOutbidding: " .. tostring(leaderName or "None"),
+                Duration = 4
+            })
+            task.spawn(function()
+                task.wait(0.5)
+                auction.updateLotDisplay(lotName)
+            end)
+        end
+    end)
+end
+
+-- Hook attribute changes for instant reaction & live display updates
+for _, lotName in ipairs(auction.lotNames) do
+    local lot = skinAuction:FindFirstChild(lotName)
+    if lot then
+        local function onLotAttributeChanged()
+            auction.updateLotDisplay(lotName)
+            if auction.autoBidAll or auction.autoBidActive[lotName] then
+                auction.checkAndAutoBidLot(lotName)
             end
+        end
 
-            local prompt = pedestalPath:FindFirstChild("CowAuctionBid")
-                or pedestalPath:FindFirstChildWhichIsA("ProximityPrompt", true)
+        local c1 = lot:GetAttributeChangedSignal("LeaderName"):Connect(onLotAttributeChanged)
+        local c2 = lot:GetAttributeChangedSignal("MinimumBid"):Connect(onLotAttributeChanged)
+        local c3 = lot:GetAttributeChangedSignal("Bid"):Connect(function() auction.updateLotDisplay(lotName) end)
+        local c4 = lot:GetAttributeChangedSignal("Round"):Connect(onLotAttributeChanged)
+        local c5 = lot:GetAttributeChangedSignal("SkinId"):Connect(onLotAttributeChanged)
+        local c6 = lot:GetAttributeChangedSignal("SkinName"):Connect(function() auction.updateLotDisplay(lotName) end)
+        local c7 = lot:GetAttributeChangedSignal("EndsAt"):Connect(function() auction.updateLotDisplay(lotName) end)
 
-            if not prompt then
-                Window:Notify({ Title = "Error", Content = "No proximity prompt found on " .. lotName .. " pedestal.", Duration = 4 })
-                return
+        table.insert(auction.autoBidConnections, c1)
+        table.insert(auction.autoBidConnections, c2)
+        table.insert(auction.autoBidConnections, c3)
+        table.insert(auction.autoBidConnections, c4)
+        table.insert(auction.autoBidConnections, c5)
+        table.insert(auction.autoBidConnections, c6)
+        table.insert(auction.autoBidConnections, c7)
+    end
+end
+
+-- 1-second live countdown ticker and periodic outbid check
+task.spawn(function()
+    while auction.autoBidLoopRunning do
+        task.wait(1)
+        auction.updateAllLotDisplays()
+        if auction.autoBidAll or auction.autoBidActive.Lot1 or auction.autoBidActive.Lot2 or auction.autoBidActive.Lot3 or auction.autoBidActive.Lot4 then
+            for _, lotName in ipairs(auction.lotNames) do
+                if auction.autoBidAll or auction.autoBidActive[lotName] then
+                    auction.checkAndAutoBidLot(lotName)
+                end
             end
+        end
+    end
+end)
 
-            local fired = false
-            if fireproximityprompt then
-                pcall(function()
-                    fireproximityprompt(prompt)
-                    fired = true
-                end)
+ScannerTab:CreateSection({ Name = "Auto Outbid (When Not Leading)" })
+
+ScannerTab:CreateToggle({
+    Name = "Auto Outbid All Lots",
+    CurrentValue = false,
+    Flag = "Toggle_AutoBidAll",
+    Callback = function(Value)
+        auction.autoBidAll = Value
+        if Value then
+            for _, lotName in ipairs(auction.lotNames) do
+                task.spawn(function() auction.checkAndAutoBidLot(lotName) end)
             end
+        end
+    end,
+})
 
-            if not fired then
-                -- Fallback: trigger via the ProximityPrompt's Triggered signal
-                pcall(function()
-                    prompt:InputHoldBegin()
-                    task.wait(prompt.HoldDuration + 0.05)
-                    prompt:InputHoldEnd()
-                    fired = true
-                end)
-            end
-
-            if fired then
-                Window:Notify({ Title = "Prompt Fired", Content = lotName .. " bid prompt activated.", Duration = 3 })
-            else
-                Window:Notify({ Title = "Error", Content = "Failed to fire " .. lotName .. " prompt.", Duration = 4 })
+for _, lotName in ipairs(auction.lotNames) do
+    ScannerTab:CreateToggle({
+        Name = "Auto Outbid " .. lotName,
+        CurrentValue = false,
+        Flag = "Toggle_AutoBid_" .. lotName,
+        Callback = function(Value)
+            auction.autoBidActive[lotName] = Value
+            if Value then
+                task.spawn(function() auction.checkAndAutoBidLot(lotName) end)
             end
         end,
     })
 end
+
+ScannerTab:CreateInput({
+    Name = "Max Auto Bid Limit (0 = Unlimited)",
+    Placeholder = "Enter max coins (e.g. 5000000)",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(Text)
+        local num = tonumber(Text:gsub(",", ""):gsub("%$", ""))
+        if num and num >= 0 then
+            auction.maxAutoBidLimit = num
+            Window:Notify({
+                Title = "Limit Updated",
+                Content = num == 0 and "Max bid limit set to Unlimited." or ("Max bid limit set to: " .. formatNumber(num)),
+                Duration = 3
+            })
+        else
+            Window:Notify({ Title = "Invalid Number", Content = "Please enter a valid number.", Duration = 3 })
+        end
+    end,
+})
 
 -- ==========================
 -- UI SETUP: Settings Tab
@@ -4154,8 +4481,8 @@ SettingsTab:CreateToggle({
     CurrentValue = false,
     Flag = "Toggle_FPSCap",
     Callback = function(Value)
-        fpsCapEnabled = Value
-        if setfpscap then pcall(function() setfpscap(fpsCapEnabled and currentFpsCap or 60) end) end
+        fps.capEnabled = Value
+        if setfpscap then pcall(function() setfpscap(fps.capEnabled and fps.currentCap or 60) end) end
     end,
 })
 
@@ -4167,8 +4494,8 @@ SettingsTab:CreateSlider({
     CurrentValue = 60,
     Flag = "Slider_FPSCap",
     Callback = function(Value)
-        currentFpsCap = Value
-        if fpsCapEnabled and setfpscap then pcall(function() setfpscap(currentFpsCap) end) end
+        fps.currentCap = Value
+        if fps.capEnabled and setfpscap then pcall(function() setfpscap(fps.currentCap) end) end
     end,
 })
 
@@ -4177,7 +4504,7 @@ SettingsTab:CreateSection({ Name = "Script Controls" })
 SettingsTab:CreateButton({
     Name = "Close Script & Destroy UI",
     Callback = function()
-        if scannerRunning and httpRequest and WEBHOOK_URL ~= "" then
+        if auction.scannerRunning and httpRequest and WEBHOOK_URL ~= "" then
             task.spawn(function()
                 httpRequest({
                     Url = WEBHOOK_URL,
@@ -4193,12 +4520,12 @@ SettingsTab:CreateButton({
             end)
         end
 
-        farmOn = false
-        autoChomp = false
-        autoChompMobs = false
-        autoFish = false
-        cleanupRippleTracking()
-        autoDodgeMobs = false
+        farm.on = false
+        farm.autoChomp = false
+        farm.autoChompMobs = false
+        farm.autoFish = false
+        cache.cleanupRippleTracking()
+        dodge.auto = false
         if manatite then
             manatite.auto = false
             manatite.showESP = false
@@ -4221,39 +4548,39 @@ SettingsTab:CreateButton({
             mithril.orePart = nil
             mithril.payload = nil
         end
-        if isAerialRetreat and root then
-            isAerialRetreat = false
+        if aerial.active and root then
+            aerial.active = false
             root.Anchored = false
-            if preAerialCFrame then
-                pcall(function() char:PivotTo(preAerialCFrame) end)
-                pcall(function() root.CFrame = preAerialCFrame end)
+            if aerial.preCFrame then
+                pcall(function() char:PivotTo(aerial.preCFrame) end)
+                pcall(function() root.CFrame = aerial.preCFrame end)
             end
             root.AssemblyLinearVelocity = Vector3.zero
             root.AssemblyAngularVelocity = Vector3.zero
-            aerialRetreatCFrame = nil
-            preAerialCFrame = nil
+            aerial.cframe = nil
+            aerial.preCFrame = nil
         end
-        if isUnderground and root and lastSurfaceCFrame then
-            root.CFrame = lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
+        if dodge.isUnderground and root and dodge.lastSurfaceCFrame then
+            root.CFrame = dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
             root.Anchored = false
             root.AssemblyLinearVelocity = Vector3.zero
             root.AssemblyAngularVelocity = Vector3.zero
-            isUnderground = false
-            currentUndergroundRetreatOffset = nil
+            dodge.isUnderground = false
+            dodge.currentUndergroundRetreatOffset = nil
         end
-        if isDodging then
-            if humanoid then humanoid.WalkSpeed = originalWalkSpeed or 16 end
-            isDodging = false
-            currentAttackingMob = nil
+        if dodge.isDodging then
+            if humanoid then humanoid.WalkSpeed = dodge.originalWalkSpeed or 16 end
+            dodge.isDodging = false
+            dodge.currentAttackingMob = nil
         end
-        scannerRunning = false
+        auction.scannerRunning = false
         penESP.show = false
         chestESP.show = false
         penESP.update()
         chestESP.update()
 
-        table.clear(activeAuraMobs)
-        table.clear(mithrilCaveMobSet)
+        table.clear(cache.activeAuraMobs)
+        table.clear(cache.mithrilCaveMobSet)
         pcall(function()
             if successVIM and VirtualInput then
                 VirtualInput:SendKeyEvent(false, Enum.KeyCode.E, false, game)
@@ -4267,8 +4594,13 @@ SettingsTab:CreateButton({
         spamThreads.E = spamThreads.E + 1
         spamThreads.Q = spamThreads.Q + 1
 
-        for _, conn in ipairs(auctionConnections) do conn:Disconnect() end
-        table.clear(auctionConnections)
+        for _, conn in ipairs(auction.connections) do conn:Disconnect() end
+        table.clear(auction.connections)
+
+        auction.autoBidLoopRunning = false
+        for _, conn in ipairs(auction.autoBidConnections) do conn:Disconnect() end
+        table.clear(auction.autoBidConnections)
+        table.clear(auction.cards)
 
         for _, conn in ipairs(scriptConnections) do
             if conn and conn.Disconnect then conn:Disconnect() end
