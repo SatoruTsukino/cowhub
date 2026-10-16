@@ -791,8 +791,8 @@ function manatite.getPayload(modelName)
 end
 
 function manatite.cleanupBlacklist(now)
-    if now - manatite.cache.lastBlacklistCleanup > 10 then
-        manatite.cache.lastBlacklistCleanup = now
+    if now - manatite.lastBlacklistCleanup > 10 then
+        manatite.lastBlacklistCleanup = now
         for model, timestamp in pairs(manatite.blacklist) do
             if not model or not model.Parent or (now - timestamp > 20) then
                 manatite.blacklist[model] = nil
@@ -1050,8 +1050,8 @@ function mithril.getPayload(modelName)
 end
 
 function mithril.cleanupBlacklist(now)
-    if now - mithril.cache.lastBlacklistCleanup > 10 then
-        mithril.cache.lastBlacklistCleanup = now
+    if now - mithril.lastBlacklistCleanup > 10 then
+        mithril.lastBlacklistCleanup = now
         for model, timestamp in pairs(mithril.blacklist) do
             if not model or not model.Parent or (now - timestamp > 20) then
                 mithril.blacklist[model] = nil
