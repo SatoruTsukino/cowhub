@@ -400,6 +400,273 @@ end
 local WEBHOOK_URL = loadWebhook()
 
 -- ==========================
+-- SPIDER IDENTIFIER LOGGER & CACHE (JSON Persistence in Workspace)
+-- ==========================
+local SPIDER_JSON_FILE = "SpiderIdentifiers.json"
+
+local spiderLogger = {
+    fileName = SPIDER_JSON_FILE,
+    data = {
+        identifiers = {},   -- Array of unique string IDs e.g. ["200809"]
+        byPosition = {},    -- "X_Y_Z" -> identifier
+        byPath = {},        -- Mob full path or name -> identifier
+        history = {},       -- Array of recent discovery events
+    },
+    idSet = {},             -- Fast O(1) membership set
+    currentUnknownMob = nil,-- The unknown mob instance currently being attacked
+    currentUnknownTime = 0, -- Time when attack on unknown mob began
+    isInternalFire = false, -- Flag to distinguish script's own chomp calls from other scripts
+}
+
+local function getSpiderPosKey(pos)
+    if not pos then return nil end
+    local rx = math.floor(pos.X / 5 + 0.5) * 5
+    local ry = math.floor(pos.Y / 5 + 0.5) * 5
+    local rz = math.floor(pos.Z / 5 + 0.5) * 5
+    return string.format("%d_%d_%d", rx, ry, rz)
+end
+
+function spiderLogger.load()
+    if isfile and readfile and isfile(spiderLogger.fileName) then
+        local success, raw = pcall(function() return readfile(spiderLogger.fileName) end)
+        if success and raw and raw ~= "" then
+            local parseSuccess, decoded = pcall(function() return HttpService:JSONDecode(raw) end)
+            if parseSuccess and type(decoded) == "table" then
+                spiderLogger.data.identifiers = decoded.identifiers or {}
+                spiderLogger.data.byPosition = decoded.byPosition or {}
+                spiderLogger.data.byPath = decoded.byPath or {}
+                spiderLogger.data.history = decoded.history or {}
+
+                spiderLogger.idSet = {}
+                for _, id in ipairs(spiderLogger.data.identifiers) do
+                    spiderLogger.idSet[tostring(id)] = true
+                end
+                for _, id in pairs(spiderLogger.data.byPosition) do
+                    spiderLogger.idSet[tostring(id)] = true
+                end
+                for _, id in pairs(spiderLogger.data.byPath) do
+                    spiderLogger.idSet[tostring(id)] = true
+                end
+            end
+        end
+    end
+end
+
+function spiderLogger.save()
+    if not writefile then return end
+    local success, encoded = pcall(function()
+        return HttpService:JSONEncode(spiderLogger.data)
+    end)
+    if success and encoded then
+        pcall(function()
+            writefile(spiderLogger.fileName, encoded)
+        end)
+    end
+end
+
+function spiderLogger.extractIdentifier(val, depth)
+    depth = depth or 0
+    if depth > 3 or val == nil then return nil end
+
+    local valType = typeof(val)
+    if valType == "string" then
+        local num = string.match(val, "Cavern_Mob_Spider_(%d+)")
+            or string.match(val, "Spider_(%d+)")
+            or string.match(val, "Mob_Spider_(%d+)")
+        if num then return tostring(num) end
+
+        local digits = string.match(val, "^(%d%d%d%d+)$")
+        if digits then return digits end
+
+        local anyNum = string.match(val, "(%d%d%d%d+)")
+        if anyNum and #anyNum >= 4 then return anyNum end
+    elseif valType == "number" then
+        if val >= 1000 then
+            return tostring(math.floor(val))
+        end
+    elseif valType == "table" then
+        for _, k in ipairs({"Identifier", "identifier", "Id", "id", "ID", "SpiderId", "spiderId", "MobId", "mobId", "Payload", "payload", "TargetId", "Target", "target"}) do
+            if val[k] ~= nil then
+                local found = spiderLogger.extractIdentifier(val[k], depth + 1)
+                if found then return found end
+            end
+        end
+        for _, subVal in pairs(val) do
+            local found = spiderLogger.extractIdentifier(subVal, depth + 1)
+            if found then return found end
+        end
+    elseif valType == "Instance" then
+        if val:IsA("Model") or val:IsA("BasePart") then
+            local numMatch = string.match(val.Name, "(%d%d%d%d+)")
+            if numMatch then return numMatch end
+        end
+    end
+    return nil
+end
+
+function spiderLogger.getMobPosition(mob)
+    if not mob then return nil end
+    if dodge and dodge.getMobAttackOrigin then
+        local pos = dodge.getMobAttackOrigin(mob)
+        if pos then return pos end
+    end
+    if mob.PrimaryPart then return mob.PrimaryPart.Position end
+    local hrp = mob:FindFirstChild("HumanoidRootPart") or mob:FindFirstChild("Head") or mob:FindFirstChild("CavernBodyVisual")
+    if hrp and hrp:IsA("BasePart") then return hrp.Position end
+    if mob:IsA("BasePart") then return mob.Position end
+    local ok, pivot = pcall(function() return mob:GetPivot().Position end)
+    if ok and pivot then return pivot end
+    return nil
+end
+
+function spiderLogger.recordIdentifier(idStr, source, mobInstance, extraRaw)
+    if not idStr or idStr == "" then return end
+    idStr = tostring(idStr)
+
+    local targetMob = mobInstance or spiderLogger.currentUnknownMob
+    local changed = false
+
+    if not spiderLogger.idSet[idStr] then
+        spiderLogger.idSet[idStr] = true
+        table.insert(spiderLogger.data.identifiers, idStr)
+        changed = true
+    end
+
+    local mobPos = nil
+    if targetMob and targetMob.Parent then
+        cache.spiderIdentifier[targetMob] = idStr
+
+        local path = targetMob:GetFullName()
+        if not spiderLogger.data.byPath[path] then
+            spiderLogger.data.byPath[path] = idStr
+            changed = true
+        end
+        if not spiderLogger.data.byPath[targetMob.Name] then
+            spiderLogger.data.byPath[targetMob.Name] = idStr
+            changed = true
+        end
+
+        mobPos = spiderLogger.getMobPosition(targetMob)
+        if mobPos then
+            local posKey = getSpiderPosKey(mobPos)
+            if posKey and not spiderLogger.data.byPosition[posKey] then
+                spiderLogger.data.byPosition[posKey] = idStr
+                changed = true
+            end
+        end
+    end
+
+    table.insert(spiderLogger.data.history, 1, {
+        timestamp = os.date("!%Y-%m-%d %H:%M:%SZ"),
+        identifier = idStr,
+        source = source or "ChompRequest",
+        mobName = targetMob and targetMob.Name or "Unknown",
+        position = mobPos and string.format("%.1f, %.1f, %.1f", mobPos.X, mobPos.Y, mobPos.Z) or nil,
+        raw = extraRaw and tostring(extraRaw) or nil
+    })
+    if #spiderLogger.data.history > 50 then
+        table.remove(spiderLogger.data.history)
+    end
+
+    spiderLogger.save()
+
+    if targetMob == spiderLogger.currentUnknownMob then
+        spiderLogger.currentUnknownMob = nil
+        spiderLogger.currentUnknownTime = 0
+    end
+end
+
+function spiderLogger.resolveSpiderIdentifier(mob)
+    if not mob or not mob.Parent then return nil end
+
+    -- 1. Check direct path / name lookup
+    local path = mob:GetFullName()
+    if spiderLogger.data.byPath[path] then
+        return spiderLogger.data.byPath[path]
+    end
+    if spiderLogger.data.byPath[mob.Name] then
+        return spiderLogger.data.byPath[mob.Name]
+    end
+
+    -- 2. Check position proximity (within 10 studs / 100 studs squared)
+    local mobPos = spiderLogger.getMobPosition(mob)
+    if mobPos then
+        local posKey = getSpiderPosKey(mobPos)
+        if posKey and spiderLogger.data.byPosition[posKey] then
+            return spiderLogger.data.byPosition[posKey]
+        end
+
+        for savedPosKey, id in pairs(spiderLogger.data.byPosition) do
+            local sx, sy, sz = string.match(savedPosKey, "^(%-?%d+)_(%-?%d+)_(%-?%d+)$")
+            if sx and sy and sz then
+                local spos = Vector3.new(tonumber(sx), tonumber(sy), tonumber(sz))
+                local distSq = (mobPos.X - spos.X)^2 + (mobPos.Y - spos.Y)^2 + (mobPos.Z - spos.Z)^2
+                if distSq <= 100 then
+                    return id
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+spiderLogger.load()
+
+-- Hook ChompRequest for server-fired responses & client-fired bite events
+local function onChompRemoteReceived(source, ...)
+    local args = {...}
+    local id = nil
+    for _, arg in ipairs(args) do
+        id = spiderLogger.extractIdentifier(arg)
+        if id then break end
+    end
+    if id then
+        spiderLogger.recordIdentifier(id, source, spiderLogger.currentUnknownMob, args[1])
+    end
+end
+
+-- 1. Hook incoming server events via OnClientEvent
+if chompEvent and chompEvent:IsA("RemoteEvent") then
+    local serverConn = chompEvent.OnClientEvent:Connect(function(...)
+        onChompRemoteReceived("OnClientEvent", ...)
+    end)
+    table.insert(scriptConnections, serverConn)
+elseif chompEvent and chompEvent:IsA("RemoteFunction") then
+    local origCallback = chompEvent.OnClientInvoke
+    chompEvent.OnClientInvoke = function(...)
+        onChompRemoteReceived("OnClientInvoke", ...)
+        if origCallback then
+            return origCallback(...)
+        end
+    end
+end
+
+-- 2. Metamethod hook for client-fired bites (from proximity prompts, tools, or other local scripts)
+pcall(function()
+    if hookmetamethod and getnamecallmethod then
+        local oldNamecall
+        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+            local method = getnamecallmethod()
+            if self == chompEvent and (method == "FireServer" or method == "fireServer") then
+                if not spiderLogger.isInternalFire then
+                    local args = {...}
+                    local id = nil
+                    for _, arg in ipairs(args) do
+                        id = spiderLogger.extractIdentifier(arg)
+                        if id then break end
+                    end
+                    if id then
+                        spiderLogger.recordIdentifier(id, "HookedFireServer", spiderLogger.currentUnknownMob, args[1])
+                    end
+                end
+            end
+            return oldNamecall(self, ...)
+        end)
+    end
+end)
+
+-- ==========================
 -- HIGH-PERFORMANCE MATH HELPERS
 -- ==========================
 -- 2D Euclidean Distance (Zero Vector3 heap allocation)
@@ -1630,13 +1897,25 @@ end
 function cache.findSpiderIdentifier(mob)
     if not mob then return nil end
     local cached = cache.spiderIdentifier[mob]
-    if cached ~= nil then return cached or nil end
+    if cached ~= nil and cached ~= false then return cached end
+
+    -- Check persistent JSON data loaded from workspace (Path, Position proximity, Name)
+    if spiderLogger and spiderLogger.resolveSpiderIdentifier then
+        local fromJson = spiderLogger.resolveSpiderIdentifier(mob)
+        if fromJson then
+            cache.spiderIdentifier[mob] = fromJson
+            return fromJson
+        end
+    end
 
     for _, attr in ipairs({"Id", "ID", "Identifier", "MobId", "SpiderId", "Index", "Number", "SpawnId", "NetworkId", "ServerId", "TargetId", "UID", "UUID", "EntityId"}) do
         local val = mob:GetAttribute(attr)
         if val ~= nil and tostring(val) ~= "" then
             local str = tostring(val)
             cache.spiderIdentifier[mob] = str
+            if spiderLogger and spiderLogger.recordIdentifier then
+                spiderLogger.recordIdentifier(str, "Attribute", mob)
+            end
             return str
         end
     end
@@ -1645,6 +1924,9 @@ function cache.findSpiderIdentifier(mob)
         if typeof(attrVal) == "number" or (typeof(attrVal) == "string" and string.match(attrVal, "^%d%d%d+$")) then
             local str = tostring(attrVal)
             cache.spiderIdentifier[mob] = str
+            if spiderLogger and spiderLogger.recordIdentifier then
+                spiderLogger.recordIdentifier(str, "AttributeValue", mob)
+            end
             return str
         end
     end
@@ -1655,6 +1937,9 @@ function cache.findSpiderIdentifier(mob)
             if val and tostring(val) ~= "" then
                 local str = tostring(val)
                 cache.spiderIdentifier[mob] = str
+                if spiderLogger and spiderLogger.recordIdentifier then
+                    spiderLogger.recordIdentifier(str, "ChildValue", mob)
+                end
                 return str
             end
         end
@@ -1667,6 +1952,9 @@ function cache.findSpiderIdentifier(mob)
             if val ~= nil and tostring(val) ~= "" then
                 local str = tostring(val)
                 cache.spiderIdentifier[mob] = str
+                if spiderLogger and spiderLogger.recordIdentifier then
+                    spiderLogger.recordIdentifier(str, "VisualAttribute", mob)
+                end
                 return str
             end
         end
@@ -1674,6 +1962,9 @@ function cache.findSpiderIdentifier(mob)
             if typeof(attrVal) == "number" or (typeof(attrVal) == "string" and string.match(attrVal, "^%d%d%d+$")) then
                 local str = tostring(attrVal)
                 cache.spiderIdentifier[mob] = str
+                if spiderLogger and spiderLogger.recordIdentifier then
+                    spiderLogger.recordIdentifier(str, "VisualAttributeValue", mob)
+                end
                 return str
             end
         end
@@ -1685,6 +1976,9 @@ function cache.findSpiderIdentifier(mob)
             local num = string.match(tag, "(%d%d%d+)")
             if num then
                 cache.spiderIdentifier[mob] = num
+                if spiderLogger and spiderLogger.recordIdentifier then
+                    spiderLogger.recordIdentifier(num, "Tag", mob)
+                end
                 return num
             end
         end
@@ -1693,6 +1987,9 @@ function cache.findSpiderIdentifier(mob)
     local numMatch = string.match(mob.Name, "(%d%d%d+)")
     if numMatch and #numMatch >= 4 then
         cache.spiderIdentifier[mob] = numMatch
+        if spiderLogger and spiderLogger.recordIdentifier then
+            spiderLogger.recordIdentifier(numMatch, "NameDigits", mob)
+        end
         return numMatch
     end
 
@@ -2400,6 +2697,13 @@ function cache.sanitizeMemory(now)
             end
         end
 
+        if spiderLogger and spiderLogger.currentUnknownMob then
+            if not spiderLogger.currentUnknownMob.Parent or (now - spiderLogger.currentUnknownTime > 8) then
+                spiderLogger.currentUnknownMob = nil
+                spiderLogger.currentUnknownTime = 0
+            end
+        end
+
         cache.cleanupNodeBlacklist(now)
         if manatite and manatite.cleanupBlacklist then
             manatite.cleanupBlacklist(now)
@@ -3028,14 +3332,32 @@ function farm.processMobAura(now, rootPos)
                 local spiderId = cache.findSpiderIdentifier(mob)
                 if spiderId then
                     local payloadName = "Cavern_Mob_Spider_" .. tostring(spiderId)
+                    if spiderLogger then spiderLogger.isInternalFire = true end
                     chompEvent:FireServer(payloadName)
+                    if spiderLogger then spiderLogger.isInternalFire = false end
                 else
+                    if spiderLogger then
+                        spiderLogger.currentUnknownMob = mob
+                        spiderLogger.currentUnknownTime = now
+                        spiderLogger.isInternalFire = true
+
+                        -- 1. Reference all known identifiers logged from the server in SpiderIdentifiers.json
+                        if spiderLogger.data and spiderLogger.data.identifiers then
+                            for _, knownId in ipairs(spiderLogger.data.identifiers) do
+                                chompEvent:FireServer("Cavern_Mob_Spider_" .. tostring(knownId))
+                            end
+                        end
+                    end
+
+                    -- 2. Fallbacks
                     local fallbackPayload = cache.getMobPayload(mob.Name)
                     if fallbackPayload then
                         chompEvent:FireServer(fallbackPayload)
                     end
                     chompEvent:FireServer("Cavern_Mob_Spider")
                     chompEvent:FireServer(mob.Name)
+
+                    if spiderLogger then spiderLogger.isInternalFire = false end
                 end
 
                 if fireproximityprompt then
