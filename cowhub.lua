@@ -178,8 +178,9 @@ local dodge = {
     detectionRadius = 15,
     detectionRadiusSq = 15 * 15,
     lingerDelay = 0.6,
-    prioritizeMobsOverManatite = true,
-    manatiteThreatRadiusSq = 100,
+    prioritizeMobsOverManatite = false,
+    retreatOnThreat = true,
+    manatiteThreatRadiusSq = 225, -- 15 studs squared (15 * 15) to detect spiders before they reach 10-stud attack reach
     lastWarningSeenTime = 0,
     lastTeleportDodgeDist = 0,
     notifyOnDodge = false,
@@ -1073,88 +1074,110 @@ function manatite.cleanupBlacklist(now)
     end
 end
 
-function manatite.findNext(searchOrigin)
+function manatite.isPositionNearMob(pos, distSq)
+    if not pos then return false end
+    distSq = distSq or (dodge.manatiteThreatRadiusSq or 225)
+    for _, mob in ipairs(cache.activeAuraMobs) do
+        if mob.Parent and dodge.isMobAlive(mob) then
+            local mobPos = dodge.getMobAttackOrigin(mob)
+            if mobPos and get3DDistanceSq(pos, mobPos) <= distSq then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function manatite.findNext(searchOrigin, avoidMobs)
     local models = manatite.getModels()
     if not models or #models == 0 then return nil, nil end
 
     local now = os.clock()
     local origin = searchOrigin or (root and root.Position) or Vector3.zero
+    local requireSafe = (avoidMobs == true) or (avoidMobs == nil and dodge.retreatOnThreat)
+
+    local safeCandidates = {}
+    local allCandidates = {}
+
+    for _, model in ipairs(models) do
+        if model.Parent then
+            local blacklistedAt = manatite.blacklist[model]
+            if not blacklistedAt or (now - blacklistedAt > 20) then
+                local target = manatite.getGrazeTarget(model)
+                if target and manatite.isAvailable(target, model) then
+                    local isNear = manatite.isPositionNearMob(target.Position, dodge.manatiteThreatRadiusSq or 225)
+                    local item = {
+                        model = model,
+                        target = target,
+                        isNearMob = isNear,
+                        distSq = get3DDistanceSq(origin, target.Position),
+                        yield = (manatite.order == "Largest Crystal Yield") and manatite.getGrazeTargetYield(target, model) or 0
+                    }
+                    table.insert(allCandidates, item)
+                    if not isNear then
+                        table.insert(safeCandidates, item)
+                    end
+                end
+            end
+        end
+    end
+
+    local pool = (requireSafe and #safeCandidates > 0) and safeCandidates or allCandidates
+    if #pool == 0 then return nil, nil end
 
     if manatite.order == "Alphabetical (A-Z)" then
-        local availableList = {}
-        for _, model in ipairs(models) do
-            if model.Parent then
-                local blacklistedAt = manatite.blacklist[model]
-                if not blacklistedAt or (now - blacklistedAt > 20) then
-                    local target = manatite.getGrazeTarget(model)
-                    if target and manatite.isAvailable(target, model) then
-                        table.insert(availableList, {model = model, target = target})
-                    end
-                end
-            end
-        end
-        if #availableList > 0 then
-            table.sort(availableList, function(a, b) return a.model.Name < b.model.Name end)
-            return availableList[1].model, availableList[1].target
-        end
-        return nil, nil
+        table.sort(pool, function(a, b) return a.model.Name < b.model.Name end)
+        return pool[1].model, pool[1].target
     elseif manatite.order == "Largest Crystal Yield" then
-        local availableList = {}
-        for _, model in ipairs(models) do
-            if model.Parent then
-                local blacklistedAt = manatite.blacklist[model]
-                if not blacklistedAt or (now - blacklistedAt > 20) then
-                    local target = manatite.getGrazeTarget(model)
-                    if target and manatite.isAvailable(target, model) then
-                        local yieldVal = manatite.getGrazeTargetYield(target, model)
-                        local distSq = get3DDistanceSq(origin, target.Position)
-                        table.insert(availableList, {
-                            model = model,
-                            target = target,
-                            yield = yieldVal,
-                            distSq = distSq
-                        })
-                    end
-                end
-            end
-        end
-        if #availableList > 0 then
-            table.sort(availableList, function(a, b)
-                if a.yield ~= b.yield then
-                    return a.yield > b.yield
-                end
-                if a.distSq ~= b.distSq then
-                    return a.distSq < b.distSq
-                end
-                return a.model.Name < b.model.Name
-            end)
-            return availableList[1].model, availableList[1].target
-        end
-        return nil, nil
+        table.sort(pool, function(a, b)
+            if a.yield ~= b.yield then return a.yield > b.yield end
+            if a.distSq ~= b.distSq then return a.distSq < b.distSq end
+            return a.model.Name < b.model.Name
+        end)
+        return pool[1].model, pool[1].target
     else
-        local bestModel = nil
-        local bestTarget = nil
-        local shortestDistSq = math.huge
-
-        for _, model in ipairs(models) do
-            if model.Parent then
-                local blacklistedAt = manatite.blacklist[model]
-                if not blacklistedAt or (now - blacklistedAt > 20) then
-                    local target = manatite.getGrazeTarget(model)
-                    if target and manatite.isAvailable(target, model) then
-                        local distSq = get3DDistanceSq(origin, target.Position)
-                        if distSq < shortestDistSq then
-                            shortestDistSq = distSq
-                            bestModel = model
-                            bestTarget = target
-                        end
-                    end
-                end
-            end
-        end
-
-        return bestModel, bestTarget
+        table.sort(pool, function(a, b)
+            return a.distSq < b.distSq
+        end)
+        return pool[1].model, pool[1].target
     end
+end
+
+function manatite.retreatToSafeCrystal(now, rootPos)
+    local currentModel = manatite.model
+    if currentModel then
+        manatite.blacklist[currentModel] = now
+    end
+
+    manatite.model = nil
+    manatite.target = nil
+    manatite.payload = nil
+
+    if root then
+        pcall(function() root.Anchored = false end)
+    end
+
+    local nextModel, nextTarget = manatite.findNext(rootPos or (root and root.Position), true)
+    if nextModel and nextTarget then
+        manatite.model = nextModel
+        manatite.target = nextTarget
+        manatite.payload = manatite.getPayload(nextModel.Name)
+        manatite.startTime = now
+        manatite.teleport(nextTarget, nextModel)
+        manatite.lastTeleportTime = now
+        manatite.lastChompTime = 0
+        manatite.lastSearchTime = now
+
+        if dodge.notifyOnDodge then
+            Window:Notify({
+                Title = "Manatite Retreat",
+                Content = "Spiders nearby! Relocated to a safe crystal.",
+                Duration = 2,
+            })
+        end
+        return true
+    end
+    return false
 end
 
 function manatite.teleport(grazeTarget, model)
@@ -1332,55 +1355,102 @@ function mithril.cleanupBlacklist(now)
     end
 end
 
-function mithril.findNext(searchOrigin)
+function mithril.isPositionNearMob(pos, distSq)
+    if not pos then return false end
+    distSq = distSq or (dodge.manatiteThreatRadiusSq or 225)
+    for _, mob in ipairs(cache.activeAuraMobs) do
+        if mob.Parent and dodge.isMobAlive(mob) then
+            local mobPos = dodge.getMobAttackOrigin(mob)
+            if mobPos and get3DDistanceSq(pos, mobPos) <= distSq then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function mithril.findNext(searchOrigin, avoidMobs)
     local models = mithril.getModels()
     if not models or #models == 0 then return nil, nil end
 
     local now = os.clock()
     local origin = searchOrigin or (root and root.Position) or Vector3.zero
+    local requireSafe = (avoidMobs == true) or (avoidMobs == nil and dodge.retreatOnThreat)
+
+    local safeCandidates = {}
+    local allCandidates = {}
+
+    for _, model in ipairs(models) do
+        if model.Parent then
+            local blacklistedAt = mithril.blacklist[model]
+            if not blacklistedAt or (now - blacklistedAt > 20) then
+                local orePart = mithril.getOrePart(model)
+                if orePart and mithril.isAvailable(orePart, model) then
+                    local isNear = mithril.isPositionNearMob(orePart.Position, dodge.manatiteThreatRadiusSq or 225)
+                    local item = {
+                        model = model,
+                        target = orePart,
+                        isNearMob = isNear,
+                        distSq = get3DDistanceSq(origin, orePart.Position),
+                    }
+                    table.insert(allCandidates, item)
+                    if not isNear then
+                        table.insert(safeCandidates, item)
+                    end
+                end
+            end
+        end
+    end
+
+    local pool = (requireSafe and #safeCandidates > 0) and safeCandidates or allCandidates
+    if #pool == 0 then return nil, nil end
 
     if mithril.order == "Alphabetical (A-Z)" then
-        local availableList = {}
-        for _, model in ipairs(models) do
-            if model.Parent then
-                local blacklistedAt = mithril.blacklist[model]
-                if not blacklistedAt or (now - blacklistedAt > 20) then
-                    local orePart = mithril.getOrePart(model)
-                    if orePart and mithril.isAvailable(orePart, model) then
-                        table.insert(availableList, {model = model, target = orePart})
-                    end
-                end
-            end
-        end
-        if #availableList > 0 then
-            table.sort(availableList, function(a, b) return a.model.Name < b.model.Name end)
-            return availableList[1].model, availableList[1].target
-        end
-        return nil, nil
+        table.sort(pool, function(a, b) return a.model.Name < b.model.Name end)
+        return pool[1].model, pool[1].target
     else
-        local bestModel = nil
-        local bestTarget = nil
-        local shortestDistSq = math.huge
-
-        for _, model in ipairs(models) do
-            if model.Parent then
-                local blacklistedAt = mithril.blacklist[model]
-                if not blacklistedAt or (now - blacklistedAt > 20) then
-                    local orePart = mithril.getOrePart(model)
-                    if orePart and mithril.isAvailable(orePart, model) then
-                        local distSq = get3DDistanceSq(origin, orePart.Position)
-                        if distSq < shortestDistSq then
-                            shortestDistSq = distSq
-                            bestModel = model
-                            bestTarget = orePart
-                        end
-                    end
-                end
-            end
-        end
-
-        return bestModel, bestTarget
+        table.sort(pool, function(a, b)
+            return a.distSq < b.distSq
+        end)
+        return pool[1].model, pool[1].target
     end
+end
+
+function mithril.retreatToSafeOre(now, rootPos)
+    local currentModel = mithril.model
+    if currentModel then
+        mithril.blacklist[currentModel] = now
+    end
+
+    mithril.model = nil
+    mithril.orePart = nil
+    mithril.payload = nil
+
+    if root then
+        pcall(function() root.Anchored = false end)
+    end
+
+    local nextModel, nextOre = mithril.findNext(rootPos or (root and root.Position), true)
+    if nextModel and nextOre then
+        mithril.model = nextModel
+        mithril.orePart = nextOre
+        mithril.payload = mithril.getPayload(nextModel.Name)
+        mithril.startTime = now
+        mithril.teleport(nextOre, nextModel)
+        mithril.lastTeleportTime = now
+        mithril.lastChompTime = 0
+        mithril.lastSearchTime = now
+
+        if dodge.notifyOnDodge then
+            Window:Notify({
+                Title = "Mithril Retreat",
+                Content = "Spiders nearby! Relocated to safe ore.",
+                Duration = 2,
+            })
+        end
+        return true
+    end
+    return false
 end
 
 function mithril.teleport(orePart, model)
@@ -2768,6 +2838,22 @@ end
 function aerial.checkHealth(now, rootPos)
     local currentHearts = dodge.getLocalPlayerHearts()
     if currentHearts and dodge.lastRecordedHearts ~= nil and currentHearts < dodge.lastRecordedHearts then
+        if dodge.retreatOnThreat then
+            if manatite and manatite.auto then
+                local retreated = manatite.retreatToSafeCrystal(now, rootPos)
+                if retreated then
+                    dodge.lastRecordedHearts = currentHearts
+                    return
+                end
+            elseif mithril and mithril.auto then
+                local retreated = mithril.retreatToSafeOre(now, rootPos)
+                if retreated then
+                    dodge.lastRecordedHearts = currentHearts
+                    return
+                end
+            end
+        end
+
         if (now - aerial.lastTime) >= aerial.cooldown and not aerial.active then
             aerial.active = true
             aerial.startTime = now
@@ -2892,6 +2978,16 @@ function dodge.process(now, rootPos)
 
     if shouldRetreat then
         dodge.lastWarningSeenTime = now
+
+        if dodge.retreatOnThreat then
+            if manatite and manatite.auto then
+                local retreated = manatite.retreatToSafeCrystal(now, rootPos)
+                if retreated then return end
+            elseif mithril and mithril.auto then
+                local retreated = mithril.retreatToSafeOre(now, rootPos)
+                if retreated then return end
+            end
+        end
 
         if not dodge.isDodging then
             dodge.isDodging = true
@@ -3151,7 +3247,7 @@ end
 
 function dodge.checkNearbyThreat(now, rootPos, prioritizedMobThisFrame)
     local hasNearbyThreat = false
-    if farm.autoChompMobs and ((manatite and manatite.auto) or (mithril and mithril.auto) or farm.on) then
+    if (manatite and manatite.auto) or (mithril and mithril.auto) or (farm.autoChompMobs and farm.on) then
         local threatOrigin = dodge.isUnderground and (dodge.lastSurfacePos or rootPos) or rootPos
         local losOrigin = threatOrigin + Vector3.new(0, 0.5, 0)
         for _, mob in ipairs(cache.activeAuraMobs) do
@@ -3167,31 +3263,48 @@ function dodge.checkNearbyThreat(now, rootPos, prioritizedMobThisFrame)
         end
     end
 
-    if hasNearbyThreat and not prioritizedMobThisFrame then
-        hasNearbyThreat = false
-    end
-
     if hasNearbyThreat then
-        if dodge.threatStartTime == 0 then
-            dodge.threatStartTime = now
-        elseif (now - dodge.threatStartTime > 1.5) then
-            if manatite and manatite.auto and manatite.model then
-                manatite.blacklist[manatite.model] = now
-                manatite.model = nil
-                manatite.target = nil
-                manatite.payload = nil
+        if dodge.retreatOnThreat then
+            local retreated = false
+            if manatite and manatite.auto then
+                retreated = manatite.retreatToSafeCrystal(now, rootPos)
+            elseif mithril and mithril.auto then
+                retreated = mithril.retreatToSafeOre(now, rootPos)
             end
-            if mithril and mithril.auto and mithril.model then
-                mithril.blacklist[mithril.model] = now
-                mithril.model = nil
-                mithril.orePart = nil
-                mithril.payload = nil
+            if retreated then
+                dodge.threatStartTime = 0
+                return false
             end
-            if root then
-                pcall(function() root.Anchored = false end)
-            end
-            dodge.threatStartTime = 0
+        end
+
+        if not prioritizedMobThisFrame then
             hasNearbyThreat = false
+        end
+
+        if hasNearbyThreat then
+            if dodge.threatStartTime == 0 then
+                dodge.threatStartTime = now
+            elseif (now - dodge.threatStartTime > 1.5) then
+                if manatite and manatite.auto and manatite.model then
+                    manatite.blacklist[manatite.model] = now
+                    manatite.model = nil
+                    manatite.target = nil
+                    manatite.payload = nil
+                end
+                if mithril and mithril.auto and mithril.model then
+                    mithril.blacklist[mithril.model] = now
+                    mithril.model = nil
+                    mithril.orePart = nil
+                    mithril.payload = nil
+                end
+                if root then
+                    pcall(function() root.Anchored = false end)
+                end
+                dodge.threatStartTime = 0
+                hasNearbyThreat = false
+            end
+        else
+            dodge.threatStartTime = 0
         end
     else
         dodge.threatStartTime = 0
@@ -3505,6 +3618,14 @@ function manatite.process(now, rootPos)
     else
         local targetPos = manatite.target.Position + Vector3.new(0, manatite.heightOffset, 0)
 
+        if dodge.retreatOnThreat and (now - manatite.lastSearchTime > 0.25) then
+            local checkPos = manatite.target.Position
+            if manatite.isPositionNearMob(checkPos, dodge.manatiteThreatRadiusSq) or manatite.isPositionNearMob(rootPos, dodge.manatiteThreatRadiusSq) then
+                manatite.retreatToSafeCrystal(now, rootPos)
+                return
+            end
+        end
+
         if get3DDistanceSq(rootPos, targetPos) > 36 then
             if (now - manatite.lastTeleportTime > 0.4) then
                 manatite.teleport(manatite.target, manatite.model)
@@ -3561,6 +3682,14 @@ function mithril.process(now, rootPos)
         end
     else
         local targetPos = mithril.orePart.Position + Vector3.new(0, mithril.heightOffset, 0)
+
+        if dodge.retreatOnThreat and (now - mithril.lastSearchTime > 0.25) then
+            local checkPos = mithril.orePart.Position
+            if mithril.isPositionNearMob(checkPos, dodge.manatiteThreatRadiusSq) or mithril.isPositionNearMob(rootPos, dodge.manatiteThreatRadiusSq) then
+                mithril.retreatToSafeOre(now, rootPos)
+                return
+            end
+        end
 
         if get3DDistanceSq(rootPos, targetPos) > 36 then
             if (now - mithril.lastTeleportTime > 0.4) then
@@ -4138,11 +4267,12 @@ MiningTab:CreateToggle({
 })
 
 MiningTab:CreateToggle({
-    Name = "Prioritize Mobs Near Manatite (10 Studs)",
+    Name = "Retreat to Safe Crystal on Spider Threat",
     CurrentValue = true,
-    Flag = "Toggle_PrioritizeMobsManatite",
+    Flag = "Toggle_RetreatSafeCrystal",
     Callback = function(Value)
-        dodge.prioritizeMobsOverManatite = Value
+        dodge.retreatOnThreat = Value
+        dodge.prioritizeMobsOverManatite = not Value
     end,
 })
 
