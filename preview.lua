@@ -473,50 +473,26 @@ local function getSpotPosition(spot)
     return pos
 end
 
-local function resolveGrassNode(inst)
-    if not inst then return nil end
-    local folder = cachedGrassFolder or workspace:FindFirstChild("CowVirtualGrass")
-    if not folder or inst == folder then return nil end
-
-    if folder and inst:IsDescendantOf(folder) then
-        local curr = inst
-        while curr and curr.Parent and curr.Parent ~= folder do
-            curr = curr.Parent
-        end
-        if curr and curr.Parent == folder then
-            return curr
-        end
-    end
-
-    local attr = inst:GetAttribute("nodeID") or inst:GetAttribute("NodeID") or inst:GetAttribute("nodeId") or inst:GetAttribute("NodeId")
-    if attr then return inst end
-
-    if inst.Parent and inst.Parent ~= workspace and inst.Parent ~= folder then
-        local p = inst.Parent
-        local pAttr = p:GetAttribute("nodeID") or p:GetAttribute("NodeID") or p:GetAttribute("nodeId") or p:GetAttribute("NodeId")
-        if pAttr then return p end
-    end
-
-    if string.find(inst.Name, "Grass", 1, true) then return inst end
-    if inst.Parent and inst.Parent ~= workspace and inst.Parent ~= folder and string.find(inst.Parent.Name, "Grass", 1, true) then
-        return inst.Parent
-    end
-
-    return nil
+local function isValidGrassNodeID(id)
+    if type(id) ~= "string" or id == "" then return false end
+    if string.find(id, "Floor", 1, true) then return false end
+    return string.match(id, ".*Grass.*_[np%-]?%d+$") ~= nil
 end
 
 local function getCleanGrassName(nodeName)
     local cached = nodeCleanNameCache[nodeName]
     if cached ~= nil then return cached or nil end
 
+    if string.find(nodeName, "Floor", 1, true) then
+        nodeCleanNameCache[nodeName] = false
+        return nil
+    end
+
     local cleanName = string.gsub(nodeName, "GrassVisual", "")
     cleanName = string.gsub(cleanName, "^_+", "")
     cleanName = string.gsub(cleanName, "_+$", "")
 
-    if string.match(cleanName, ".*Grass.*_[np%-]?%d+_[np%-]?%d+$") then
-        nodeCleanNameCache[nodeName] = cleanName
-        return cleanName
-    elseif string.find(cleanName, "Grass", 1, true) then
+    if isValidGrassNodeID(cleanName) then
         nodeCleanNameCache[nodeName] = cleanName
         return cleanName
     else
@@ -530,12 +506,19 @@ local function getNodeID(node)
     local cached = nodeCleanNameCache.ids[node]
     if cached ~= nil then return cached or nil end
 
+    -- Must be strictly in CowVirtualGrass
+    local folder = cachedGrassFolder or workspace:FindFirstChild("CowVirtualGrass")
+    if folder and not node:IsDescendantOf(folder) then
+        nodeCleanNameCache.ids[node] = false
+        return nil
+    end
+
     local attrId = node:GetAttribute("nodeID")
     if attrId == nil then attrId = node:GetAttribute("NodeID") end
     if attrId == nil then attrId = node:GetAttribute("nodeId") end
     if attrId == nil then attrId = node:GetAttribute("NodeId") end
 
-    if attrId == nil and node.Parent and node.Parent ~= cachedGrassFolder and node.Parent ~= workspace then
+    if attrId == nil and node.Parent and node.Parent ~= folder and node.Parent ~= workspace then
         attrId = node.Parent:GetAttribute("nodeID")
         if attrId == nil then attrId = node.Parent:GetAttribute("NodeID") end
         if attrId == nil then attrId = node.Parent:GetAttribute("nodeId") end
@@ -549,14 +532,47 @@ local function getNodeID(node)
             cleanId = string.gsub(cleanId, "^_+", "")
             cleanId = string.gsub(cleanId, "_+$", "")
         end
-        nodeCleanNameCache.ids[node] = cleanId
-        return cleanId
+        if isValidGrassNodeID(cleanId) then
+            nodeCleanNameCache.ids[node] = cleanId
+            return cleanId
+        end
     end
 
     -- Fallback: legacy name cleaning if attribute is absent
     local fallback = getCleanGrassName(node.Name)
-    nodeCleanNameCache.ids[node] = fallback or false
-    return fallback or nil
+    if fallback and isValidGrassNodeID(fallback) then
+        nodeCleanNameCache.ids[node] = fallback
+        return fallback
+    end
+
+    nodeCleanNameCache.ids[node] = false
+    return nil
+end
+
+local function resolveGrassNode(inst)
+    if not inst then return nil end
+    local folder = cachedGrassFolder or workspace:FindFirstChild("CowVirtualGrass")
+    if not folder or inst == folder then return nil end
+
+    -- Must strictly be within the CowVirtualGrass folder
+    if not inst:IsDescendantOf(folder) then
+        return nil
+    end
+
+    local curr = inst
+    while curr and curr.Parent and curr.Parent ~= folder do
+        curr = curr.Parent
+    end
+    if not curr or curr.Parent ~= folder then
+        return nil
+    end
+
+    local nodeId = getNodeID(curr)
+    if nodeId and isValidGrassNodeID(nodeId) then
+        return curr
+    end
+
+    return nil
 end
 
 local function processGrassChomp(now, rootPos)
@@ -573,7 +589,10 @@ local function processGrassChomp(now, rootPos)
     if not targetGrassNode and currentTargetNode and currentTargetNode.Parent then
         local tPos = getNodePosition(currentTargetNode)
         if tPos and get2DDistanceSq(rootPos, tPos) <= 36 then
-            targetGrassNode = currentTargetNode
+            local id = getNodeID(currentTargetNode)
+            if id then
+                targetGrassNode = currentTargetNode
+            end
         end
     end
 
@@ -587,8 +606,11 @@ local function processGrassChomp(now, rootPos)
                 if nodePos then
                     local dSq = get2DDistanceSq(rootPos, nodePos)
                     if dSq < bestDistSq then
-                        bestDistSq = dSq
-                        targetGrassNode = node
+                        local nodeId = getNodeID(node)
+                        if nodeId then
+                            bestDistSq = dSq
+                            targetGrassNode = node
+                        end
                     end
                 end
             end
