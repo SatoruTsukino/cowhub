@@ -473,26 +473,142 @@ local function getSpotPosition(spot)
     return pos
 end
 
+local function resolveGrassNode(inst)
+    if not inst then return nil end
+    local folder = cachedGrassFolder or workspace:FindFirstChild("CowVirtualGrass")
+    if not folder or inst == folder then return nil end
+
+    if folder and inst:IsDescendantOf(folder) then
+        local curr = inst
+        while curr and curr.Parent and curr.Parent ~= folder do
+            curr = curr.Parent
+        end
+        if curr and curr.Parent == folder then
+            return curr
+        end
+    end
+
+    local attr = inst:GetAttribute("nodeID") or inst:GetAttribute("NodeID") or inst:GetAttribute("nodeId") or inst:GetAttribute("NodeId")
+    if attr then return inst end
+
+    if inst.Parent and inst.Parent ~= workspace and inst.Parent ~= folder then
+        local p = inst.Parent
+        local pAttr = p:GetAttribute("nodeID") or p:GetAttribute("NodeID") or p:GetAttribute("nodeId") or p:GetAttribute("NodeId")
+        if pAttr then return p end
+    end
+
+    if string.find(inst.Name, "Grass", 1, true) then return inst end
+    if inst.Parent and inst.Parent ~= workspace and inst.Parent ~= folder and string.find(inst.Parent.Name, "Grass", 1, true) then
+        return inst.Parent
+    end
+
+    return nil
+end
+
+local function getCleanGrassName(nodeName)
+    local cached = nodeCleanNameCache[nodeName]
+    if cached ~= nil then return cached or nil end
+
+    local cleanName = string.gsub(nodeName, "GrassVisual", "")
+    cleanName = string.gsub(cleanName, "^_+", "")
+    cleanName = string.gsub(cleanName, "_+$", "")
+
+    if string.match(cleanName, ".*Grass.*_[np%-]?%d+_[np%-]?%d+$") then
+        nodeCleanNameCache[nodeName] = cleanName
+        return cleanName
+    elseif string.find(cleanName, "Grass", 1, true) then
+        nodeCleanNameCache[nodeName] = cleanName
+        return cleanName
+    else
+        nodeCleanNameCache[nodeName] = false
+        return nil
+    end
+end
+
 local function getNodeID(node)
     if not node or not node.Parent then return nil end
     local cached = nodeCleanNameCache.ids[node]
     if cached ~= nil then return cached or nil end
 
     local attrId = node:GetAttribute("nodeID")
-    if attrId == nil then
-        attrId = node:GetAttribute("NodeID")
+    if attrId == nil then attrId = node:GetAttribute("NodeID") end
+    if attrId == nil then attrId = node:GetAttribute("nodeId") end
+    if attrId == nil then attrId = node:GetAttribute("NodeId") end
+
+    if attrId == nil and node.Parent and node.Parent ~= cachedGrassFolder and node.Parent ~= workspace then
+        attrId = node.Parent:GetAttribute("nodeID")
+        if attrId == nil then attrId = node.Parent:GetAttribute("NodeID") end
+        if attrId == nil then attrId = node.Parent:GetAttribute("nodeId") end
+        if attrId == nil then attrId = node.Parent:GetAttribute("NodeId") end
     end
 
     if attrId and attrId ~= "" then
-        attrId = tostring(attrId)
-        nodeCleanNameCache.ids[node] = attrId
-        return attrId
+        local cleanId = tostring(attrId)
+        if string.find(cleanId, "GrassVisual", 1, true) then
+            cleanId = string.gsub(cleanId, "GrassVisual", "")
+            cleanId = string.gsub(cleanId, "^_+", "")
+            cleanId = string.gsub(cleanId, "_+$", "")
+        end
+        nodeCleanNameCache.ids[node] = cleanId
+        return cleanId
     end
 
     -- Fallback: legacy name cleaning if attribute is absent
     local fallback = getCleanGrassName(node.Name)
     nodeCleanNameCache.ids[node] = fallback or false
     return fallback or nil
+end
+
+local function processGrassChomp(now, rootPos)
+    if (now - lastRaycastChompTime < 0.04) then return end
+    lastRaycastChompTime = now
+
+    local targetGrassNode = nil
+    local hit = workspace:Raycast(rootPos, RAYCAST_DOWN, raycastParams)
+    if hit and hit.Instance then
+        targetGrassNode = resolveGrassNode(hit.Instance)
+    end
+
+    -- Proximity Fallback 1: Current target node within 6 studs (36 sq)
+    if not targetGrassNode and currentTargetNode and currentTargetNode.Parent then
+        local tPos = getNodePosition(currentTargetNode)
+        if tPos and get2DDistanceSq(rootPos, tPos) <= 36 then
+            targetGrassNode = currentTargetNode
+        end
+    end
+
+    -- Proximity Fallback 2: Any grass node in CowVirtualGrass within 6 studs
+    if not targetGrassNode then
+        local grassNodes = getGrassNodes()
+        local bestDistSq = 36
+        for _, node in ipairs(grassNodes) do
+            if node and node.Parent then
+                local nodePos = getNodePosition(node)
+                if nodePos then
+                    local dSq = get2DDistanceSq(rootPos, nodePos)
+                    if dSq < bestDistSq then
+                        bestDistSq = dSq
+                        targetGrassNode = node
+                    end
+                end
+            end
+        end
+    end
+
+    if targetGrassNode then
+        local nodeId = getNodeID(targetGrassNode)
+        if nodeId then
+            if nodeId ~= lastChompedNode or (now - chompCooldown > 1) then
+                chompEvent:FireServer(nodeId)
+                lastChompedNode = nodeId
+                chompCooldown = now
+
+                if currentTargetNode and (currentTargetNode == targetGrassNode or currentTargetNode.Name == targetGrassNode.Name) then
+                    currentTargetNode = nil
+                end
+            end
+        end
+    end
 end
 
 local function applyGoldenAura(customRadius)
@@ -528,23 +644,6 @@ end
 
 if getgenv then
     getgenv().ApplyGoldenAura = applyGoldenAura
-end
-
-local function getCleanGrassName(nodeName)
-    local cached = nodeCleanNameCache[nodeName]
-    if cached ~= nil then return cached end
-
-    local cleanName = string.gsub(nodeName, "GrassVisual", "")
-    cleanName = string.gsub(cleanName, "^_+", "")
-    cleanName = string.gsub(cleanName, "_+$", "")
-
-    if string.match(cleanName, ".*Grass.*_[np%-]?%d+_[np%-]?%d+$") then
-        nodeCleanNameCache[nodeName] = cleanName
-        return cleanName
-    else
-        nodeCleanNameCache[nodeName] = false
-        return false
-    end
 end
 
 local function getMobPayload(mobName)
@@ -2999,12 +3098,21 @@ local function updateHeartbeatConnection()
                             needNewNode = true
                         else
                             local tPos = getNodePosition(currentTargetNode)
-                            if get2DDistanceSq(rootPos, tPos) < 16 then
-                                needNewNode = true
-                            elseif nodeCleanNameCache.onlyMatureGrass and ((currentTargetNode:GetAttribute("GrowthState") or currentTargetNode:GetAttribute("growthState")) ~= "Mature") then
-                                nodeBlacklist[currentTargetNode] = now + 5
-                                currentTargetNode = nil
-                                needNewNode = true
+                            local distSq = get2DDistanceSq(rootPos, tPos)
+                            if distSq < 16 then
+                                if autoChomp and (now - lastRaycastChompTime > 0.04) then
+                                    processGrassChomp(now, rootPos)
+                                end
+                                if not currentTargetNode or (now - chompCooldown > 2.0) then
+                                    needNewNode = true
+                                end
+                            elseif nodeCleanNameCache.onlyMatureGrass then
+                                local currGrowth = currentTargetNode:GetAttribute("GrowthState") or currentTargetNode:GetAttribute("growthState") or currentTargetNode:GetAttribute("growth_state")
+                                if currGrowth and string.lower(tostring(currGrowth)) ~= "mature" then
+                                    nodeBlacklist[currentTargetNode] = now + 5
+                                    currentTargetNode = nil
+                                    needNewNode = true
+                                end
                             end
                         end
 
@@ -3018,8 +3126,8 @@ local function updateHeartbeatConnection()
                                     local nodePos = getNodePosition(node)
                                     -- Distance check FIRST: only parse strings if inside farm radius
                                     if get2DDistanceSq(anchorPos, nodePos) <= farmRadiusSq then
-                                        local growth = node:GetAttribute("GrowthState") or node:GetAttribute("growthState")
-                                        if not nodeCleanNameCache.onlyMatureGrass or growth == "Mature" then
+                                        local growth = node:GetAttribute("GrowthState") or node:GetAttribute("growthState") or node:GetAttribute("growth_state")
+                                        if not nodeCleanNameCache.onlyMatureGrass or (growth and string.lower(tostring(growth)) == "mature") then
                                             local nodeId = getNodeID(node)
                                             if nodeId then
                                                 local distFromGhostSq = get2DDistanceSq(ghostPos, nodePos)
@@ -3178,43 +3286,7 @@ local function updateHeartbeatConnection()
 
                 -- 3. Raycast Grass Chomp Logic (Yields to Mobs & Dodging)
                 if autoChomp and not (manatite and manatite.auto) and not (mithril and mithril.auto) and not prioritizedMobThisFrame and not isUnderground and not isDodging then
-                    if (now - lastRaycastChompTime > 0.04) then
-                        lastRaycastChompTime = now
-                        local hit = workspace:Raycast(rootPos, RAYCAST_DOWN, raycastParams)
-
-                        if hit and hit.Instance then
-                            local actualNode = hit.Instance
-
-                            if not string.find(actualNode.Name, "Grass", 1, true) and actualNode.Parent then
-                                if string.find(actualNode.Parent.Name, "Grass", 1, true) then
-                                    actualNode = actualNode.Parent
-                                end
-                            end
-
-                            local grassNode = actualNode
-                            if not grassNode:GetAttribute("nodeID") and not grassNode:GetAttribute("NodeID") then
-                                if grassNode.Parent and (grassNode.Parent == cachedGrassFolder or grassNode.Parent:GetAttribute("nodeID") or grassNode.Parent:GetAttribute("NodeID")) then
-                                    grassNode = grassNode.Parent
-                                end
-                            end
-
-                            local nodeId = getNodeID(grassNode)
-                            if nodeId then
-                                local growth = grassNode:GetAttribute("GrowthState") or grassNode:GetAttribute("growthState")
-                                if not nodeCleanNameCache.onlyMatureGrass or growth == nil or growth == "Mature" then
-                                    if nodeId ~= lastChompedNode or (now - chompCooldown > 1) then
-                                        chompEvent:FireServer(nodeId)
-                                        lastChompedNode = nodeId
-                                        chompCooldown = now
-
-                                        if currentTargetNode and (currentTargetNode == grassNode or currentTargetNode.Name == grassNode.Name) then
-                                            currentTargetNode = nil
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
+                    processGrassChomp(now, rootPos)
                 end
 
                 -- 3b. Golden Grass Aura Logic (Periodic Pulse)

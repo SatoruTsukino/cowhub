@@ -839,20 +839,64 @@ function cache.getSpotPosition(spot)
     return pos
 end
 
+function cache.resolveGrassNode(inst)
+    if not inst then return nil end
+    local folder = cache.grassFolder or workspace:FindFirstChild("CowVirtualGrass")
+    if not folder or inst == folder then return nil end
+
+    if folder and inst:IsDescendantOf(folder) then
+        local curr = inst
+        while curr and curr.Parent and curr.Parent ~= folder do
+            curr = curr.Parent
+        end
+        if curr and curr.Parent == folder then
+            return curr
+        end
+    end
+
+    local attr = inst:GetAttribute("nodeID") or inst:GetAttribute("NodeID") or inst:GetAttribute("nodeId") or inst:GetAttribute("NodeId")
+    if attr then return inst end
+
+    if inst.Parent and inst.Parent ~= workspace and inst.Parent ~= folder then
+        local p = inst.Parent
+        local pAttr = p:GetAttribute("nodeID") or p:GetAttribute("NodeID") or p:GetAttribute("nodeId") or p:GetAttribute("NodeId")
+        if pAttr then return p end
+    end
+
+    if string.find(inst.Name, "Grass", 1, true) then return inst end
+    if inst.Parent and inst.Parent ~= workspace and inst.Parent ~= folder and string.find(inst.Parent.Name, "Grass", 1, true) then
+        return inst.Parent
+    end
+
+    return nil
+end
+
 function cache.getNodeID(node)
     if not node or not node.Parent then return nil end
     local cached = cache.nodeIDs[node]
     if cached ~= nil then return cached or nil end
 
     local attrId = node:GetAttribute("nodeID")
-    if attrId == nil then
-        attrId = node:GetAttribute("NodeID")
+    if attrId == nil then attrId = node:GetAttribute("NodeID") end
+    if attrId == nil then attrId = node:GetAttribute("nodeId") end
+    if attrId == nil then attrId = node:GetAttribute("NodeId") end
+
+    if attrId == nil and node.Parent and node.Parent ~= cache.grassFolder and node.Parent ~= workspace then
+        attrId = node.Parent:GetAttribute("nodeID")
+        if attrId == nil then attrId = node.Parent:GetAttribute("NodeID") end
+        if attrId == nil then attrId = node.Parent:GetAttribute("nodeId") end
+        if attrId == nil then attrId = node.Parent:GetAttribute("NodeId") end
     end
 
     if attrId and attrId ~= "" then
-        attrId = tostring(attrId)
-        cache.nodeIDs[node] = attrId
-        return attrId
+        local cleanId = tostring(attrId)
+        if string.find(cleanId, "GrassVisual", 1, true) then
+            cleanId = string.gsub(cleanId, "GrassVisual", "")
+            cleanId = string.gsub(cleanId, "^_+", "")
+            cleanId = string.gsub(cleanId, "_+$", "")
+        end
+        cache.nodeIDs[node] = cleanId
+        return cleanId
     end
 
     -- Fallback: legacy name cleaning if attribute is absent
@@ -863,7 +907,7 @@ end
 
 function cache.getCleanGrassName(nodeName)
     local cached = cache.nodeCleanNames[nodeName]
-    if cached ~= nil then return cached end
+    if cached ~= nil then return cached or nil end
 
     local cleanName = string.gsub(nodeName, "GrassVisual", "")
     cleanName = string.gsub(cleanName, "^_+", "")
@@ -872,9 +916,12 @@ function cache.getCleanGrassName(nodeName)
     if string.match(cleanName, ".*Grass.*_[np%-]?%d+_[np%-]?%d+$") then
         cache.nodeCleanNames[nodeName] = cleanName
         return cleanName
+    elseif string.find(cleanName, "Grass", 1, true) then
+        cache.nodeCleanNames[nodeName] = cleanName
+        return cleanName
     else
         cache.nodeCleanNames[nodeName] = false
-        return false
+        return nil
     end
 end
 
@@ -3661,13 +3708,22 @@ function farm.processMovement(dt, now, rootPos)
             end
         else
             local tPos = cache.getNodePosition(farm.currentTargetNode)
-            if get2DDistanceSq(rootPos, tPos) < 16 then
-                needNewNode = true
-            elseif farm.onlyMatureGrass and ((farm.currentTargetNode:GetAttribute("GrowthState") or farm.currentTargetNode:GetAttribute("growthState")) ~= "Mature") then
-                cache.nodeBlacklist[farm.currentTargetNode] = now + 5
-                farm.currentTargetNode = nil
-                farm.currentNodeStartTime = 0
-                needNewNode = true
+            local distSq = get2DDistanceSq(rootPos, tPos)
+            if distSq < 16 then
+                if farm.autoChomp and (now - farm.lastRaycastChompTime >= (farm.grassChompDelay or 0.04)) then
+                    farm.processGrassChomp(now, rootPos)
+                end
+                if not farm.currentTargetNode or (farm.currentNodeStartTime > 0 and (now - farm.currentNodeStartTime > 2.0)) then
+                    needNewNode = true
+                end
+            elseif farm.onlyMatureGrass then
+                local currGrowth = farm.currentTargetNode:GetAttribute("GrowthState") or farm.currentTargetNode:GetAttribute("growthState") or farm.currentTargetNode:GetAttribute("growth_state")
+                if currGrowth and string.lower(tostring(currGrowth)) ~= "mature" then
+                    cache.nodeBlacklist[farm.currentTargetNode] = now + 5
+                    farm.currentTargetNode = nil
+                    farm.currentNodeStartTime = 0
+                    needNewNode = true
+                end
             elseif farm.currentNodeStartTime > 0 and (now - farm.currentNodeStartTime > 4.5) then
                 -- Timeout: couldn't reach node within 4.5 seconds
                 cache.nodeBlacklist[farm.currentTargetNode] = now + 15
@@ -3695,8 +3751,8 @@ function farm.processMovement(dt, now, rootPos)
                 if node.Parent then
                     local nodePos = cache.getNodePosition(node)
                     if get2DDistanceSq(farm.anchorPos, nodePos) <= farm.radiusSq then
-                        local growth = node:GetAttribute("GrowthState") or node:GetAttribute("growthState")
-                        if not farm.onlyMatureGrass or growth == "Mature" then
+                        local growth = node:GetAttribute("GrowthState") or node:GetAttribute("growthState") or node:GetAttribute("growth_state")
+                        if not farm.onlyMatureGrass or (growth and string.lower(tostring(growth)) == "mature") then
                             local nodeId = cache.getNodeID(node)
                             if nodeId then
                                 local distFromGhostSq = get2DDistanceSq(ghostPos, nodePos)
@@ -3941,38 +3997,51 @@ function farm.processGrassChomp(now, rootPos)
     local chompDelay = farm.grassChompDelay or 0.04
     if (now - farm.lastRaycastChompTime >= chompDelay) then
         farm.lastRaycastChompTime = now
+
+        local targetGrassNode = nil
         local hit = workspace:Raycast(rootPos, RAYCAST_DOWN, raycastParams)
-
         if hit and hit.Instance then
-            local actualNode = hit.Instance
+            targetGrassNode = cache.resolveGrassNode(hit.Instance)
+        end
 
-            if not string.find(actualNode.Name, "Grass", 1, true) and actualNode.Parent then
-                if string.find(actualNode.Parent.Name, "Grass", 1, true) then
-                    actualNode = actualNode.Parent
-                end
+        -- Proximity Fallback 1: Current target node within 6 studs (36 sq)
+        if not targetGrassNode and farm.currentTargetNode and farm.currentTargetNode.Parent then
+            local tPos = cache.getNodePosition(farm.currentTargetNode)
+            if tPos and get2DDistanceSq(rootPos, tPos) <= 36 then
+                targetGrassNode = farm.currentTargetNode
             end
+        end
 
-            local grassNode = actualNode
-            if not grassNode:GetAttribute("nodeID") and not grassNode:GetAttribute("NodeID") then
-                if grassNode.Parent and (grassNode.Parent == cache.grassFolder or grassNode.Parent:GetAttribute("nodeID") or grassNode.Parent:GetAttribute("NodeID")) then
-                    grassNode = grassNode.Parent
-                end
-            end
-
-            local nodeId = cache.getNodeID(grassNode)
-            if nodeId then
-                local growth = grassNode:GetAttribute("GrowthState") or grassNode:GetAttribute("growthState")
-                if not farm.onlyMatureGrass or growth == nil or growth == "Mature" then
-                    local repeatDelay = farm.grassChompRepeatDelay or 0.5
-                    if nodeId ~= farm.lastChompedNode or (now - farm.chompCooldown >= repeatDelay) then
-                        chompEvent:FireServer(nodeId)
-                        farm.lastChompedNode = nodeId
-                        farm.chompCooldown = now
-
-                        if farm.currentTargetNode and (farm.currentTargetNode == grassNode or farm.currentTargetNode.Name == grassNode.Name) then
-                            farm.currentTargetNode = nil
-                            farm.currentNodeStartTime = 0
+        -- Proximity Fallback 2: Any grass node in CowVirtualGrass within 6 studs
+        if not targetGrassNode then
+            local grassNodes = cache.getGrassNodes()
+            local bestDistSq = 36
+            for _, node in ipairs(grassNodes) do
+                if node and node.Parent then
+                    local nodePos = cache.getNodePosition(node)
+                    if nodePos then
+                        local dSq = get2DDistanceSq(rootPos, nodePos)
+                        if dSq < bestDistSq then
+                            bestDistSq = dSq
+                            targetGrassNode = node
                         end
+                    end
+                end
+            end
+        end
+
+        if targetGrassNode then
+            local nodeId = cache.getNodeID(targetGrassNode)
+            if nodeId then
+                local repeatDelay = farm.grassChompRepeatDelay or 0.5
+                if nodeId ~= farm.lastChompedNode or (now - farm.chompCooldown >= repeatDelay) then
+                    chompEvent:FireServer(nodeId)
+                    farm.lastChompedNode = nodeId
+                    farm.chompCooldown = now
+
+                    if farm.currentTargetNode and (farm.currentTargetNode == targetGrassNode or farm.currentTargetNode.Name == targetGrassNode.Name) then
+                        farm.currentTargetNode = nil
+                        farm.currentNodeStartTime = 0
                     end
                 end
             end
