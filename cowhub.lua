@@ -92,6 +92,27 @@ local raycastParams = RaycastParams.new()
 raycastParams.FilterType = Enum.RaycastFilterType.Exclude
 raycastParams.FilterDescendantsInstances = {char}
 
+local wallRaycastParams = RaycastParams.new()
+wallRaycastParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local ELEVATED_OFFSET = Vector3.new(0, 1.2, 0)
+local LOW_OFFSET = Vector3.new(0, 0.6, 0)
+local HIGH_OFFSET = Vector3.new(0, 2.0, 0)
+local JUMP_OFFSET = Vector3.new(0, 3.8, 0)
+
+local function updateWallRaycastFilter()
+    local filter = {}
+    if char then
+        table.insert(filter, char)
+    end
+    local gFolder = (cache and cache.grassFolder) or workspace:FindFirstChild("CowVirtualGrass")
+    if gFolder and gFolder.Parent then
+        table.insert(filter, gFolder)
+    end
+    wallRaycastParams.FilterDescendantsInstances = filter
+end
+updateWallRaycastFilter()
+
 local manatite
 local mithril
 
@@ -101,6 +122,7 @@ local charConn = plr.CharacterAdded:Connect(function(newChar)
     humanoid = char:WaitForChild("Humanoid")
     if humanoid then dodge.originalWalkSpeed = humanoid.WalkSpeed end
     raycastParams.FilterDescendantsInstances = {char}
+    updateWallRaycastFilter()
     updateCharBaseParts(newChar)
     dodge.isDodging = false
     dodge.isUnderground = false
@@ -166,6 +188,7 @@ local farm = {
     unstickTargetPos = nil,
     unstickEndTime = 0,
     currentNodeStartTime = 0,
+    lastNodeSearchTime = 0,
 }
 
 local dodge = {
@@ -239,11 +262,13 @@ local cache = {
     mithrilCaveMobSet = setmetatable({}, { __mode = "k" }),
     spiderIdentifier = setmetatable({}, { __mode = "k" }),
     cachedMithrilCaveFolder = nil,
+    solidObstacle = setmetatable({}, { __mode = "k" }),
     isEPressed = false,
     lastBackgroundTime = 0,
     isCachingBackground = false,
     lastSanitationTime = 0,
 }
+updateWallRaycastFilter()
 
 local auction = {
     lotNames = {"Lot1", "Lot2", "Lot3", "Lot4"},
@@ -481,6 +506,15 @@ function spiderLogger.extractIdentifier(val, depth)
 
     local valType = typeof(val)
     if valType == "string" then
+        if string.find(val, "Grass", 1, true)
+            or string.find(val, "VirtualGrass", 1, true)
+            or string.find(val, "Manatite", 1, true)
+            or string.find(val, "Mithril", 1, true)
+            or string.find(val, "Ore", 1, true)
+            or string.find(val, "Fish", 1, true) then
+            return nil
+        end
+
         local num = string.match(val, "Cavern_Mob_Spider_(%d+)")
             or string.match(val, "Spider_(%d+)")
             or string.match(val, "Mob_Spider_(%d+)")
@@ -540,6 +574,10 @@ function spiderLogger.recordIdentifier(idStr, source, mobInstance, extraRaw)
     if not spiderLogger.idSet[idStr] then
         spiderLogger.idSet[idStr] = true
         table.insert(spiderLogger.data.identifiers, idStr)
+        if #spiderLogger.data.identifiers > 200 then
+            local oldId = table.remove(spiderLogger.data.identifiers, 1)
+            if oldId then spiderLogger.idSet[oldId] = nil end
+        end
         changed = true
     end
 
@@ -626,6 +664,16 @@ spiderLogger.load()
 
 -- Hook ChompRequest for server-fired responses & client-fired bite events
 local function onChompRemoteReceived(source, ...)
+    local firstArg = ...
+    if firstArg then
+        local firstStr = tostring(firstArg)
+        if string.find(firstStr, "Grass", 1, true)
+            or string.find(firstStr, "VirtualGrass", 1, true)
+            or string.find(firstStr, "Manatite", 1, true)
+            or string.find(firstStr, "Mithril", 1, true) then
+            return
+        end
+    end
     local args = {...}
     task.spawn(function()
         local id = nil
@@ -665,16 +713,20 @@ pcall(function()
                 local isOurs = (checkcaller and checkcaller()) or spiderLogger.isInternalFire
                 if not isOurs then
                     local args = {...}
-                    task.spawn(function()
-                        local id = nil
-                        for _, arg in ipairs(args) do
-                            id = spiderLogger.extractIdentifier(arg)
-                            if id then break end
-                        end
-                        if id then
-                            spiderLogger.recordIdentifier(id, "GameInputController", spiderLogger.currentUnknownMob, args[1])
-                        end
-                    end)
+                    local firstArg = args[1]
+                    local firstStr = firstArg and tostring(firstArg) or ""
+                    if not (string.find(firstStr, "Grass", 1, true) or string.find(firstStr, "VirtualGrass", 1, true)) then
+                        task.spawn(function()
+                            local id = nil
+                            for _, arg in ipairs(args) do
+                                id = spiderLogger.extractIdentifier(arg)
+                                if id then break end
+                            end
+                            if id then
+                                spiderLogger.recordIdentifier(id, "GameInputController", spiderLogger.currentUnknownMob, args[1])
+                            end
+                        end)
+                    end
                 end
             end
             return oldNamecall(self, ...)
@@ -733,6 +785,7 @@ function cache.getGrassNodes()
     local now = os.clock()
     if not cache.grassFolder or not cache.grassFolder.Parent then
         cache.grassFolder = workspace:FindFirstChild("CowVirtualGrass")
+        updateWallRaycastFilter()
     end
     if cache.grassFolder and (now - cache.lastGrassTime > 4 or #cache.grassNodes == 0) then
         cache.lastGrassTime = now
@@ -813,10 +866,10 @@ function cache.getMobPayload(mobName)
 end
 
 function cache.cleanupNodeBlacklist(now)
-    if now - cache.lastBlacklistCleanup > 15 then
+    if now - cache.lastBlacklistCleanup > 10 then
         cache.lastBlacklistCleanup = now
         for node, timestamp in pairs(cache.nodeBlacklist) do
-            if not node or not node.Parent or (now - timestamp > 10) then
+            if not node or not node.Parent or (now >= timestamp) then
                 cache.nodeBlacklist[node] = nil
             end
         end
@@ -2750,12 +2803,18 @@ end
 -- PERIODIC MEMORY SANITATION & GC ASSISTANCE
 -- ==========================
 function cache.sanitizeMemory(now)
-    if now - cache.lastSanitationTime > 30 then
+    if now - cache.lastSanitationTime > 15 then
         cache.lastSanitationTime = now
 
         for node, _ in pairs(cache.nodePosition) do
             if not node or not node.Parent then
                 cache.nodePosition[node] = nil
+            end
+        end
+
+        for part, _ in pairs(cache.solidObstacle) do
+            if not part or not part.Parent then
+                cache.solidObstacle[part] = nil
             end
         end
 
@@ -2799,7 +2858,7 @@ function cache.sanitizeMemory(now)
 
         pcall(function()
             if collectgarbage then
-                collectgarbage("step", 100)
+                collectgarbage("step", 500)
             end
         end)
     end
@@ -3330,23 +3389,40 @@ end
 -- Checks if a part represents a solid physical barrier (wall, building, fence, rock)
 function farm.isSolidObstacle(instance)
     if not instance or not instance:IsA("BasePart") then return false end
-    if not instance.CanCollide then return false end
-    if char and instance:IsDescendantOf(char) then return false end
-    if cache.grassFolder and instance:IsDescendantOf(cache.grassFolder) then return false end
-    local name = instance.Name
-    if name == "VirtualGrass" or name == "Grass" or string.find(name, "Grass", 1, true) then return false end
-    local model = instance:FindFirstAncestorOfClass("Model")
-    if model and model ~= workspace and (model:FindFirstChildOfClass("Humanoid") or model:FindFirstChild("Mob") or model:FindFirstChild("Monster")) then
+    local cached = cache.solidObstacle[instance]
+    if cached ~= nil then return cached end
+
+    if not instance.CanCollide then
+        cache.solidObstacle[instance] = false
         return false
     end
+    if char and instance:IsDescendantOf(char) then
+        cache.solidObstacle[instance] = false
+        return false
+    end
+    if cache.grassFolder and instance:IsDescendantOf(cache.grassFolder) then
+        cache.solidObstacle[instance] = false
+        return false
+    end
+    local name = instance.Name
+    if name == "VirtualGrass" or name == "Grass" or string.find(name, "Grass", 1, true) then
+        cache.solidObstacle[instance] = false
+        return false
+    end
+    local model = instance:FindFirstAncestorOfClass("Model")
+    if model and model ~= workspace and (model:FindFirstChildOfClass("Humanoid") or model:FindFirstChild("Mob") or model:FindFirstChild("Monster")) then
+        cache.solidObstacle[instance] = false
+        return false
+    end
+    cache.solidObstacle[instance] = true
     return true
 end
 
 -- Raycasts between startPos and endPos to determine if a solid wall or obstacle obstructs the path
 function farm.hasWallBetween(startPos, endPos)
     if not startPos or not endPos then return false end
-    local startElevated = startPos + Vector3.new(0, 1.2, 0)
-    local endElevated = endPos + Vector3.new(0, 1.2, 0)
+    local startElevated = startPos + ELEVATED_OFFSET
+    local endElevated = endPos + ELEVATED_OFFSET
     local fullDir = endElevated - startElevated
     local totalDist = fullDir.Magnitude
     if totalDist < 1.0 then return false end
@@ -3354,12 +3430,12 @@ function farm.hasWallBetween(startPos, endPos)
     local dirUnit = fullDir.Unit
     local curOrigin = startElevated
     local remainingDist = totalDist
-    local maxIterations = 4
+    local maxIterations = 3
 
     while remainingDist > 0.5 and maxIterations > 0 do
         maxIterations = maxIterations - 1
         local rayDir = dirUnit * remainingDist
-        local hit = workspace:Raycast(curOrigin, rayDir, raycastParams)
+        local hit = workspace:Raycast(curOrigin, rayDir, wallRaycastParams)
         if not hit then
             return false
         end
@@ -3385,12 +3461,12 @@ end
 function farm.checkForwardWall(rootPos, moveDir, checkDist)
     local dist = checkDist or 4.5
     local dir = moveDir * dist
-    local originLow = rootPos + Vector3.new(0, 0.6, 0)
-    local originHigh = rootPos + Vector3.new(0, 2.0, 0)
-    local originJump = rootPos + Vector3.new(0, 3.8, 0)
+    local originLow = rootPos + LOW_OFFSET
+    local originHigh = rootPos + HIGH_OFFSET
+    local originJump = rootPos + JUMP_OFFSET
 
-    local hitLow = workspace:Raycast(originLow, dir, raycastParams)
-    local hitHigh = workspace:Raycast(originHigh, dir, raycastParams)
+    local hitLow = workspace:Raycast(originLow, dir, wallRaycastParams)
+    local hitHigh = workspace:Raycast(originHigh, dir, wallRaycastParams)
 
     local lowSolid = hitLow and farm.isSolidObstacle(hitLow.Instance) and (hitLow.Normal.Y <= 0.65)
     local highSolid = hitHigh and farm.isSolidObstacle(hitHigh.Instance) and (hitHigh.Normal.Y <= 0.65)
@@ -3401,7 +3477,7 @@ function farm.checkForwardWall(rootPos, moveDir, checkDist)
 
     -- Case 1: Low obstacle (small fence, curb, rock), but high clearance is completely open
     if lowSolid and not highSolid then
-        local hitJump = workspace:Raycast(originJump, dir, raycastParams)
+        local hitJump = workspace:Raycast(originJump, dir, wallRaycastParams)
         local jumpBlocked = hitJump and farm.isSolidObstacle(hitJump.Instance) and (hitJump.Normal.Y <= 0.65)
         if not jumpBlocked then
             return nil, true
@@ -3422,7 +3498,7 @@ function farm.checkForwardWall(rootPos, moveDir, checkDist)
             local steerDir = (chosenTan * 0.85 + norm2D * 0.45).Unit
 
             -- Check if primary tangent is blocked by an adjacent corner
-            local cornerCheck = workspace:Raycast(originHigh, steerDir * 3.0, raycastParams)
+            local cornerCheck = workspace:Raycast(originHigh, steerDir * 3.0, wallRaycastParams)
             if cornerCheck and farm.isSolidObstacle(cornerCheck.Instance) and (cornerCheck.Normal.Y <= 0.65) then
                 local altTan = (chosenTan == tan1) and tan2 or tan1
                 steerDir = (altTan * 0.85 + norm2D * 0.45).Unit
@@ -3451,12 +3527,12 @@ local ESCAPE_ANGLES = {
 function farm.findClearEscapeDirection(rootPos)
     local bestDir = nil
     local bestScore = -math.huge
-    local rayOrigin = rootPos + Vector3.new(0, 1.2, 0)
+    local rayOrigin = rootPos + ELEVATED_OFFSET
     local scanDist = 16.0
 
     for _, angle in ipairs(ESCAPE_ANGLES) do
         local dir = Vector3.new(math.cos(angle), 0, math.sin(angle))
-        local hit = workspace:Raycast(rayOrigin, dir * scanDist, raycastParams)
+        local hit = workspace:Raycast(rayOrigin, dir * scanDist, wallRaycastParams)
         local clearDist = scanDist
         if hit and farm.isSolidObstacle(hit.Instance) and (hit.Normal.Y <= 0.65) then
             clearDist = (hit.Position - rayOrigin).Magnitude
@@ -3547,7 +3623,9 @@ function farm.processMovement(dt, now, rootPos)
 
         local needNewNode = false
         if not farm.currentTargetNode or not farm.currentTargetNode.Parent then
-            needNewNode = true
+            if now - farm.lastNodeSearchTime >= 0.25 then
+                needNewNode = true
+            end
         else
             local tPos = cache.getNodePosition(farm.currentTargetNode)
             if get2DDistanceSq(rootPos, tPos) < 16 then
@@ -3568,6 +3646,7 @@ function farm.processMovement(dt, now, rootPos)
         end
 
         if needNewNode then
+            farm.lastNodeSearchTime = now
             local nearestDistSq = math.huge
             local nearestNode = nil
             local fallbackNode = nil
@@ -3588,14 +3667,16 @@ function farm.processMovement(dt, now, rootPos)
                                     fallbackNode = node
                                 end
 
-                                local isBlocked = false
-                                if farm.collisionDetection then
-                                    isBlocked = farm.hasWallBetween(rootPos, nodePos)
-                                end
+                                if distFromGhostSq < nearestDistSq then
+                                    local isBlocked = false
+                                    if farm.collisionDetection then
+                                        isBlocked = farm.hasWallBetween(rootPos, nodePos)
+                                    end
 
-                                if not isBlocked and distFromGhostSq < nearestDistSq then
-                                    nearestDistSq = distFromGhostSq
-                                    nearestNode = node
+                                    if not isBlocked then
+                                        nearestDistSq = distFromGhostSq
+                                        nearestNode = node
+                                    end
                                 end
                             end
                         end
@@ -3608,6 +3689,7 @@ function farm.processMovement(dt, now, rootPos)
                 farm.currentTargetNode = chosenNode
                 farm.currentNodeStartTime = now
                 cache.nodeBlacklist[chosenNode] = now
+                farm.lastNodeSearchTime = 0
             else
                 farm.currentTargetNode = nil
                 farm.currentNodeStartTime = 0
@@ -4160,6 +4242,7 @@ MainTab:CreateToggle({
         farm.stuckCounter = 0
         farm.lastStuckCheckPos = nil
         farm.lastStuckCheckTime = 0
+        farm.lastNodeSearchTime = 0
 
         if Value then
             farm.anchorPos = root.Position
