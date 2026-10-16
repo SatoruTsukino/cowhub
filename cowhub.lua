@@ -152,6 +152,8 @@ local farm = {
     lastChompedNode = "",
     chompCooldown = 0,
     lastRaycastChompTime = 0,
+    grassChompDelay = 0.04,
+    grassChompRepeatDelay = 0.5,
     lastChompedMob = "",
     mobChompCooldown = 0,
     castCooldown = 0,
@@ -3813,7 +3815,8 @@ function farm.processMobAura(now, rootPos)
 end
 
 function farm.processGrassChomp(now, rootPos)
-    if (now - farm.lastRaycastChompTime > 0.04) then
+    local chompDelay = farm.grassChompDelay or 0.04
+    if (now - farm.lastRaycastChompTime >= chompDelay) then
         farm.lastRaycastChompTime = now
         local hit = workspace:Raycast(rootPos, RAYCAST_DOWN, raycastParams)
 
@@ -3830,7 +3833,8 @@ function farm.processGrassChomp(now, rootPos)
             if string.find(nodeName, "Grass", 1, true) then
                 local cleanName = cache.getCleanGrassName(nodeName)
                 if cleanName then
-                    if cleanName ~= farm.lastChompedNode or (now - farm.chompCooldown > 1) then
+                    local repeatDelay = farm.grassChompRepeatDelay or 0.5
+                    if cleanName ~= farm.lastChompedNode or (now - farm.chompCooldown >= repeatDelay) then
                         chompEvent:FireServer(cleanName)
                         farm.lastChompedNode = cleanName
                         farm.chompCooldown = now
@@ -4246,6 +4250,36 @@ MainTab:CreateToggle({
 
 
 MainTab:CreateSection({ Name = "Aura & Pattern Configuration" })
+
+MainTab:CreateDropdown({
+    Name = "Grass Chomp Speed",
+    Options = {"Insane (0.01s)", "Very Fast (0.04s)", "Fast (0.1s)", "Normal (0.25s)", "Slow (0.5s)", "Very Slow (1.0s)"},
+    CurrentOption = {"Very Fast (0.04s)"},
+    MultipleOptions = false,
+    Flag = "Dropdown_GrassSpeed",
+    Callback = function(Option)
+        local selection = type(Option) == "table" and Option[1] or Option
+        if selection == "Insane (0.01s)" then
+            farm.grassChompDelay = 0.01
+            farm.grassChompRepeatDelay = 0.2
+        elseif selection == "Very Fast (0.04s)" then
+            farm.grassChompDelay = 0.04
+            farm.grassChompRepeatDelay = 0.5
+        elseif selection == "Fast (0.1s)" then
+            farm.grassChompDelay = 0.1
+            farm.grassChompRepeatDelay = 0.75
+        elseif selection == "Normal (0.25s)" then
+            farm.grassChompDelay = 0.25
+            farm.grassChompRepeatDelay = 1.0
+        elseif selection == "Slow (0.5s)" then
+            farm.grassChompDelay = 0.5
+            farm.grassChompRepeatDelay = 1.5
+        elseif selection == "Very Slow (1.0s)" then
+            farm.grassChompDelay = 1.0
+            farm.grassChompRepeatDelay = 2.0
+        end
+    end,
+})
 
 MainTab:CreateDropdown({
     Name = "Mob Aura Speed",
