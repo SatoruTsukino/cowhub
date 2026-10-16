@@ -179,7 +179,7 @@ local state = {
 -- CONFIGURATION (defaults, overridden by saved config & UI)
 -- ============================
 local TARGET_SKIN_ID = ""
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1558179605590970441/FriRPRhVe5j2wpuBOvT5a2MGYotX8eYHaB7Zij98yZA6Su3WaiKV7JNDrAxU9uP8xslw"
+local WEBHOOK_URL = ""
 local NOTIFY_ON_HOP = false
 local HOP_DELAY = 3
 local AUCTION_WAIT_INTERVAL = 30
