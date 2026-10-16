@@ -189,6 +189,10 @@ local farm = {
     unstickEndTime = 0,
     currentNodeStartTime = 0,
     lastNodeSearchTime = 0,
+    onlyMatureGrass = true,
+    goldenAura = false,
+    goldenAuraRadius = 60,
+    lastGoldenAuraTime = 0,
 }
 
 local dodge = {
@@ -242,6 +246,7 @@ local cache = {
     nodeBlacklist = setmetatable({}, { __mode = "k" }),
     lastBlacklistCleanup = 0,
     nodeCleanNames = {},
+    nodeIDs = setmetatable({}, { __mode = "k" }),
     mobPayloads = {},
     nodePosition = setmetatable({}, { __mode = "k" }),
     mobAttackOriginPart = setmetatable({}, { __mode = "kv" }),
@@ -832,6 +837,28 @@ function cache.getSpotPosition(spot)
         cache.fishingSpotPos[spot] = pos
     end
     return pos
+end
+
+function cache.getNodeID(node)
+    if not node or not node.Parent then return nil end
+    local cached = cache.nodeIDs[node]
+    if cached ~= nil then return cached or nil end
+
+    local attrId = node:GetAttribute("nodeID")
+    if attrId == nil then
+        attrId = node:GetAttribute("NodeID")
+    end
+
+    if attrId and attrId ~= "" then
+        attrId = tostring(attrId)
+        cache.nodeIDs[node] = attrId
+        return attrId
+    end
+
+    -- Fallback: legacy name cleaning if attribute is absent
+    local fallback = cache.getCleanGrassName(node.Name)
+    cache.nodeIDs[node] = fallback or false
+    return fallback or nil
 end
 
 function cache.getCleanGrassName(nodeName)
@@ -2812,6 +2839,12 @@ function cache.sanitizeMemory(now)
             end
         end
 
+        for node, _ in pairs(cache.nodeIDs) do
+            if not node or not node.Parent then
+                cache.nodeIDs[node] = nil
+            end
+        end
+
         for part, _ in pairs(cache.solidObstacle) do
             if not part or not part.Parent then
                 cache.solidObstacle[part] = nil
@@ -3630,6 +3663,11 @@ function farm.processMovement(dt, now, rootPos)
             local tPos = cache.getNodePosition(farm.currentTargetNode)
             if get2DDistanceSq(rootPos, tPos) < 16 then
                 needNewNode = true
+            elseif farm.onlyMatureGrass and ((farm.currentTargetNode:GetAttribute("GrowthState") or farm.currentTargetNode:GetAttribute("growthState")) ~= "Mature") then
+                cache.nodeBlacklist[farm.currentTargetNode] = now + 5
+                farm.currentTargetNode = nil
+                farm.currentNodeStartTime = 0
+                needNewNode = true
             elseif farm.currentNodeStartTime > 0 and (now - farm.currentNodeStartTime > 4.5) then
                 -- Timeout: couldn't reach node within 4.5 seconds
                 cache.nodeBlacklist[farm.currentTargetNode] = now + 15
@@ -3657,25 +3695,28 @@ function farm.processMovement(dt, now, rootPos)
                 if node.Parent then
                     local nodePos = cache.getNodePosition(node)
                     if get2DDistanceSq(farm.anchorPos, nodePos) <= farm.radiusSq then
-                        local cleanName = cache.getCleanGrassName(node.Name)
-                        if cleanName then
-                            local distFromGhostSq = get2DDistanceSq(ghostPos, nodePos)
-                            local blacklistedAt = cache.nodeBlacklist[node]
-                            if not blacklistedAt or now - blacklistedAt > 10 then
-                                if distFromGhostSq < fallbackDistSq then
-                                    fallbackDistSq = distFromGhostSq
-                                    fallbackNode = node
-                                end
-
-                                if distFromGhostSq < nearestDistSq then
-                                    local isBlocked = false
-                                    if farm.collisionDetection then
-                                        isBlocked = farm.hasWallBetween(rootPos, nodePos)
+                        local growth = node:GetAttribute("GrowthState") or node:GetAttribute("growthState")
+                        if not farm.onlyMatureGrass or growth == "Mature" then
+                            local nodeId = cache.getNodeID(node)
+                            if nodeId then
+                                local distFromGhostSq = get2DDistanceSq(ghostPos, nodePos)
+                                local blacklistedAt = cache.nodeBlacklist[node]
+                                if not blacklistedAt or now - blacklistedAt > 10 then
+                                    if distFromGhostSq < fallbackDistSq then
+                                        fallbackDistSq = distFromGhostSq
+                                        fallbackNode = node
                                     end
 
-                                    if not isBlocked then
-                                        nearestDistSq = distFromGhostSq
-                                        nearestNode = node
+                                    if distFromGhostSq < nearestDistSq then
+                                        local isBlocked = false
+                                        if farm.collisionDetection then
+                                            isBlocked = farm.hasWallBetween(rootPos, nodePos)
+                                        end
+
+                                        if not isBlocked then
+                                            nearestDistSq = distFromGhostSq
+                                            nearestNode = node
+                                        end
                                     end
                                 end
                             end
@@ -3911,17 +3952,24 @@ function farm.processGrassChomp(now, rootPos)
                 end
             end
 
-            local nodeName = actualNode.Name
-            if string.find(nodeName, "Grass", 1, true) then
-                local cleanName = cache.getCleanGrassName(nodeName)
-                if cleanName then
+            local grassNode = actualNode
+            if not grassNode:GetAttribute("nodeID") and not grassNode:GetAttribute("NodeID") then
+                if grassNode.Parent and (grassNode.Parent == cache.grassFolder or grassNode.Parent:GetAttribute("nodeID") or grassNode.Parent:GetAttribute("NodeID")) then
+                    grassNode = grassNode.Parent
+                end
+            end
+
+            local nodeId = cache.getNodeID(grassNode)
+            if nodeId then
+                local growth = grassNode:GetAttribute("GrowthState") or grassNode:GetAttribute("growthState")
+                if not farm.onlyMatureGrass or growth == nil or growth == "Mature" then
                     local repeatDelay = farm.grassChompRepeatDelay or 0.5
-                    if cleanName ~= farm.lastChompedNode or (now - farm.chompCooldown >= repeatDelay) then
-                        chompEvent:FireServer(cleanName)
-                        farm.lastChompedNode = cleanName
+                    if nodeId ~= farm.lastChompedNode or (now - farm.chompCooldown >= repeatDelay) then
+                        chompEvent:FireServer(nodeId)
+                        farm.lastChompedNode = nodeId
                         farm.chompCooldown = now
 
-                        if farm.currentTargetNode and farm.currentTargetNode.Name == nodeName then
+                        if farm.currentTargetNode and (farm.currentTargetNode == grassNode or farm.currentTargetNode.Name == grassNode.Name) then
                             farm.currentTargetNode = nil
                             farm.currentNodeStartTime = 0
                         end
@@ -3930,6 +3978,42 @@ function farm.processGrassChomp(now, rootPos)
             end
         end
     end
+end
+
+function farm.applyGoldenAura(customRadius)
+    if not root then return 0 end
+    local radius = customRadius or farm.goldenAuraRadius or 60
+    local radiusSq = radius * radius
+    local rootPos = root.Position
+    local grassNodes = cache.getGrassNodes()
+    local count = 0
+
+    for _, node in ipairs(grassNodes) do
+        if node and node.Parent then
+            local nodePos = cache.getNodePosition(node)
+            if nodePos and get2DDistanceSq(rootPos, nodePos) <= radiusSq then
+                local nodeId = cache.getNodeID(node)
+                if nodeId then
+                    local isGolden = node:GetAttribute("Golden")
+                    if isGolden == nil then
+                        isGolden = node:GetAttribute("golden")
+                    end
+                    if isGolden ~= true then
+                        pcall(function()
+                            node:SetAttribute("Golden", true)
+                        end)
+                        count = count + 1
+                    end
+                end
+            end
+        end
+    end
+    return count
+end
+farm.setGoldenGrassAroundMe = farm.applyGoldenAura
+
+if getgenv then
+    getgenv().ApplyGoldenAura = farm.applyGoldenAura
 end
 
 function farm.processFishing(now, rootPos)
@@ -4096,7 +4180,7 @@ end
 -- MAIN ENGINE HEARTBEAT LOOP (Concise Dispatcher)
 -- ==========================
 local function updateHeartbeatConnection()
-    if farm.on or farm.autoChomp or farm.autoFish or farm.autoChompMobs or dodge.auto or (manatite and manatite.auto) or (mithril and mithril.auto) then
+    if farm.on or farm.autoChomp or farm.autoFish or farm.autoChompMobs or dodge.auto or farm.goldenAura or (manatite and manatite.auto) or (mithril and mithril.auto) then
         if not HeartbeatConnection then
             HeartbeatConnection = RunService.Heartbeat:Connect(function(dt)
                 if not root or not humanoid or not root.Parent or not humanoid.Parent or humanoid.Health <= 0 then
@@ -4162,6 +4246,12 @@ local function updateHeartbeatConnection()
                 -- 3. Raycast Grass Chomp Logic (Yields to Mobs & Dodging)
                 if farm.autoChomp and not (manatite and manatite.auto) and not (mithril and mithril.auto) and not prioritizedMobThisFrame and not dodge.isUnderground and not dodge.isDodging then
                     farm.processGrassChomp(now, rootPos)
+                end
+
+                -- 3b. Golden Grass Aura Logic (Periodic Pulse)
+                if farm.goldenAura and (now - farm.lastGoldenAuraTime > 0.3) then
+                    farm.lastGoldenAuraTime = now
+                    farm.applyGoldenAura()
                 end
 
                 -- 4. Auto-Fishing Logic
@@ -4245,11 +4335,15 @@ MainTab:CreateToggle({
         farm.lastNodeSearchTime = 0
 
         if Value then
+            farm.collisionDetection = true
+            farm.isUnsticking = false
+            farm.unstickTargetPos = nil
+            farm.stuckCounter = 0
             farm.anchorPos = root.Position
 
             Window:Notify({
                 Title = "Autofarm Enabled",
-                Content = "Absolute static home base set. Walking started.",
+                Content = "Absolute static home base set. Walking started with anti-stuck enabled.",
                 Duration = 3,
                 Image = 4483362458,
             })
@@ -4266,6 +4360,19 @@ MainTab:CreateToggle({
     Flag = "Toggle_Chomp",
     Callback = function(Value)
         farm.autoChomp = Value
+        updateHeartbeatConnection()
+    end,
+})
+
+MainTab:CreateToggle({
+    Name = "Enable Golden Grass Aura",
+    CurrentValue = false,
+    Flag = "Toggle_GoldenAura",
+    Callback = function(Value)
+        farm.goldenAura = Value
+        if Value then
+            farm.applyGoldenAura()
+        end
         updateHeartbeatConnection()
     end,
 })
@@ -4388,17 +4495,12 @@ MainTab:CreateDropdown({
     Callback = function(Option) farm.pattern = type(Option) == "table" and Option[1] or Option end,
 })
 
-MainTab:CreateSlider({
-    Name = "Farm Radius (Studs)",
-    Range = {10, 300},
-    Increment = 1,
-    Suffix = "Studs",
-    CurrentValue = 75,
-    Flag = "Slider_Radius",
+MainTab:CreateToggle({
+    Name = "Focus Only Mature Grass",
+    CurrentValue = true,
+    Flag = "Toggle_OnlyMatureGrass",
     Callback = function(Value)
-        farm.radius = Value
-        farm.radiusSq = farm.radius * farm.radius
-        updatePenVisualizer()
+        farm.onlyMatureGrass = Value
     end,
 })
 
@@ -4418,15 +4520,16 @@ MainTab:CreateDropdown({
     end,
 })
 
-MainTab:CreateToggle({
-    Name = "Wall Collision Detection & Anti-Stuck",
-    CurrentValue = true,
-    Flag = "Toggle_FarmCollision",
-    Callback = function(Value)
-        farm.collisionDetection = Value
-        farm.isUnsticking = false
-        farm.unstickTargetPos = nil
-        farm.stuckCounter = 0
+MainTab:CreateButton({
+    Name = "Turn On Golden Grass (Once)",
+    Callback = function()
+        local count = farm.applyGoldenAura(farm.goldenAuraRadius or 60)
+        Window:Notify({
+            Title = "Golden Aura",
+            Content = "Turned golden for " .. tostring(count) .. " nearby grass nodes.",
+            Duration = 2.5,
+            Image = 4483362458,
+        })
     end,
 })
 
@@ -4435,7 +4538,7 @@ MainTab:CreateSection({ Name = "Mob Attack Dodge Configuration" })
 MainTab:CreateDropdown({
     Name = "Dodge Method",
     Options = {"Underground", "Run Away (Surface)", "Teleport Away (Surface)"},
-    CurrentOption = {"Underground"},
+    CurrentOption = {"Teleport Away (Surface)"},
     MultipleOptions = false,
     Flag = "Dropdown_DodgeMethod",
     Callback = function(Option)
@@ -4445,79 +4548,6 @@ MainTab:CreateDropdown({
             root.Anchored = false
             dodge.isUnderground = false
         end
-    end,
-})
-
-MainTab:CreateSlider({
-    Name = "Retreat Distance (Studs)",
-    Range = {10, 60},
-    Increment = 1,
-    Suffix = "Studs",
-    CurrentValue = 25,
-    Flag = "Slider_DodgeRetreat",
-    Callback = function(Value)
-        dodge.retreatDistance = Value
-    end,
-})
-
-MainTab:CreateSlider({
-    Name = "Retreat Angle (Degrees)",
-    Range = {0, 90},
-    Increment = 5,
-    Suffix = "°",
-    CurrentValue = 45,
-    Flag = "Slider_DodgeAngle",
-    Callback = function(Value)
-        dodge.retreatAngle = Value
-    end,
-})
-
-MainTab:CreateSlider({
-    Name = "Retreat Walk Speed",
-    Range = {16, 50},
-    Increment = 1,
-    Suffix = "studs/s",
-    CurrentValue = 26,
-    Flag = "Slider_DodgeSpeed",
-    Callback = function(Value)
-        dodge.walkSpeed = Value
-    end,
-})
-
-MainTab:CreateSlider({
-    Name = "Underground Depth (Studs)",
-    Range = {0, 50},
-    Increment = 1,
-    Suffix = "Studs",
-    CurrentValue = 20,
-    Flag = "Slider_DodgeDepth",
-    Callback = function(Value)
-        dodge.undergroundDepth = Value
-    end,
-})
-
-MainTab:CreateSlider({
-    Name = "Dodge Detection Range (Studs)",
-    Range = {10, 50},
-    Increment = 1,
-    Suffix = "Studs",
-    CurrentValue = 15,
-    Flag = "Slider_DodgeRange",
-    Callback = function(Value)
-        dodge.detectionRadius = Value
-        dodge.detectionRadiusSq = Value * Value
-    end,
-})
-
-MainTab:CreateSlider({
-    Name = "Dodge Return Delay (Seconds)",
-    Range = {0.05, 2.5},
-    Increment = 0.05,
-    Suffix = "s",
-    CurrentValue = 0.6,
-    Flag = "Slider_DodgeLinger",
-    Callback = function(Value)
-        dodge.lingerDelay = Value
     end,
 })
 
@@ -4575,6 +4605,179 @@ MainTab:CreateToggle({
     CurrentValue = false,
     Flag = "Toggle_Spam_Q",
     Callback = function(Value) HandleSpam("Q", Value, 0.05) end,
+})
+
+-- ==========================
+-- UI SETUP: Sliders Tab
+-- ==========================
+local SlidersTab = Window:CreateTab({ Name = "Sliders", Icon = 4483362458 })
+
+SlidersTab:CreateSection({ Name = "Autofarm & Movement Sliders" })
+
+SlidersTab:CreateSlider({
+    Name = "Farm Radius (Studs)",
+    Range = {10, 300},
+    Increment = 1,
+    Suffix = "Studs",
+    CurrentValue = 75,
+    Flag = "Slider_Radius",
+    Callback = function(Value)
+        farm.radius = Value
+        farm.radiusSq = farm.radius * farm.radius
+        updatePenVisualizer()
+    end,
+})
+
+SlidersTab:CreateSlider({
+    Name = "Golden Aura Radius",
+    Range = {10, 150},
+    Increment = 5,
+    Suffix = "Studs",
+    CurrentValue = 60,
+    Flag = "Slider_GoldenRadius",
+    Callback = function(Value)
+        farm.goldenAuraRadius = Value
+    end,
+})
+
+SlidersTab:CreateSection({ Name = "Mob Attack Dodge Sliders" })
+
+SlidersTab:CreateSlider({
+    Name = "Dodge Detection Range (Studs)",
+    Range = {10, 50},
+    Increment = 1,
+    Suffix = "Studs",
+    CurrentValue = 15,
+    Flag = "Slider_DodgeRange",
+    Callback = function(Value)
+        dodge.detectionRadius = Value
+        dodge.detectionRadiusSq = Value * Value
+    end,
+})
+
+SlidersTab:CreateSlider({
+    Name = "Retreat Distance (Studs)",
+    Range = {10, 60},
+    Increment = 1,
+    Suffix = "Studs",
+    CurrentValue = 25,
+    Flag = "Slider_DodgeRetreat",
+    Callback = function(Value)
+        dodge.retreatDistance = Value
+    end,
+})
+
+SlidersTab:CreateSlider({
+    Name = "Retreat Angle (Degrees)",
+    Range = {0, 90},
+    Increment = 5,
+    Suffix = "°",
+    CurrentValue = 45,
+    Flag = "Slider_DodgeAngle",
+    Callback = function(Value)
+        dodge.retreatAngle = Value
+    end,
+})
+
+SlidersTab:CreateSlider({
+    Name = "Retreat Walk Speed",
+    Range = {16, 50},
+    Increment = 1,
+    Suffix = "studs/s",
+    CurrentValue = 26,
+    Flag = "Slider_DodgeSpeed",
+    Callback = function(Value)
+        dodge.walkSpeed = Value
+    end,
+})
+
+SlidersTab:CreateSlider({
+    Name = "Underground Depth (Studs)",
+    Range = {0, 50},
+    Increment = 1,
+    Suffix = "Studs",
+    CurrentValue = 20,
+    Flag = "Slider_DodgeDepth",
+    Callback = function(Value)
+        dodge.undergroundDepth = Value
+    end,
+})
+
+SlidersTab:CreateSlider({
+    Name = "Dodge Return Delay (Seconds)",
+    Range = {0.05, 2.5},
+    Increment = 0.05,
+    Suffix = "s",
+    CurrentValue = 0.6,
+    Flag = "Slider_DodgeLinger",
+    Callback = function(Value)
+        dodge.lingerDelay = Value
+    end,
+})
+
+SlidersTab:CreateSection({ Name = "Mining Sliders (Manatite & Mithril)" })
+
+SlidersTab:CreateSlider({
+    Name = "Manatite Chomp Delay",
+    Range = {0.05, 0.5},
+    Increment = 0.01,
+    Suffix = "s",
+    CurrentValue = 0.1,
+    Flag = "Slider_ManatiteDelay",
+    Callback = function(Value)
+        manatite.delay = Value
+    end,
+})
+
+SlidersTab:CreateSlider({
+    Name = "Manatite Teleport Height Offset",
+    Range = {0, 8},
+    Increment = 0.5,
+    Suffix = "Studs",
+    CurrentValue = 2.5,
+    Flag = "Slider_ManatiteHeight",
+    Callback = function(Value)
+        manatite.heightOffset = Value
+    end,
+})
+
+SlidersTab:CreateSlider({
+    Name = "Mithril Chomp Delay",
+    Range = {0.05, 0.5},
+    Increment = 0.01,
+    Suffix = "s",
+    CurrentValue = 0.1,
+    Flag = "Slider_MithrilDelay",
+    Callback = function(Value)
+        mithril.delay = Value
+    end,
+})
+
+SlidersTab:CreateSlider({
+    Name = "Mithril Teleport Height Offset",
+    Range = {0, 8},
+    Increment = 0.5,
+    Suffix = "Studs",
+    CurrentValue = 2.5,
+    Flag = "Slider_MithrilHeight",
+    Callback = function(Value)
+        mithril.heightOffset = Value
+    end,
+})
+
+SlidersTab:CreateSection({ Name = "Performance Sliders" })
+
+SlidersTab:CreateSlider({
+    Name = "FPS Cap Limit",
+    Range = {15, 60},
+    Increment = 1,
+    Suffix = "FPS",
+    CurrentValue = 60,
+    Flag = "Slider_FPSCap",
+    Callback = function(Value)
+        fps.currentCap = Value
+        if fps.capEnabled and setfpscap then pcall(function() setfpscap(fps.currentCap) end) end
+    end,
 })
 
 -- ==========================
@@ -4650,30 +4853,6 @@ MiningTab:CreateDropdown({
         else
             manatite.order = "Nearest Available"
         end
-    end,
-})
-
-MiningTab:CreateSlider({
-    Name = "Manatite Chomp Delay",
-    Range = {0.05, 0.5},
-    Increment = 0.01,
-    Suffix = "s",
-    CurrentValue = 0.1,
-    Flag = "Slider_ManatiteDelay",
-    Callback = function(Value)
-        manatite.delay = Value
-    end,
-})
-
-MiningTab:CreateSlider({
-    Name = "Teleport Height Offset",
-    Range = {0, 8},
-    Increment = 0.5,
-    Suffix = "Studs",
-    CurrentValue = 2.5,
-    Flag = "Slider_ManatiteHeight",
-    Callback = function(Value)
-        manatite.heightOffset = Value
     end,
 })
 
@@ -4774,30 +4953,6 @@ MiningTab:CreateDropdown({
         else
             mithril.order = "Nearest Available"
         end
-    end,
-})
-
-MiningTab:CreateSlider({
-    Name = "Mithril Chomp Delay",
-    Range = {0.05, 0.5},
-    Increment = 0.01,
-    Suffix = "s",
-    CurrentValue = 0.1,
-    Flag = "Slider_MithrilDelay",
-    Callback = function(Value)
-        mithril.delay = Value
-    end,
-})
-
-MiningTab:CreateSlider({
-    Name = "Mithril Teleport Height Offset",
-    Range = {0, 8},
-    Increment = 0.5,
-    Suffix = "Studs",
-    CurrentValue = 2.5,
-    Flag = "Slider_MithrilHeight",
-    Callback = function(Value)
-        mithril.heightOffset = Value
     end,
 })
 
@@ -5371,19 +5526,6 @@ SettingsTab:CreateToggle({
     Callback = function(Value)
         fps.capEnabled = Value
         if setfpscap then pcall(function() setfpscap(fps.capEnabled and fps.currentCap or 60) end) end
-    end,
-})
-
-SettingsTab:CreateSlider({
-    Name = "FPS Cap Limit",
-    Range = {15, 60},
-    Increment = 1,
-    Suffix = "FPS",
-    CurrentValue = 60,
-    Flag = "Slider_FPSCap",
-    Callback = function(Value)
-        fps.currentCap = Value
-        if fps.capEnabled and setfpscap then pcall(function() setfpscap(fps.currentCap) end) end
     end,
 })
 
