@@ -143,8 +143,8 @@ local farm = {
     patternSpeed = 1.0,
     patternTimer = 0,
     nextRandomPos = nil,
-    radius = 75,
-    radiusSq = 75 * 75,
+    radius = 50,
+    radiusSq = 50 * 50,
     mobAuraRadiusSq = 100, -- Hardcoded 10 studs squared (10 * 10) - server-enforced attack reach
     mobAuraDelay = 0.1,
     lastMoveTime = 0,
@@ -156,11 +156,19 @@ local farm = {
     mobChompCooldown = 0,
     castCooldown = 0,
     lastFishingSearchTime = 0,
+    collisionDetection = true,
+    lastStuckCheckPos = nil,
+    lastStuckCheckTime = 0,
+    stuckCounter = 0,
+    isUnsticking = false,
+    unstickTargetPos = nil,
+    unstickEndTime = 0,
+    currentNodeStartTime = 0,
 }
 
 local dodge = {
     auto = false,
-    method = "Underground", -- "Underground", "Run Away (Surface)", "Teleport Away (Surface)"
+    method = "Teleport Away (Surface)", -- "Underground", "Run Away (Surface)", "Teleport Away (Surface)"
     isDodging = false,
     isUnderground = false,
     currentAttackingMob = nil,
@@ -3317,11 +3325,220 @@ function dodge.checkNearbyThreat(now, rootPos, prioritizedMobThisFrame)
     return hasNearbyThreat
 end
 
+-- Checks if a part represents a solid physical barrier (wall, building, fence, rock)
+function farm.isSolidObstacle(instance)
+    if not instance or not instance:IsA("BasePart") then return false end
+    if not instance.CanCollide then return false end
+    if char and instance:IsDescendantOf(char) then return false end
+    if cache.grassFolder and instance:IsDescendantOf(cache.grassFolder) then return false end
+    local name = instance.Name
+    if name == "VirtualGrass" or name == "Grass" or string.find(name, "Grass", 1, true) then return false end
+    local model = instance:FindFirstAncestorOfClass("Model")
+    if model and model ~= workspace and (model:FindFirstChildOfClass("Humanoid") or model:FindFirstChild("Mob") or model:FindFirstChild("Monster")) then
+        return false
+    end
+    return true
+end
+
+-- Raycasts between startPos and endPos to determine if a solid wall or obstacle obstructs the path
+function farm.hasWallBetween(startPos, endPos)
+    if not startPos or not endPos then return false end
+    local startElevated = startPos + Vector3.new(0, 1.2, 0)
+    local endElevated = endPos + Vector3.new(0, 1.2, 0)
+    local fullDir = endElevated - startElevated
+    local totalDist = fullDir.Magnitude
+    if totalDist < 1.0 then return false end
+
+    local dirUnit = fullDir.Unit
+    local curOrigin = startElevated
+    local remainingDist = totalDist
+    local maxIterations = 4
+
+    while remainingDist > 0.5 and maxIterations > 0 do
+        maxIterations = maxIterations - 1
+        local rayDir = dirUnit * remainingDist
+        local hit = workspace:Raycast(curOrigin, rayDir, raycastParams)
+        if not hit then
+            return false
+        end
+
+        if farm.isSolidObstacle(hit.Instance) then
+            if hit.Normal.Y <= 0.65 then
+                return true
+            end
+        end
+
+        local stepDist = (hit.Position - curOrigin).Magnitude + 0.15
+        if stepDist >= remainingDist then
+            break
+        end
+        remainingDist = remainingDist - stepDist
+        curOrigin = hit.Position + (dirUnit * 0.15)
+    end
+
+    return false
+end
+
+-- Checks for forward obstacles: jumps over low obstacles or calculates deflection along wall tangents
+function farm.checkForwardWall(rootPos, moveDir, checkDist)
+    local dist = checkDist or 4.5
+    local dir = moveDir * dist
+    local originLow = rootPos + Vector3.new(0, 0.6, 0)
+    local originHigh = rootPos + Vector3.new(0, 2.0, 0)
+    local originJump = rootPos + Vector3.new(0, 3.8, 0)
+
+    local hitLow = workspace:Raycast(originLow, dir, raycastParams)
+    local hitHigh = workspace:Raycast(originHigh, dir, raycastParams)
+
+    local lowSolid = hitLow and farm.isSolidObstacle(hitLow.Instance) and (hitLow.Normal.Y <= 0.65)
+    local highSolid = hitHigh and farm.isSolidObstacle(hitHigh.Instance) and (hitHigh.Normal.Y <= 0.65)
+
+    if not lowSolid and not highSolid then
+        return nil, false
+    end
+
+    -- Case 1: Low obstacle (small fence, curb, rock), but high clearance is completely open
+    if lowSolid and not highSolid then
+        local hitJump = workspace:Raycast(originJump, dir, raycastParams)
+        local jumpBlocked = hitJump and farm.isSolidObstacle(hitJump.Instance) and (hitJump.Normal.Y <= 0.65)
+        if not jumpBlocked then
+            return nil, true
+        end
+    end
+
+    -- Case 2: Solid wall or obstacle blocking forward motion -> calculate deflection along wall normal
+    local hitToUse = highSolid and hitHigh or hitLow
+    local hitNormal = hitToUse and hitToUse.Normal
+    if hitNormal then
+        local norm2D = Vector3.new(hitNormal.X, 0, hitNormal.Z)
+        if norm2D.Magnitude > 0.05 then
+            norm2D = norm2D.Unit
+            local tan1 = Vector3.new(-norm2D.Z, 0, norm2D.X)
+            local tan2 = Vector3.new(norm2D.Z, 0, -norm2D.X)
+
+            local chosenTan = (moveDir:Dot(tan1) >= moveDir:Dot(tan2)) and tan1 or tan2
+            local steerDir = (chosenTan * 0.85 + norm2D * 0.45).Unit
+
+            -- Check if primary tangent is blocked by an adjacent corner
+            local cornerCheck = workspace:Raycast(originHigh, steerDir * 3.0, raycastParams)
+            if cornerCheck and farm.isSolidObstacle(cornerCheck.Instance) and (cornerCheck.Normal.Y <= 0.65) then
+                local altTan = (chosenTan == tan1) and tan2 or tan1
+                steerDir = (altTan * 0.85 + norm2D * 0.45).Unit
+            end
+
+            local adjustedPos = rootPos + (steerDir * math.max(4.0, dist))
+            return adjustedPos, false
+        end
+    end
+
+    return nil, false
+end
+
+local ESCAPE_ANGLES = {
+    0,
+    math.pi * 0.25,
+    math.pi * 0.5,
+    math.pi * 0.75,
+    math.pi,
+    -math.pi * 0.75,
+    -math.pi * 0.5,
+    -math.pi * 0.25
+}
+
+-- Scans 8 radial directions around the player to locate the clearest escape route
+function farm.findClearEscapeDirection(rootPos)
+    local bestDir = nil
+    local bestScore = -math.huge
+    local rayOrigin = rootPos + Vector3.new(0, 1.2, 0)
+    local scanDist = 16.0
+
+    for _, angle in ipairs(ESCAPE_ANGLES) do
+        local dir = Vector3.new(math.cos(angle), 0, math.sin(angle))
+        local hit = workspace:Raycast(rayOrigin, dir * scanDist, raycastParams)
+        local clearDist = scanDist
+        if hit and farm.isSolidObstacle(hit.Instance) and (hit.Normal.Y <= 0.65) then
+            clearDist = (hit.Position - rayOrigin).Magnitude
+        end
+
+        local score = clearDist
+        if farm.anchorPos then
+            local testPos = rootPos + (dir * 8.0)
+            local distFromAnchorSq = get2DDistanceSq(farm.anchorPos, testPos)
+            if distFromAnchorSq > farm.radiusSq then
+                score = score - 8.0
+            else
+                score = score + 4.0
+            end
+        end
+
+        if score > bestScore then
+            bestScore = score
+            bestDir = dir
+        end
+    end
+
+    if not bestDir then
+        local look = root and root.CFrame.LookVector or Vector3.new(0, 0, -1)
+        bestDir = -Vector3.new(look.X, 0, look.Z).Unit
+    end
+
+    return bestDir
+end
+
 function farm.processMovement(dt, now, rootPos)
     farm.patternTimer = farm.patternTimer + (dt * farm.patternSpeed)
+
+    -- Anti-Stuck & Real-Time Progress Monitor
+    if farm.collisionDetection then
+        if now - farm.lastStuckCheckTime >= 0.4 then
+            if farm.lastStuckCheckPos then
+                local distMovedSq = get2DDistanceSq(rootPos, farm.lastStuckCheckPos)
+                if distMovedSq < 1.0 then
+                    farm.stuckCounter = farm.stuckCounter + 1
+                else
+                    farm.stuckCounter = math.max(0, farm.stuckCounter - 1)
+                end
+            end
+            farm.lastStuckCheckPos = rootPos
+            farm.lastStuckCheckTime = now
+
+            -- Step 1: Minor stuck (0.8s stationary) -> jump and drop blocked node
+            if farm.stuckCounter >= 2 then
+                if humanoid then humanoid.Jump = true end
+                if farm.currentTargetNode then
+                    cache.nodeBlacklist[farm.currentTargetNode] = now + 15
+                    farm.currentTargetNode = nil
+                    farm.currentNodeStartTime = 0
+                end
+                farm.nextRandomPos = nil
+            end
+
+            -- Step 2: Major stuck (1.2s stationary) -> active unstick escape maneuver
+            if farm.stuckCounter >= 3 then
+                farm.isUnsticking = true
+                farm.unstickEndTime = now + 1.2
+                local escapeDir = farm.findClearEscapeDirection(rootPos)
+                farm.unstickTargetPos = rootPos + (escapeDir * 12.0)
+                farm.stuckCounter = 0
+            end
+        end
+
+        -- Check if active unsticking period has concluded
+        if farm.isUnsticking and now >= farm.unstickEndTime then
+            farm.isUnsticking = false
+            farm.unstickTargetPos = nil
+            farm.stuckCounter = 0
+            farm.lastStuckCheckPos = rootPos
+        end
+    end
+
     local targetPos
 
-    if farm.pattern == "Guided Zigzag (Nodes)" then
+    -- If actively escaping/unsticking, prioritize escape target
+    if farm.collisionDetection and farm.isUnsticking and farm.unstickTargetPos then
+        targetPos = farm.unstickTargetPos
+        if humanoid then humanoid.Jump = true end
+    elseif farm.pattern == "Guided Zigzag (Nodes)" then
         local ghostX = math.sin(farm.patternTimer * 1.3) * farm.radius
         local ghostZ = math.cos(farm.patternTimer * 1.9) * farm.radius
         local ghostPos = farm.anchorPos + Vector3.new(ghostX, 0, ghostZ)
@@ -3333,12 +3550,26 @@ function farm.processMovement(dt, now, rootPos)
             local tPos = cache.getNodePosition(farm.currentTargetNode)
             if get2DDistanceSq(rootPos, tPos) < 16 then
                 needNewNode = true
+            elseif farm.currentNodeStartTime > 0 and (now - farm.currentNodeStartTime > 4.5) then
+                -- Timeout: couldn't reach node within 4.5 seconds
+                cache.nodeBlacklist[farm.currentTargetNode] = now + 15
+                farm.currentTargetNode = nil
+                farm.currentNodeStartTime = 0
+                needNewNode = true
+            elseif farm.collisionDetection and farm.stuckCounter >= 1 and farm.hasWallBetween(rootPos, tPos) then
+                -- Impassable wall blocking the target node while stalled
+                cache.nodeBlacklist[farm.currentTargetNode] = now + 15
+                farm.currentTargetNode = nil
+                farm.currentNodeStartTime = 0
+                needNewNode = true
             end
         end
 
         if needNewNode then
             local nearestDistSq = math.huge
             local nearestNode = nil
+            local fallbackNode = nil
+            local fallbackDistSq = math.huge
             local grassNodes = cache.getGrassNodes()
 
             for _, node in ipairs(grassNodes) do
@@ -3349,23 +3580,55 @@ function farm.processMovement(dt, now, rootPos)
                         if cleanName then
                             local distFromGhostSq = get2DDistanceSq(ghostPos, nodePos)
                             local blacklistedAt = cache.nodeBlacklist[node]
-                            if distFromGhostSq < nearestDistSq and (not blacklistedAt or now - blacklistedAt > 10) then
-                                nearestDistSq = distFromGhostSq
-                                nearestNode = node
+                            if not blacklistedAt or now - blacklistedAt > 10 then
+                                if distFromGhostSq < fallbackDistSq then
+                                    fallbackDistSq = distFromGhostSq
+                                    fallbackNode = node
+                                end
+
+                                local isBlocked = false
+                                if farm.collisionDetection then
+                                    isBlocked = farm.hasWallBetween(rootPos, nodePos)
+                                end
+
+                                if not isBlocked and distFromGhostSq < nearestDistSq then
+                                    nearestDistSq = distFromGhostSq
+                                    nearestNode = node
+                                end
                             end
                         end
                     end
                 end
             end
 
-            if nearestNode then
-                farm.currentTargetNode = nearestNode
-                cache.nodeBlacklist[nearestNode] = now
+            local chosenNode = nearestNode or (not farm.collisionDetection and fallbackNode)
+            if chosenNode then
+                farm.currentTargetNode = chosenNode
+                farm.currentNodeStartTime = now
+                cache.nodeBlacklist[chosenNode] = now
             else
                 farm.currentTargetNode = nil
+                farm.currentNodeStartTime = 0
                 if not farm.nextRandomPos or get2DDistanceSq(rootPos, farm.nextRandomPos) < 25 then
-                    local angle = math.random() * (math.pi * 2)
-                    farm.nextRandomPos = farm.anchorPos + Vector3.new(math.cos(angle) * farm.radius, 0, math.sin(angle) * farm.radius)
+                    local foundSafe = false
+                    if farm.collisionDetection then
+                        local maxDist = math.max(5, math.floor(farm.radius))
+                        local minDist = math.min(5, maxDist)
+                        for _ = 1, 6 do
+                            local angle = math.random() * (math.pi * 2)
+                            local dist = math.random(minDist, maxDist)
+                            local candidatePos = farm.anchorPos + Vector3.new(math.cos(angle) * dist, 0, math.sin(angle) * dist)
+                            if not farm.hasWallBetween(rootPos, candidatePos) then
+                                farm.nextRandomPos = candidatePos
+                                foundSafe = true
+                                break
+                            end
+                        end
+                    end
+                    if not foundSafe then
+                        local angle = math.random() * (math.pi * 2)
+                        farm.nextRandomPos = farm.anchorPos + Vector3.new(math.cos(angle) * farm.radius, 0, math.sin(angle) * farm.radius)
+                    end
                 end
             end
         end
@@ -3389,13 +3652,46 @@ function farm.processMovement(dt, now, rootPos)
 
     elseif farm.pattern == "Random" then
         if not farm.nextRandomPos or get2DDistanceSq(rootPos, farm.nextRandomPos) < 25 then
-            local angle = math.random() * (math.pi * 2)
-            farm.nextRandomPos = farm.anchorPos + Vector3.new(math.cos(angle) * farm.radius, 0, math.sin(angle) * farm.radius)
+            local foundSafe = false
+            if farm.collisionDetection then
+                local maxDist = math.max(5, math.floor(farm.radius))
+                local minDist = math.min(5, maxDist)
+                for _ = 1, 6 do
+                    local angle = math.random() * (math.pi * 2)
+                    local dist = math.random(minDist, maxDist)
+                    local candidatePos = farm.anchorPos + Vector3.new(math.cos(angle) * dist, 0, math.sin(angle) * dist)
+                    if not farm.hasWallBetween(rootPos, candidatePos) then
+                        farm.nextRandomPos = candidatePos
+                        foundSafe = true
+                        break
+                    end
+                end
+            end
+            if not foundSafe then
+                local angle = math.random() * (math.pi * 2)
+                farm.nextRandomPos = farm.anchorPos + Vector3.new(math.cos(angle) * farm.radius, 0, math.sin(angle) * farm.radius)
+            end
         end
         targetPos = farm.nextRandomPos
     end
 
     if targetPos and (now - farm.lastMoveTime > 0.05) then
+        -- Forward obstacle check & dynamic wall deflection
+        if farm.collisionDetection and not farm.isUnsticking then
+            local moveVec = targetPos - rootPos
+            local moveDist = Vector3.new(moveVec.X, 0, moveVec.Z).Magnitude
+            if moveDist > 1.5 then
+                local moveDir = Vector3.new(moveVec.X, 0, moveVec.Z).Unit
+                local adjustedPos, shouldJump = farm.checkForwardWall(rootPos, moveDir, math.min(moveDist, 5.0))
+                if shouldJump and humanoid then
+                    humanoid.Jump = true
+                end
+                if adjustedPos then
+                    targetPos = adjustedPos
+                end
+            end
+        end
+
         local offX = targetPos.X - farm.anchorPos.X
         local offZ = targetPos.Z - farm.anchorPos.Z
         local distSq = offX * offX + offZ * offZ
@@ -3541,6 +3837,7 @@ function farm.processGrassChomp(now, rootPos)
 
                         if farm.currentTargetNode and farm.currentTargetNode.Name == nodeName then
                             farm.currentTargetNode = nil
+                            farm.currentNodeStartTime = 0
                         end
                     end
                 end
@@ -3853,6 +4150,12 @@ MainTab:CreateToggle({
         farm.patternTimer = 0
         farm.nextRandomPos = nil
         farm.currentTargetNode = nil
+        farm.currentNodeStartTime = 0
+        farm.isUnsticking = false
+        farm.unstickTargetPos = nil
+        farm.stuckCounter = 0
+        farm.lastStuckCheckPos = nil
+        farm.lastStuckCheckTime = 0
 
         if Value then
             farm.anchorPos = root.Position
@@ -3995,6 +4298,18 @@ MainTab:CreateDropdown({
         elseif selection == "Normal (1.0x)" then farm.patternSpeed = 1.0
         elseif selection == "Fast (1.6x)" then farm.patternSpeed = 1.6
         end
+    end,
+})
+
+MainTab:CreateToggle({
+    Name = "Wall Collision Detection & Anti-Stuck",
+    CurrentValue = true,
+    Flag = "Toggle_FarmCollision",
+    Callback = function(Value)
+        farm.collisionDetection = Value
+        farm.isUnsticking = false
+        farm.unstickTargetPos = nil
+        farm.stuckCounter = 0
     end,
 })
 
@@ -4206,7 +4521,7 @@ MiningTab:CreateToggle({
 MiningTab:CreateDropdown({
     Name = "Cluster Selection Order",
     Options = {"Nearest Available", "Alphabetical (A-Z)", "Largest Crystal Yield"},
-    CurrentOption = {"Nearest Available"},
+    CurrentOption = {"Largest Crystal Yield"},
     MultipleOptions = false,
     Flag = "Dropdown_ManatiteOrder",
     Callback = function(Option)
