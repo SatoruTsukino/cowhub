@@ -616,14 +616,16 @@ spiderLogger.load()
 -- Hook ChompRequest for server-fired responses & client-fired bite events
 local function onChompRemoteReceived(source, ...)
     local args = {...}
-    local id = nil
-    for _, arg in ipairs(args) do
-        id = spiderLogger.extractIdentifier(arg)
-        if id then break end
-    end
-    if id then
-        spiderLogger.recordIdentifier(id, source, spiderLogger.currentUnknownMob, args[1])
-    end
+    task.spawn(function()
+        local id = nil
+        for _, arg in ipairs(args) do
+            id = spiderLogger.extractIdentifier(arg)
+            if id then break end
+        end
+        if id then
+            spiderLogger.recordIdentifier(id, source, spiderLogger.currentUnknownMob, args[1])
+        end
+    end)
 end
 
 -- 1. Hook incoming server events via OnClientEvent
@@ -649,16 +651,19 @@ pcall(function()
         oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
             local method = getnamecallmethod()
             if self == chompEvent and (method == "FireServer" or method == "fireServer") then
-                if not spiderLogger.isInternalFire then
+                local isOurs = (checkcaller and checkcaller()) or spiderLogger.isInternalFire
+                if not isOurs then
                     local args = {...}
-                    local id = nil
-                    for _, arg in ipairs(args) do
-                        id = spiderLogger.extractIdentifier(arg)
-                        if id then break end
-                    end
-                    if id then
-                        spiderLogger.recordIdentifier(id, "HookedFireServer", spiderLogger.currentUnknownMob, args[1])
-                    end
+                    task.spawn(function()
+                        local id = nil
+                        for _, arg in ipairs(args) do
+                            id = spiderLogger.extractIdentifier(arg)
+                            if id then break end
+                        end
+                        if id then
+                            spiderLogger.recordIdentifier(id, "GameInputController", spiderLogger.currentUnknownMob, args[1])
+                        end
+                    end)
                 end
             end
             return oldNamecall(self, ...)
