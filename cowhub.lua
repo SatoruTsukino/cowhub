@@ -420,8 +420,8 @@ trickOrTreat = {
     barnLoadDelay = 2.5,
     settleDelay = 0.3,
     houseWaitTime = 1.4,
-    heightOffset = -1.5,
-    doorForwardOffset = 1.0,
+    interiorHeightOffset = 2.0, -- Studs above the bottom face of the Inside cube
+    interiorFrontRatio = 0.75,  -- Ratio (0 to 1) from center to the front of the Inside cube
     cycleCooldown = 600, -- Default 10 minutes (auto-detected from HalloweenConfig or server)
     detectedCooldown = nil,
     autoDetectCooldown = true,
@@ -548,9 +548,6 @@ end
 
 function trickOrTreat.getInsidePart(houseModel)
     if not houseModel then return nil end
-    local doorPart = trickOrTreat.getDoorPart(houseModel)
-    if doorPart then return doorPart end
-
     local inside = houseModel:FindFirstChild("Inside", true)
     local part = resolveHousePart(inside)
     if part then return part end
@@ -558,6 +555,9 @@ function trickOrTreat.getInsidePart(houseModel)
     local interior = houseModel:FindFirstChild("Interior", true)
     part = resolveHousePart(interior)
     if part then return part end
+
+    local doorPart = trickOrTreat.getDoorPart(houseModel)
+    if doorPart then return doorPart end
 
     local exit = houseModel:FindFirstChild("Exit", true)
     part = resolveHousePart(exit)
@@ -570,39 +570,59 @@ end
 function trickOrTreat.getTargetCFrame(houseModel)
     if not houseModel then return nil end
 
+    local inside = houseModel:FindFirstChild("Inside", true) or houseModel:FindFirstChild("Interior", true)
+    local insidePart = resolveHousePart(inside)
+
     local door = houseModel:FindFirstChild("Door", true)
     local doorPart = resolveHousePart(door)
 
     local threshold = houseModel:FindFirstChild("Threshold", true)
     local thresholdPart = resolveHousePart(threshold)
 
-    local inside = houseModel:FindFirstChild("Inside", true) or houseModel:FindFirstChild("Interior", true)
-    local insidePart = resolveHousePart(inside)
+    local frontRef = doorPart or thresholdPart
 
-    local targetPart = doorPart or thresholdPart or insidePart or houseModel.PrimaryPart or houseModel:FindFirstChildWhichIsA("BasePart", true)
-    if not targetPart then return nil end
+    if insidePart then
+        -- 1. Calculate bottom of the interior cube:
+        -- Inside size is e.g. (15.997, 20.0, 17.112), so half-height is 10 studs.
+        local halfHeight = insidePart.Size.Y * 0.5
+        local bottomY = insidePart.Position.Y - halfHeight + (trickOrTreat.interiorHeightOffset or 2.0)
 
-    local yOffset = trickOrTreat.heightOffset or -1.5
-    local forwardOffset = trickOrTreat.doorForwardOffset or 1.0
+        -- 2. Determine the front direction of the cube towards Door/Threshold
+        local frontDir = nil
+        if frontRef then
+            local diff = frontRef.Position - insidePart.Position
+            local flatDiff = Vector3.new(diff.X, 0, diff.Z)
+            if flatDiff.Magnitude > 0.5 then
+                frontDir = flatDiff.Unit
+            end
+        end
 
-    -- If both Door and Inside exist, calculate direction vector facing outwards from Inside through the Door
-    if doorPart and insidePart then
-        local diff = doorPart.Position - insidePart.Position
-        local flatDiff = Vector3.new(diff.X, 0, diff.Z)
-        local outward = (flatDiff.Magnitude > 0.2) and flatDiff.Unit or doorPart.CFrame.LookVector
-        local pos = doorPart.Position + (outward * forwardOffset) + Vector3.new(0, yOffset, 0)
-        return CFrame.lookAt(pos, doorPart.Position)
-    elseif doorPart then
-        local pos = doorPart.Position + Vector3.new(0, yOffset, 0)
-        return CFrame.new(pos)
-    elseif thresholdPart then
-        local pos = thresholdPart.Position + Vector3.new(0, yOffset + 1.5, 0)
-        return CFrame.new(pos)
-    else
-        -- Inside fallback: apply yOffset (which is lowered compared to the old +2.5 default)
-        local pos = targetPart.Position + Vector3.new(0, yOffset, 0)
-        return CFrame.new(pos)
+        if not frontDir then
+            frontDir = insidePart.CFrame.LookVector
+        end
+
+        -- 3. Calculate distance towards the front of that cube
+        local localFront = insidePart.CFrame:VectorToObjectSpace(frontDir)
+        local maxForward = (math.abs(localFront.Z) > 0.6) and (insidePart.Size.Z * 0.5) or (insidePart.Size.X * 0.5)
+
+        local ratio = math.clamp(trickOrTreat.interiorFrontRatio or 0.75, 0.1, 0.95)
+        local forwardDist = maxForward * ratio
+
+        local targetPos = Vector3.new(
+            insidePart.Position.X + frontDir.X * forwardDist,
+            bottomY,
+            insidePart.Position.Z + frontDir.Z * forwardDist
+        )
+
+        -- Face towards the front of the cube / door
+        return CFrame.lookAt(targetPos, targetPos + frontDir)
     end
+
+    -- Fallback if no insidePart exists:
+    local targetPart = frontRef or houseModel.PrimaryPart or houseModel:FindFirstChildWhichIsA("BasePart", true)
+    if not targetPart then return nil end
+    local pos = targetPart.Position + Vector3.new(0, -1.5, 0)
+    return CFrame.new(pos)
 end
 
 function trickOrTreat.getRemote()
@@ -1023,8 +1043,8 @@ function afkRelog.saveState()
         TrickOrTreat = {
             Auto = (trickOrTreat and trickOrTreat.auto) == true,
             CycleCooldown = trickOrTreat and trickOrTreat.cycleCooldown or 600,
-            HeightOffset = trickOrTreat and trickOrTreat.heightOffset or -1.5,
-            DoorForwardOffset = trickOrTreat and trickOrTreat.doorForwardOffset or 1.0,
+            InteriorHeightOffset = trickOrTreat and trickOrTreat.interiorHeightOffset or 2.0,
+            InteriorFrontRatio = trickOrTreat and trickOrTreat.interiorFrontRatio or 0.75,
         },
     }
 
@@ -1222,13 +1242,13 @@ function afkRelog.checkAndResumeState()
             pcall(function() Window:Set("Toggle_MithrilFarm", true) end)
         end
         if data.TrickOrTreat then
-            if data.TrickOrTreat.HeightOffset then
-                trickOrTreat.heightOffset = data.TrickOrTreat.HeightOffset
-                pcall(function() Window:Set("Slider_ToT_HeightOffset", data.TrickOrTreat.HeightOffset) end)
+            if data.TrickOrTreat.InteriorHeightOffset then
+                trickOrTreat.interiorHeightOffset = data.TrickOrTreat.InteriorHeightOffset
+                pcall(function() Window:Set("Slider_ToT_InteriorHeight", data.TrickOrTreat.InteriorHeightOffset) end)
             end
-            if data.TrickOrTreat.DoorForwardOffset then
-                trickOrTreat.doorForwardOffset = data.TrickOrTreat.DoorForwardOffset
-                pcall(function() Window:Set("Slider_ToT_ForwardOffset", data.TrickOrTreat.DoorForwardOffset) end)
+            if data.TrickOrTreat.InteriorFrontRatio then
+                trickOrTreat.interiorFrontRatio = data.TrickOrTreat.InteriorFrontRatio
+                pcall(function() Window:Set("Slider_ToT_InteriorFrontRatio", data.TrickOrTreat.InteriorFrontRatio) end)
             end
             if data.TrickOrTreat.Auto and trickOrTreat then
                 trickOrTreat.toggle(true)
@@ -6626,26 +6646,26 @@ TotTab:CreateSlider({
 })
 
 TotTab:CreateSlider({
-    Name = "Door Teleport Height Offset (Lower = Closer to Floor)",
-    Range = {-6.0, 4.0},
-    Increment = 0.5,
+    Name = "Interior Bottom Floor Height (Studs)",
+    Range = {0.0, 6.0},
+    Increment = 0.25,
     Suffix = " studs",
-    CurrentValue = -1.5,
-    Flag = "Slider_ToT_HeightOffset",
+    CurrentValue = 2.0,
+    Flag = "Slider_ToT_InteriorHeight",
     Callback = function(Value)
-        trickOrTreat.heightOffset = Value
+        trickOrTreat.interiorHeightOffset = Value
     end,
 })
 
 TotTab:CreateSlider({
-    Name = "Door Distance Offset (In Front of Door)",
-    Range = {-1.0, 5.0},
-    Increment = 0.5,
-    Suffix = " studs",
-    CurrentValue = 1.0,
-    Flag = "Slider_ToT_ForwardOffset",
+    Name = "Interior Front Distance Ratio (0.1 - 0.95)",
+    Range = {0.1, 0.95},
+    Increment = 0.05,
+    Suffix = "",
+    CurrentValue = 0.75,
+    Flag = "Slider_ToT_InteriorFrontRatio",
     Callback = function(Value)
-        trickOrTreat.doorForwardOffset = Value
+        trickOrTreat.interiorFrontRatio = Value
     end,
 })
 
