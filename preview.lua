@@ -6883,7 +6883,7 @@ TotTab:CreateSlider({
 
 TotTab:CreateSlider({
     Name = "Inside Stop Distance (Studs Before Door)",
-    Range = {0.5, 6.0},
+    Range = {0.5, 10},
     Increment = 0.5,
     Suffix = " studs",
     CurrentValue = 2.0,
