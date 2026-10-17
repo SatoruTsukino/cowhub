@@ -1,6 +1,3 @@
---[[
-    WARNING: Heads up! This script has not been verified by ScriptBlox. Use at your own risk!
-]]
 -- Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
@@ -423,6 +420,8 @@ trickOrTreat = {
     barnLoadDelay = 2.5,
     settleDelay = 0.3,
     houseWaitTime = 1.4,
+    heightOffset = -1.5,
+    doorForwardOffset = 1.0,
     cycleCooldown = 600, -- Default 10 minutes (auto-detected from HalloweenConfig or server)
     detectedCooldown = nil,
     autoDetectCooldown = true,
@@ -526,24 +525,84 @@ function trickOrTreat.getHouseList()
     return list
 end
 
+local function resolveHousePart(obj)
+    if not obj then return nil end
+    if obj:IsA("BasePart") then return obj end
+    if obj:IsA("Model") then
+        if obj.PrimaryPart then return obj.PrimaryPart end
+        return obj:FindFirstChildWhichIsA("BasePart", true)
+    end
+    return nil
+end
+
+function trickOrTreat.getDoorPart(houseModel)
+    if not houseModel then return nil end
+    local door = houseModel:FindFirstChild("Door", true)
+    local part = resolveHousePart(door)
+    if part then return part end
+    local threshold = houseModel:FindFirstChild("Threshold", true)
+    part = resolveHousePart(threshold)
+    if part then return part end
+    return nil
+end
+
 function trickOrTreat.getInsidePart(houseModel)
     if not houseModel then return nil end
+    local doorPart = trickOrTreat.getDoorPart(houseModel)
+    if doorPart then return doorPart end
+
     local inside = houseModel:FindFirstChild("Inside", true)
-    if inside and inside:IsA("BasePart") then
-        return inside
-    end
+    local part = resolveHousePart(inside)
+    if part then return part end
+
     local interior = houseModel:FindFirstChild("Interior", true)
-    if interior and interior:IsA("BasePart") then
-        return interior
-    end
-    local threshold = houseModel:FindFirstChild("Threshold", true)
-    if threshold and threshold:IsA("BasePart") then
-        return threshold
-    end
-    if houseModel.PrimaryPart then
-        return houseModel.PrimaryPart
-    end
+    part = resolveHousePart(interior)
+    if part then return part end
+
+    local exit = houseModel:FindFirstChild("Exit", true)
+    part = resolveHousePart(exit)
+    if part then return part end
+
+    if houseModel.PrimaryPart then return houseModel.PrimaryPart end
     return houseModel:FindFirstChildWhichIsA("BasePart", true)
+end
+
+function trickOrTreat.getTargetCFrame(houseModel)
+    if not houseModel then return nil end
+
+    local door = houseModel:FindFirstChild("Door", true)
+    local doorPart = resolveHousePart(door)
+
+    local threshold = houseModel:FindFirstChild("Threshold", true)
+    local thresholdPart = resolveHousePart(threshold)
+
+    local inside = houseModel:FindFirstChild("Inside", true) or houseModel:FindFirstChild("Interior", true)
+    local insidePart = resolveHousePart(inside)
+
+    local targetPart = doorPart or thresholdPart or insidePart or houseModel.PrimaryPart or houseModel:FindFirstChildWhichIsA("BasePart", true)
+    if not targetPart then return nil end
+
+    local yOffset = trickOrTreat.heightOffset or -1.5
+    local forwardOffset = trickOrTreat.doorForwardOffset or 1.0
+
+    -- If both Door and Inside exist, calculate direction vector facing outwards from Inside through the Door
+    if doorPart and insidePart then
+        local diff = doorPart.Position - insidePart.Position
+        local flatDiff = Vector3.new(diff.X, 0, diff.Z)
+        local outward = (flatDiff.Magnitude > 0.2) and flatDiff.Unit or doorPart.CFrame.LookVector
+        local pos = doorPart.Position + (outward * forwardOffset) + Vector3.new(0, yOffset, 0)
+        return CFrame.lookAt(pos, doorPart.Position)
+    elseif doorPart then
+        local pos = doorPart.Position + Vector3.new(0, yOffset, 0)
+        return CFrame.new(pos)
+    elseif thresholdPart then
+        local pos = thresholdPart.Position + Vector3.new(0, yOffset + 1.5, 0)
+        return CFrame.new(pos)
+    else
+        -- Inside fallback: apply yOffset (which is lowered compared to the old +2.5 default)
+        local pos = targetPart.Position + Vector3.new(0, yOffset, 0)
+        return CFrame.new(pos)
+    end
 end
 
 function trickOrTreat.getRemote()
@@ -718,15 +777,15 @@ function trickOrTreat.runCycle()
             break
         end
 
-        local insidePart = trickOrTreat.getInsidePart(house)
-        if insidePart then
+        local targetCF = trickOrTreat.getTargetCFrame(house)
+        if targetCF then
             trickOrTreat.statusText = string.format("Knocking [%d/%d]: %s", i, #houses, house.Name)
             trickOrTreat.lastHouseName = house.Name
             trickOrTreat.updateStatusUI()
 
-            -- Teleport to Inside part descendant
-            local targetPos = insidePart.Position + Vector3.new(0, 2.5, 0)
-            root.CFrame = CFrame.new(targetPos)
+            -- Teleport close to Door / lowered inside descendant
+            char:PivotTo(targetCF)
+            root.CFrame = targetCF
             stopCharacterVelocity()
 
             if trickOrTreat.anchorDuringKnock then
@@ -964,6 +1023,8 @@ function afkRelog.saveState()
         TrickOrTreat = {
             Auto = (trickOrTreat and trickOrTreat.auto) == true,
             CycleCooldown = trickOrTreat and trickOrTreat.cycleCooldown or 600,
+            HeightOffset = trickOrTreat and trickOrTreat.heightOffset or -1.5,
+            DoorForwardOffset = trickOrTreat and trickOrTreat.doorForwardOffset or 1.0,
         },
     }
 
@@ -1160,10 +1221,20 @@ function afkRelog.checkAndResumeState()
             mithril.preCFrame = root and root.CFrame
             pcall(function() Window:Set("Toggle_MithrilFarm", true) end)
         end
-        if data.TrickOrTreat and data.TrickOrTreat.Auto and trickOrTreat then
-            trickOrTreat.toggle(true)
-            pcall(function() Window:Set("Toggle_TrickOrTreat", true) end)
-            pcall(function() Window:Set("Toggle_TrickOrTreat_Main", true) end)
+        if data.TrickOrTreat then
+            if data.TrickOrTreat.HeightOffset then
+                trickOrTreat.heightOffset = data.TrickOrTreat.HeightOffset
+                pcall(function() Window:Set("Slider_ToT_HeightOffset", data.TrickOrTreat.HeightOffset) end)
+            end
+            if data.TrickOrTreat.DoorForwardOffset then
+                trickOrTreat.doorForwardOffset = data.TrickOrTreat.DoorForwardOffset
+                pcall(function() Window:Set("Slider_ToT_ForwardOffset", data.TrickOrTreat.DoorForwardOffset) end)
+            end
+            if data.TrickOrTreat.Auto and trickOrTreat then
+                trickOrTreat.toggle(true)
+                pcall(function() Window:Set("Toggle_TrickOrTreat", true) end)
+                pcall(function() Window:Set("Toggle_TrickOrTreat_Main", true) end)
+            end
         end
 
         if f.On then
@@ -6551,6 +6622,30 @@ TotTab:CreateSlider({
     Flag = "Slider_ToT_SettleDelay",
     Callback = function(Value)
         trickOrTreat.settleDelay = Value
+    end,
+})
+
+TotTab:CreateSlider({
+    Name = "Door Teleport Height Offset (Lower = Closer to Floor)",
+    Range = {-6.0, 4.0},
+    Increment = 0.5,
+    Suffix = " studs",
+    CurrentValue = -1.5,
+    Flag = "Slider_ToT_HeightOffset",
+    Callback = function(Value)
+        trickOrTreat.heightOffset = Value
+    end,
+})
+
+TotTab:CreateSlider({
+    Name = "Door Distance Offset (In Front of Door)",
+    Range = {-1.0, 5.0},
+    Increment = 0.5,
+    Suffix = " studs",
+    CurrentValue = 1.0,
+    Flag = "Slider_ToT_ForwardOffset",
+    Callback = function(Value)
+        trickOrTreat.doorForwardOffset = Value
     end,
 })
 
