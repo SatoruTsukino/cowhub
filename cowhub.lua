@@ -420,7 +420,10 @@ trickOrTreat = {
     barnLoadDelay = 2.5,
     settleDelay = 0.3,
     houseWaitTime = 1.4,
-    doorDistance = 3.5,     -- Distance (studs) in front of the door
+    walkUpEnabled = true,   -- Walk up to the door before knocking so game registers walking
+    walkDistance = 7.0,     -- Distance (studs) to start walk-up from in front of the door
+    walkTimeout = 1.2,      -- Max time (seconds) to walk up to the door
+    doorDistance = 2.5,     -- Final stop distance (studs) in front of the door
     doorHeightOffset = 0.0, -- Vertical fine-tuning offset in front of the door
     cycleCooldown = 600, -- Default 10 minutes (auto-detected from HalloweenConfig or server)
     detectedCooldown = nil,
@@ -570,11 +573,11 @@ end
 function trickOrTreat.getTargetCFrame(houseModel)
     if not houseModel then return nil end
 
-    local door = houseModel:FindFirstChild("Door", true)
-    local doorPart = resolveHousePart(door)
-
     local threshold = houseModel:FindFirstChild("Threshold", true)
     local thresholdPart = resolveHousePart(threshold)
+
+    local door = houseModel:FindFirstChild("Door", true)
+    local doorPart = resolveHousePart(door)
 
     local exit = houseModel:FindFirstChild("Exit", true)
     local exitPart = resolveHousePart(exit)
@@ -582,13 +585,13 @@ function trickOrTreat.getTargetCFrame(houseModel)
     local inside = houseModel:FindFirstChild("Inside", true) or houseModel:FindFirstChild("Interior", true)
     local insidePart = resolveHousePart(inside)
 
-    -- Determine door / entrance reference point
-    local doorRef = doorPart or thresholdPart or exitPart or insidePart or houseModel.PrimaryPart or houseModel:FindFirstChildWhichIsA("BasePart", true)
+    -- Determine door / entrance reference point (prefer thresholdPart for exact KnockRange detection)
+    local doorRef = thresholdPart or doorPart or exitPart or insidePart or houseModel.PrimaryPart or houseModel:FindFirstChildWhichIsA("BasePart", true)
     if not doorRef then return nil end
 
     local doorPos = doorRef.Position
 
-    -- Determine outward vector (pointing outside directly in front of the door)
+    -- Determine outward vector (pointing outside away from interior into porch/walkway)
     local outward = nil
 
     if exitPart and thresholdPart then
@@ -599,16 +602,16 @@ function trickOrTreat.getTargetCFrame(houseModel)
         end
     end
 
-    if not outward and doorPart and insidePart then
-        local diff = doorPart.Position - insidePart.Position
+    if not outward and thresholdPart and insidePart then
+        local diff = thresholdPart.Position - insidePart.Position
         local flat = Vector3.new(diff.X, 0, diff.Z)
         if flat.Magnitude > 0.2 then
             outward = flat.Unit
         end
     end
 
-    if not outward and thresholdPart and insidePart then
-        local diff = thresholdPart.Position - insidePart.Position
+    if not outward and doorPart and insidePart then
+        local diff = doorPart.Position - insidePart.Position
         local flat = Vector3.new(diff.X, 0, diff.Z)
         if flat.Magnitude > 0.2 then
             outward = flat.Unit
@@ -633,41 +636,55 @@ function trickOrTreat.getTargetCFrame(houseModel)
         outward = Vector3.new(0, 0, 1)
     end
 
-    -- Stand specified distance in front of the door (outside)
-    local dist = trickOrTreat.doorDistance or 3.5
-    local targetX = doorPos.X + outward.X * dist
-    local targetZ = doorPos.Z + outward.Z * dist
+    -- 1. Destination knock position right in front of the door (e.g. 2.5 studs)
+    local dist = trickOrTreat.doorDistance or 2.5
+    local knockX = doorPos.X + outward.X * dist
+    local knockZ = doorPos.Z + outward.Z * dist
 
-    -- Determine ground/porch floor height in front of the door
-    local floorY = nil
-
-    -- Raycast down to find the physical ground / porch surface in front of the door
-    local rayOrigin = Vector3.new(targetX, doorPos.Y + 4, targetZ)
     local rayParams = RaycastParams.new()
-    rayParams.FilterDescendantsInstances = {char}
+    rayParams.FilterDescendantsInstances = char and {char} or {}
     rayParams.FilterType = Enum.RaycastFilterType.Exclude
 
-    local rayResult = workspace:Raycast(rayOrigin, Vector3.new(0, -25, 0), rayParams)
+    local knockFloorY = nil
+    local rayResult = workspace:Raycast(Vector3.new(knockX, doorPos.Y + 4, knockZ), Vector3.new(0, -25, 0), rayParams)
     if rayResult then
-        floorY = rayResult.Position.Y + 2.5
+        knockFloorY = rayResult.Position.Y + 2.5
     elseif thresholdPart then
-        floorY = thresholdPart.Position.Y + 2.5
+        knockFloorY = thresholdPart.Position.Y + 2.5
     elseif doorPart then
-        floorY = doorPart.Position.Y - (doorPart.Size.Y * 0.5) + 2.5
+        knockFloorY = doorPart.Position.Y - (doorPart.Size.Y * 0.5) + 2.5
     elseif insidePart then
-        floorY = insidePart.Position.Y - (insidePart.Size.Y * 0.5) + 2.5
+        knockFloorY = insidePart.Position.Y - (insidePart.Size.Y * 0.5) + 2.5
     else
-        floorY = doorPos.Y
+        knockFloorY = doorPos.Y
+    end
+    knockFloorY = knockFloorY + (trickOrTreat.doorHeightOffset or 0.0)
+
+    local knockPos = Vector3.new(knockX, knockFloorY, knockZ)
+    local knockCF = CFrame.lookAt(knockPos, Vector3.new(doorPos.X, knockFloorY, doorPos.Z))
+
+    -- 2. Approach start position (further back along outward vector) for walking up
+    if trickOrTreat.walkUpEnabled and (trickOrTreat.walkDistance or 0) > 0 then
+        local walkDist = trickOrTreat.walkDistance or 7.0
+        local totalDist = dist + walkDist
+        local appX = doorPos.X + outward.X * totalDist
+        local appZ = doorPos.Z + outward.Z * totalDist
+
+        local appFloorY = nil
+        local appRay = workspace:Raycast(Vector3.new(appX, doorPos.Y + 6, appZ), Vector3.new(0, -30, 0), rayParams)
+        if appRay then
+            appFloorY = appRay.Position.Y + 2.5
+        else
+            appFloorY = knockFloorY
+        end
+        appFloorY = appFloorY + (trickOrTreat.doorHeightOffset or 0.0)
+
+        local approachPos = Vector3.new(appX, appFloorY, appZ)
+        local approachCF = CFrame.lookAt(approachPos, Vector3.new(doorPos.X, appFloorY, doorPos.Z))
+        return approachCF, knockPos, knockCF
     end
 
-    -- Apply user height fine-tuning (default 0.0)
-    floorY = floorY + (trickOrTreat.doorHeightOffset or 0.0)
-
-    local targetPos = Vector3.new(targetX, floorY, targetZ)
-    local lookTarget = Vector3.new(doorPos.X, floorY, doorPos.Z)
-
-    -- Return CFrame standing in front of the door and facing the door
-    return CFrame.lookAt(targetPos, lookTarget)
+    return knockCF, knockPos, knockCF
 end
 
 function trickOrTreat.getRemote()
@@ -842,36 +859,84 @@ function trickOrTreat.runCycle()
             break
         end
 
-        local targetCF = trickOrTreat.getTargetCFrame(house)
-        if targetCF then
-            trickOrTreat.statusText = string.format("Knocking [%d/%d]: %s", i, #houses, house.Name)
+        local approachCF, knockPos = trickOrTreat.getTargetCFrame(house)
+        if approachCF and knockPos then
+            trickOrTreat.statusText = string.format("Approaching [%d/%d]: %s", i, #houses, house.Name)
             trickOrTreat.lastHouseName = house.Name
             trickOrTreat.updateStatusUI()
 
-            -- Teleport close to Door / lowered inside descendant
-            char:PivotTo(targetCF)
-            root.CFrame = targetCF
+            -- 1. Teleport to approach start point outside in front of the door
+            pcall(function() root.Anchored = false end)
+            char:PivotTo(approachCF)
+            root.CFrame = approachCF
             stopCharacterVelocity()
+            task.wait(0.05)
 
+            -- 2. Walk up to the door so the game registers character movement into KnockRange
+            if trickOrTreat.walkUpEnabled and (trickOrTreat.walkDistance or 0) > 0 then
+                trickOrTreat.statusText = string.format("Walking to Door [%d/%d]: %s", i, #houses, house.Name)
+                trickOrTreat.updateStatusUI()
+
+                pcall(function() root.Anchored = false end)
+                if humanoid then
+                    humanoid:MoveTo(knockPos)
+                end
+
+                local walkStart = os.clock()
+                local maxWalkTime = trickOrTreat.walkTimeout or 1.2
+                while (os.clock() - walkStart < maxWalkTime) do
+                    if not trickOrTreat.auto and not trickOrTreat.isSingleRun then break end
+                    if not root or not humanoid or humanoid.Health <= 0 then break end
+
+                    local currentFlat = Vector3.new(root.Position.X, 0, root.Position.Z)
+                    local targetFlat = Vector3.new(knockPos.X, 0, knockPos.Z)
+                    if (currentFlat - targetFlat).Magnitude <= 1.2 then
+                        break
+                    end
+                    task.wait(0.04)
+                end
+
+                if humanoid then
+                    humanoid:Move(Vector3.zero, false)
+                end
+                stopCharacterVelocity()
+            end
+
+            -- 3. Anchor during knock to prevent being pushed away
             if trickOrTreat.anchorDuringKnock then
                 pcall(function() root.Anchored = true end)
             end
 
-            -- Pre-knock settle delay so server registers position
+            -- 4. Pre-knock settle delay so server and client register arrival
             task.wait(trickOrTreat.settleDelay)
 
-            -- Fire Knock remote
+            -- 5. Trigger knock: fire server remote & simulate virtual 'E' key press
+            trickOrTreat.statusText = string.format("Knocking [%d/%d]: %s", i, #houses, house.Name)
+            trickOrTreat.updateStatusUI()
+
+            if not remote or not remote.Parent then
+                remote = trickOrTreat.getRemote()
+            end
             if remote then
                 remote:FireServer("Knock", house.Name)
-            else
-                remote = trickOrTreat.getRemote()
-                if remote then
-                    remote:FireServer("Knock", house.Name)
-                end
             end
+
+            pcall(function()
+                if successVIM and VirtualInput and VirtualInput.SendKeyEvent then
+                    VirtualInput:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+                    task.wait(0.05)
+                    VirtualInput:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+                elseif VirtualUser then
+                    VirtualUser:CaptureController()
+                    VirtualUser:SetKeyDown("0x65")
+                    task.wait(0.05)
+                    VirtualUser:SetKeyUp("0x65")
+                end
+            end)
+
             knockedCount = knockedCount + 1
 
-            -- Wait interaction delay (throttle next knock, respecting NextKnockAt = 1.2s)
+            -- 6. Wait interaction delay (throttle next knock, respecting NextKnockAt = 1.2s)
             task.wait(trickOrTreat.houseWaitTime)
 
             if trickOrTreat.anchorDuringKnock then
@@ -1088,7 +1153,10 @@ function afkRelog.saveState()
         TrickOrTreat = {
             Auto = (trickOrTreat and trickOrTreat.auto) == true,
             CycleCooldown = trickOrTreat and trickOrTreat.cycleCooldown or 600,
-            DoorDistance = trickOrTreat and trickOrTreat.doorDistance or 3.5,
+            WalkUpEnabled = (trickOrTreat and trickOrTreat.walkUpEnabled) ~= false,
+            WalkDistance = trickOrTreat and trickOrTreat.walkDistance or 7.0,
+            WalkTimeout = trickOrTreat and trickOrTreat.walkTimeout or 1.2,
+            DoorDistance = trickOrTreat and trickOrTreat.doorDistance or 2.5,
             DoorHeightOffset = trickOrTreat and trickOrTreat.doorHeightOffset or 0.0,
         },
     }
@@ -1287,6 +1355,18 @@ function afkRelog.checkAndResumeState()
             pcall(function() Window:Set("Toggle_MithrilFarm", true) end)
         end
         if data.TrickOrTreat then
+            if data.TrickOrTreat.WalkUpEnabled ~= nil then
+                trickOrTreat.walkUpEnabled = data.TrickOrTreat.WalkUpEnabled
+                pcall(function() Window:Set("Toggle_ToT_WalkUp", data.TrickOrTreat.WalkUpEnabled) end)
+            end
+            if data.TrickOrTreat.WalkDistance then
+                trickOrTreat.walkDistance = data.TrickOrTreat.WalkDistance
+                pcall(function() Window:Set("Slider_ToT_WalkDistance", data.TrickOrTreat.WalkDistance) end)
+            end
+            if data.TrickOrTreat.WalkTimeout then
+                trickOrTreat.walkTimeout = data.TrickOrTreat.WalkTimeout
+                pcall(function() Window:Set("Slider_ToT_WalkTimeout", data.TrickOrTreat.WalkTimeout) end)
+            end
             if data.TrickOrTreat.DoorDistance then
                 trickOrTreat.doorDistance = data.TrickOrTreat.DoorDistance
                 pcall(function() Window:Set("Slider_ToT_DoorDistance", data.TrickOrTreat.DoorDistance) end)
@@ -6695,7 +6775,7 @@ TotTab:CreateSlider({
     Range = {1.0, 8.0},
     Increment = 0.5,
     Suffix = " studs",
-    CurrentValue = 3.5,
+    CurrentValue = 2.5,
     Flag = "Slider_ToT_DoorDistance",
     Callback = function(Value)
         trickOrTreat.doorDistance = Value
@@ -6711,6 +6791,39 @@ TotTab:CreateSlider({
     Flag = "Slider_ToT_DoorHeightOffset",
     Callback = function(Value)
         trickOrTreat.doorHeightOffset = Value
+    end,
+})
+
+TotTab:CreateToggle({
+    Name = "Walk Up to Door Before Knocking",
+    CurrentValue = true,
+    Flag = "Toggle_ToT_WalkUp",
+    Callback = function(Value)
+        trickOrTreat.walkUpEnabled = Value
+    end,
+})
+
+TotTab:CreateSlider({
+    Name = "Walk-Up Approach Distance (Studs)",
+    Range = {2.0, 15.0},
+    Increment = 0.5,
+    Suffix = " studs",
+    CurrentValue = 7.0,
+    Flag = "Slider_ToT_WalkDistance",
+    Callback = function(Value)
+        trickOrTreat.walkDistance = Value
+    end,
+})
+
+TotTab:CreateSlider({
+    Name = "Walk-Up Timeout (Seconds)",
+    Range = {0.5, 3.0},
+    Increment = 0.1,
+    Suffix = "s",
+    CurrentValue = 1.2,
+    Flag = "Slider_ToT_WalkTimeout",
+    Callback = function(Value)
+        trickOrTreat.walkTimeout = Value
     end,
 })
 
