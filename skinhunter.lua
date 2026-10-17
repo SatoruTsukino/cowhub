@@ -169,6 +169,7 @@ local state = {
     failedServers = {},
     serverQueue = {},
     targetSkinId = "",
+    targetSkinIds = {},
     lastAuctionSignatures = {},
     sweepCount = 0,
     found = false,
@@ -176,9 +177,85 @@ local state = {
 }
 
 -- ============================
+-- TARGET SKINS MANAGEMENT
+-- Supports single or multiple target skins simultaneously
+-- ============================
+local TARGET_SKIN_ID = "" -- Primary / legacy single target string
+local TARGET_SKIN_LIST = {} -- Sorted array of all active target skin strings
+local TARGET_SKIN_SET = {} -- Fast lookup set: [skinId] = true
+
+local TargetDropdown = nil -- Forward declaration for UI dropdown
+local saveConfig
+local saveState
+
+local function getTargetSkinList()
+    return TARGET_SKIN_LIST
+end
+
+local function isTargetSkin(skinId)
+    if not skinId or skinId == "" then return false end
+    return TARGET_SKIN_SET[tostring(skinId)] == true
+end
+
+local function areTargetSkinsEqual(listA, listB)
+    if type(listA) ~= "table" or type(listB) ~= "table" then return false end
+    if #listA ~= #listB then return false end
+    local setA = {}
+    for _, id in ipairs(listA) do setA[tostring(id)] = true end
+    for _, id in ipairs(listB) do
+        if not setA[tostring(id)] then return false end
+    end
+    return true
+end
+
+local function getTargetSkinsDisplayString(maxItems)
+    local list = TARGET_SKIN_LIST
+    if #list == 0 then return "None" end
+    maxItems = maxItems or 3
+    if #list <= maxItems then
+        return table.concat(list, ", ")
+    else
+        local shown = {}
+        for i = 1, maxItems do
+            table.insert(shown, list[i])
+        end
+        return table.concat(shown, ", ") .. string.format(" (+%d more)", #list - maxItems)
+    end
+end
+
+local function setTargetSkins(newList, shouldResetQueue)
+    local seen = {}
+    local cleaned = {}
+    for _, id in ipairs(newList or {}) do
+        local idStr = tostring(id):gsub("^%s*(.-)%s*$", "%1")
+        if idStr ~= "" and not seen[idStr] then
+            seen[idStr] = true
+            table.insert(cleaned, idStr)
+        end
+    end
+    table.sort(cleaned)
+
+    local changed = not areTargetSkinsEqual(TARGET_SKIN_LIST, cleaned)
+    TARGET_SKIN_LIST = cleaned
+    TARGET_SKIN_SET = seen
+    TARGET_SKIN_ID = cleaned[1] or ""
+
+    if changed and shouldResetQueue then
+        state.visitedServers = {}
+        state.failedServers = {}
+        state.serverQueue = {}
+        state.sweepCount = 0
+        state.found = false
+        if saveConfig then saveConfig() end
+        if saveState then saveState() end
+    end
+
+    return changed
+end
+
+-- ============================
 -- CONFIGURATION (defaults, overridden by saved config & UI)
 -- ============================
-local TARGET_SKIN_ID = ""
 local WEBHOOK_URL = ""
 local NOTIFY_ON_HOP = false
 local HOP_DELAY = 3
@@ -194,8 +271,18 @@ local function loadConfig()
             local raw = readFileFunc(CONFIG_FILE)
             local cfg = HttpService:JSONDecode(raw)
             if cfg and type(cfg) == "table" then
-                if cfg.targetSkinId and cfg.targetSkinId ~= "" then
-                    TARGET_SKIN_ID = cfg.targetSkinId
+                local cfgTargets = {}
+                if type(cfg.targetSkinIds) == "table" then
+                    for _, id in ipairs(cfg.targetSkinIds) do
+                        if type(id) == "string" and id ~= "" then
+                            table.insert(cfgTargets, id)
+                        end
+                    end
+                elseif cfg.targetSkinId and cfg.targetSkinId ~= "" then
+                    table.insert(cfgTargets, cfg.targetSkinId)
+                end
+                if #cfgTargets > 0 then
+                    setTargetSkins(cfgTargets, false)
                 end
                 if cfg.webhookUrl and cfg.webhookUrl ~= "" then
                     WEBHOOK_URL = cfg.webhookUrl
@@ -211,10 +298,11 @@ local function loadConfig()
     end)
 end
 
-local function saveConfig()
+saveConfig = function()
     if not writeFileFunc then return end
     pcall(function()
         writeFileFunc(CONFIG_FILE, HttpService:JSONEncode({
+            targetSkinIds = getTargetSkinList(),
             targetSkinId = TARGET_SKIN_ID,
             webhookUrl = WEBHOOK_URL,
             notifyOnHop = NOTIFY_ON_HOP,
@@ -223,9 +311,10 @@ local function saveConfig()
     end)
 end
 
-local function saveState()
+saveState = function()
     if not writeFileFunc then return end
     pcall(function()
+        state.targetSkinIds = getTargetSkinList()
         state.targetSkinId = TARGET_SKIN_ID
         state.hunting = hunterRunning
         writeFileFunc(STATE_FILE, HttpService:JSONEncode(state))
@@ -239,10 +328,22 @@ local function loadState()
             local raw = readFileFunc(STATE_FILE)
             local loaded = HttpService:JSONDecode(raw)
             if loaded and type(loaded) == "table" then
-                if TARGET_SKIN_ID == "" and loaded.targetSkinId and loaded.targetSkinId ~= "" then
-                    TARGET_SKIN_ID = loaded.targetSkinId
+                local loadedTargets = {}
+                if type(loaded.targetSkinIds) == "table" then
+                    for _, id in ipairs(loaded.targetSkinIds) do
+                        if type(id) == "string" and id ~= "" then
+                            table.insert(loadedTargets, id)
+                        end
+                    end
+                elseif loaded.targetSkinId and loaded.targetSkinId ~= "" then
+                    table.insert(loadedTargets, loaded.targetSkinId)
                 end
-                if loaded.targetSkinId == TARGET_SKIN_ID then
+
+                if #getTargetSkinList() == 0 and #loadedTargets > 0 then
+                    setTargetSkins(loadedTargets, false)
+                end
+
+                if areTargetSkinsEqual(loadedTargets, getTargetSkinList()) then
                     state.visitedServers = loaded.visitedServers or {}
                     state.failedServers = loaded.failedServers or {}
                     state.serverQueue = loaded.serverQueue or {}
@@ -253,7 +354,7 @@ local function loadState()
                         state.hunting = loaded.hunting
                     end
                 else
-                    log("Target skin changed or new session. Starting fresh sweep.")
+                    log("Target skins changed or new session. Starting fresh sweep.")
                 end
             end
         end
@@ -309,14 +410,24 @@ local DEFAULT_AUCTION_SKINS = {
     "UnicornCoat",
 }
 
+local HALLOWEEN_SKINS = {}
+
 local function getAuctionSkins()
     local seen = {}
     local skins = {}
+    local hwSeen = {}
 
     local function add(id)
         if type(id) == "string" and id ~= "" and not seen[id] then
             seen[id] = true
             table.insert(skins, id)
+        end
+    end
+
+    local function addHalloween(id)
+        if type(id) == "string" and id ~= "" and not hwSeen[id] then
+            hwSeen[id] = true
+            table.insert(HALLOWEEN_SKINS, id)
         end
     end
 
@@ -332,7 +443,13 @@ local function getAuctionSkins()
             if auctionConfigMod then
                 local cfg = require(auctionConfigMod)
                 if type(cfg) == "table" then
-                    for _, tbl in ipairs({cfg.HalloweenSkins, cfg.Skins, cfg.LegacySkins, cfg.VersionThreeSkins}) do
+                    if type(cfg.HalloweenSkins) == "table" then
+                        for _, id in pairs(cfg.HalloweenSkins) do
+                            add(id)
+                            addHalloween(id)
+                        end
+                    end
+                    for _, tbl in ipairs({cfg.Skins, cfg.LegacySkins, cfg.VersionThreeSkins}) do
                         if type(tbl) == "table" then
                             for _, id in pairs(tbl) do add(id) end
                         end
@@ -344,20 +461,31 @@ local function getAuctionSkins()
             if halloweenMod then
                 local hw = require(halloweenMod)
                 if type(hw) == "table" and type(hw.AuctionSet) == "table" then
-                    for _, id in pairs(hw.AuctionSet) do add(id) end
+                    for _, id in pairs(hw.AuctionSet) do
+                        add(id)
+                        addHalloween(id)
+                    end
                 end
             end
         end
     end)
 
+    for _, id in ipairs({"JackOLanternCoat", "MoonWalkerCoat"}) do
+        if seen[id] then
+            addHalloween(id)
+        end
+    end
+
     table.sort(skins)
+    table.sort(HALLOWEEN_SKINS)
     return skins
 end
 
 local AUCTION_SKIN_OPTIONS = getAuctionSkins()
 
-if TARGET_SKIN_ID == "" then
-    TARGET_SKIN_ID = AUCTION_SKIN_OPTIONS[1] or "HolsteinCoat"
+if #getTargetSkinList() == 0 then
+    local defaultSkin = AUCTION_SKIN_OPTIONS[1] or "HolsteinCoat"
+    setTargetSkins({ defaultSkin }, false)
 end
 
 -- ============================
@@ -591,7 +719,8 @@ local function formatRemainingTime(seconds)
 end
 
 local function checkForTargetSkin()
-    log("Checking auction lots for target skin: " .. TARGET_SKIN_ID)
+    local targetCount = #getTargetSkinList()
+    log(string.format("Checking auction lots for %d target skin(s): %s", targetCount, getTargetSkinsDisplayString(5)))
 
     local lots = getAuctionData()
     if not lots then
@@ -604,8 +733,8 @@ local function checkForTargetSkin()
         currentSignatures[lot.lotName] = lot.signature
         log(string.format("  %s: %s (%s) — %s", lot.lotName, lot.skinName, lot.rarity, lot.skinId))
 
-        if tostring(lot.skinId) == tostring(TARGET_SKIN_ID) then
-            log("🎯 TARGET SKIN FOUND! " .. lot.skinName .. " in " .. lot.lotName)
+        if isTargetSkin(lot.skinId) then
+            log("🎯 TARGET SKIN FOUND! " .. lot.skinName .. " in " .. lot.lotName .. " (Matched: " .. tostring(lot.skinId) .. ")")
 
             local endsAtDisplay = "N/A"
             if lot.endsAt then
@@ -626,6 +755,7 @@ local function checkForTargetSkin()
                     {["name"] = "Current Bid", ["value"] = "🪙 " .. formatNumber(lot.bid), ["inline"] = true},
                     {["name"] = "Minimum Bid", ["value"] = "🪙 " .. formatNumber(lot.minBid), ["inline"] = true},
                     {["name"] = "⏳ Ends At", ["value"] = endsAtDisplay, ["inline"] = true},
+                    {["name"] = "Active Targets", ["value"] = string.format("%d configured", #getTargetSkinList()), ["inline"] = true},
                     {["name"] = "🌐 Server", ["value"] = "`" .. tostring(game.JobId) .. "`", ["inline"] = false},
                 }
             )
@@ -946,7 +1076,7 @@ local function waitForAuctionChange()
         0xFFA500,
         {
             {["name"] = "Servers Visited", ["value"] = tostring(countKeys(state.visitedServers)), ["inline"] = true},
-            {["name"] = "Target Skin", ["value"] = "`" .. TARGET_SKIN_ID .. "`", ["inline"] = true},
+            {["name"] = "Target Skins (" .. tostring(#getTargetSkinList()) .. ")", ["value"] = "`" .. getTargetSkinsDisplayString(4) .. "`", ["inline"] = true},
             {["name"] = "⏳ Time Until Rotation", ["value"] = remainingStr .. (targetEndsAt > 0 and (" (<t:" .. targetEndsAt .. ":R>)") or ""), ["inline"] = false},
         }
     )
@@ -1023,8 +1153,8 @@ local function waitForAuctionChange()
             local lot = skinAuction:FindFirstChild(lotName)
             if lot then
                 local currentSkinId = lot:GetAttribute("SkinId")
-                if tostring(currentSkinId) == tostring(TARGET_SKIN_ID) then
-                    log("🎯 TARGET SKIN APPEARED ON CURRENT SERVER WHILE WAITING!")
+                if isTargetSkin(currentSkinId) then
+                    log("🎯 TARGET SKIN APPEARED ON CURRENT SERVER WHILE WAITING: " .. tostring(currentSkinId))
 
                     local skinName = lot:GetAttribute("SkinName") or "Unknown"
                     local rarity = lot:GetAttribute("Rarity") or "Unknown"
@@ -1052,6 +1182,7 @@ local function waitForAuctionChange()
                             {["name"] = "Current Bid", ["value"] = "🪙 " .. formatNumber(bid), ["inline"] = true},
                             {["name"] = "Minimum Bid", ["value"] = "🪙 " .. formatNumber(minBid), ["inline"] = true},
                             {["name"] = "⏳ Ends At", ["value"] = endsAtDisplay, ["inline"] = true},
+                            {["name"] = "Active Targets", ["value"] = string.format("%d configured", #getTargetSkinList()), ["inline"] = true},
                             {["name"] = "🌐 Server", ["value"] = "`" .. tostring(game.JobId) .. "`", ["inline"] = false},
                         }
                     )
@@ -1154,10 +1285,10 @@ end
 -- MAIN LOOP
 -- ============================
 main = function()
-    if TARGET_SKIN_ID == "" then
+    if #getTargetSkinList() == 0 then
         Rayfield:Notify({
-            Title = "No Skin ID",
-            Content = "Enter a Target Skin ID before starting the hunter.",
+            Title = "No Target Skins",
+            Content = "Select or enter at least one Target Skin ID before starting the hunter.",
             Duration = 4,
             Image = 4483362458,
         })
@@ -1172,7 +1303,7 @@ main = function()
     end
 
     log("=== Skin Hunter Running ===")
-    log("Target Skin ID: " .. TARGET_SKIN_ID)
+    log("Target Skins (" .. tostring(#getTargetSkinList()) .. "): " .. getTargetSkinsDisplayString())
     log("Current Server: " .. tostring(game.JobId))
 
     if not game:IsLoaded() then
@@ -1295,10 +1426,10 @@ startHunter = function(isAutoResume)
         return
     end
 
-    if TARGET_SKIN_ID == "" then
+    if #getTargetSkinList() == 0 then
         Rayfield:Notify({
-            Title = "No Skin ID",
-            Content = "Enter or select a Target Skin ID first.",
+            Title = "No Target Skins",
+            Content = "Select or enter at least one Target Skin ID first.",
             Duration = 4,
             Image = 4483362458,
         })
@@ -1320,12 +1451,12 @@ startHunter = function(isAutoResume)
 
     Rayfield:Notify({
         Title = isAutoResume and "Hunter Auto-Resumed" or "Hunter Started",
-        Content = (isAutoResume and "Continuing hunt for " or "Hunting for ") .. TARGET_SKIN_ID .. "...",
+        Content = (isAutoResume and "Continuing hunt for " or "Hunting for ") .. getTargetSkinsDisplayString(2) .. "...",
         Duration = 3,
         Image = 4483362458,
     })
 
-    log("Hunter started. Target: " .. TARGET_SKIN_ID)
+    log("Hunter started. Targets (" .. tostring(#getTargetSkinList()) .. "): " .. getTargetSkinsDisplayString())
     hunterThread = task.spawn(main)
 end
 
@@ -1347,65 +1478,165 @@ end
 -- ============================
 -- UI: MAIN TAB (RAYFIELD 2022)
 -- ============================
-MainTab:CreateSection("Target Configuration")
+MainTab:CreateSection("Target Configuration (Multi-Select)")
 
-local initialSkinSelection = table.find(AUCTION_SKIN_OPTIONS, TARGET_SKIN_ID) and TARGET_SKIN_ID or AUCTION_SKIN_OPTIONS[1]
-
-MainTab:CreateDropdown({
-    Name = "Select Target Skin",
+TargetDropdown = MainTab:CreateDropdown({
+    Name = "Select Target Skins",
     Options = AUCTION_SKIN_OPTIONS,
-    CurrentOption = { initialSkinSelection },
-    MultipleOptions = false,
-    Flag = "Dropdown_TargetSkin",
-    Callback = function(Option)
-        local selection = type(Option) == "table" and Option[1] or Option
-        if selection and selection ~= "" then
-            if TARGET_SKIN_ID ~= selection then
-                TARGET_SKIN_ID = selection
-                state.visitedServers = {}
-                state.failedServers = {}
-                state.serverQueue = {}
-                state.sweepCount = 0
-                state.found = false
-                saveConfig()
-                saveState()
+    CurrentOption = getTargetSkinList(),
+    MultipleOptions = true,
+    Flag = "Dropdown_TargetSkins",
+    Callback = function(Options)
+        local selections = {}
+        if type(Options) == "table" then
+            for _, opt in ipairs(Options) do
+                if type(opt) == "string" and opt ~= "" then
+                    table.insert(selections, opt)
+                end
+            end
+        elseif type(Options) == "string" and Options ~= "" then
+            table.insert(selections, Options)
+        end
+
+        local changed = setTargetSkins(selections, true)
+        if changed then
+            if #TARGET_SKIN_LIST > 0 then
                 Rayfield:Notify({
-                    Title = "Target Skin Selected",
-                    Content = "Now hunting: " .. selection,
+                    Title = "Target Skins Updated",
+                    Content = string.format("Hunting %d skin(s): %s", #TARGET_SKIN_LIST, getTargetSkinsDisplayString(3)),
                     Duration = 3,
                     Image = 4483362458,
                 })
-                log("Selected target skin from dropdown: " .. selection)
+                log("Target skins updated from dropdown: " .. table.concat(TARGET_SKIN_LIST, ", "))
+            else
+                Rayfield:Notify({
+                    Title = "No Targets Selected",
+                    Content = "Please select at least one skin to hunt.",
+                    Duration = 3,
+                    Image = 4483362458,
+                })
+                log("All target skins deselected.")
             end
         end
     end,
 })
 
 MainTab:CreateInput({
-    Name = "Custom Skin ID (Manual Override)",
-    PlaceholderText = TARGET_SKIN_ID ~= "" and ("Current: " .. TARGET_SKIN_ID) or "Enter custom SkinId if not in dropdown",
+    Name = "Add Custom Skin ID(s)",
+    PlaceholderText = "e.g. SkinA, SkinB (press Enter to add)",
     RemoveTextAfterFocusLost = false,
-    Flag = "Input_TargetSkin",
+    Flag = "Input_AddCustomSkin",
     Callback = function(Text)
         if Text and Text ~= "" then
-            if TARGET_SKIN_ID ~= Text then
-                TARGET_SKIN_ID = Text
-                state.visitedServers = {}
-                state.failedServers = {}
-                state.serverQueue = {}
-                state.sweepCount = 0
-                state.found = false
-                saveConfig()
-                saveState()
+            local added = {}
+            local currentList = {}
+            for _, id in ipairs(getTargetSkinList()) do
+                table.insert(currentList, id)
+            end
+
+            local refreshedOptions = false
+            for item in string.gmatch(Text, "[^,%s]+") do
+                local trimmed = item:gsub("^%s*(.-)%s*$", "%1")
+                if trimmed ~= "" and not isTargetSkin(trimmed) then
+                    table.insert(currentList, trimmed)
+                    table.insert(added, trimmed)
+                    if not table.find(AUCTION_SKIN_OPTIONS, trimmed) then
+                        table.insert(AUCTION_SKIN_OPTIONS, trimmed)
+                        refreshedOptions = true
+                    end
+                end
+            end
+
+            if #added > 0 then
+                if refreshedOptions then
+                    table.sort(AUCTION_SKIN_OPTIONS)
+                    if TargetDropdown and TargetDropdown.Refresh then
+                        pcall(function() TargetDropdown:Refresh(AUCTION_SKIN_OPTIONS) end)
+                    end
+                end
+
+                setTargetSkins(currentList, true)
+                if TargetDropdown and TargetDropdown.Set then
+                    pcall(function() TargetDropdown:Set(getTargetSkinList()) end)
+                end
+
                 Rayfield:Notify({
-                    Title = "Skin ID Overridden",
-                    Content = "Now hunting: " .. Text,
-                    Duration = 3,
+                    Title = "Custom Skin(s) Added",
+                    Content = string.format("Added %d skin(s). Total targets: %d", #added, #TARGET_SKIN_LIST),
+                    Duration = 4,
                     Image = 4483362458,
                 })
-                log("Manually set target skin: " .. Text)
+                log("Added custom skin(s): " .. table.concat(added, ", ") .. " | Total targets: " .. #TARGET_SKIN_LIST)
             end
         end
+    end,
+})
+
+MainTab:CreateButton({
+    Name = "View Active Targets",
+    Callback = function()
+        local list = getTargetSkinList()
+        if #list == 0 then
+            Rayfield:Notify({
+                Title = "Target Skins (0)",
+                Content = "No skins currently targeted. Select from dropdown or enter custom IDs.",
+                Duration = 4,
+                Image = 4483362458,
+            })
+        else
+            Rayfield:Notify({
+                Title = string.format("Active Targets (%d)", #list),
+                Content = table.concat(list, ", "),
+                Duration = 7,
+                Image = 4483362458,
+            })
+        end
+    end,
+})
+
+if #HALLOWEEN_SKINS > 0 then
+    MainTab:CreateButton({
+        Name = string.format("Preset: Select All Halloween Skins (%d)", #HALLOWEEN_SKINS),
+        Callback = function()
+            local combined = {}
+            local seen = {}
+            for _, id in ipairs(HALLOWEEN_SKINS) do
+                if not seen[id] then
+                    seen[id] = true
+                    table.insert(combined, id)
+                end
+            end
+
+            setTargetSkins(combined, true)
+            if TargetDropdown and TargetDropdown.Set then
+                pcall(function() TargetDropdown:Set(getTargetSkinList()) end)
+            end
+
+            Rayfield:Notify({
+                Title = "Halloween Preset Applied",
+                Content = string.format("Now hunting all %d Halloween skins!", #combined),
+                Duration = 4,
+                Image = 4483362458,
+            })
+            log("Applied Halloween skins preset: " .. table.concat(combined, ", "))
+        end,
+    })
+end
+
+MainTab:CreateButton({
+    Name = "Clear All Targets",
+    Callback = function()
+        setTargetSkins({}, true)
+        if TargetDropdown and TargetDropdown.Set then
+            pcall(function() TargetDropdown:Set({}) end)
+        end
+        Rayfield:Notify({
+            Title = "Targets Cleared",
+            Content = "All target skins cleared. Select new ones before scanning.",
+            Duration = 3,
+            Image = 4483362458,
+        })
+        log("Cleared all target skins.")
     end,
 })
 
