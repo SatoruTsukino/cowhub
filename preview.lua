@@ -420,12 +420,12 @@ trickOrTreat = {
     barnLoadDelay = 2.5,
     settleDelay = 0.3,
     houseWaitTime = 1.4,
-    disableInsideCollision = true, -- Disables collision for Inside / Interior / Door parts of houses
-    approachOrigin = "Inside House", -- "Inside House" or "Outside Porch"
+    disableInsideCollision = true, -- Disables collision for Inside / Interior parts of houses
+    approachOrigin = "Outside Porch", -- "Outside Porch" (walks up from outside) or "Inside House"
     walkUpEnabled = true,   -- Walk up to the door before knocking so game registers walking
-    walkDistance = 7.0,     -- Distance (studs) to start walk-up from in front of the door
-    walkTimeout = 1.2,      -- Max time (seconds) to walk up to the door
-    doorDistance = 2.5,     -- Final stop distance (studs) in front of the door
+    walkDistance = 12.0,    -- Distance (studs) to start walk-up from (further back outside)
+    walkTimeout = 1.8,      -- Max time (seconds) to walk up to the door
+    doorDistance = 3.8,     -- Final stop distance (studs) in front of the door (stops safely before door)
     doorHeightOffset = 0.0, -- Vertical fine-tuning offset in front of the door
     cycleCooldown = 600, -- Default 10 minutes (auto-detected from HalloweenConfig or server)
     detectedCooldown = nil,
@@ -574,7 +574,7 @@ end
 
 function trickOrTreat.setHouseCollision(houseModel, canCollide)
     if not houseModel then return end
-    for _, name in ipairs({"Inside", "Interior", "Door"}) do
+    for _, name in ipairs({"Inside", "Interior"}) do
         local part = houseModel:FindFirstChild(name, true)
         if part and part:IsA("BasePart") then
             pcall(function() part.CanCollide = canCollide end)
@@ -722,8 +722,8 @@ function trickOrTreat.getTargetCFrame(houseModel)
         outward = Vector3.new(0, 0, 1)
     end
 
-    -- 1. Destination knock position right in front of the door (e.g. 2.5 studs)
-    local dist = trickOrTreat.doorDistance or 2.5
+    -- 1. Destination knock position right in front of the door (e.g. 3.8 studs)
+    local dist = trickOrTreat.doorDistance or 3.8
     local knockX = doorPos.X + outward.X * dist
     local knockZ = doorPos.Z + outward.Z * dist
 
@@ -749,9 +749,9 @@ function trickOrTreat.getTargetCFrame(houseModel)
     local knockPos = Vector3.new(knockX, knockFloorY, knockZ)
     local knockCF = CFrame.lookAt(knockPos, Vector3.new(doorPos.X, knockFloorY, doorPos.Z))
 
-    -- 2. Approach start position for walking up
+    -- 2. Approach start position for walking up (further back outside)
     if trickOrTreat.walkUpEnabled and (trickOrTreat.walkDistance or 0) > 0 then
-        local walkDist = trickOrTreat.walkDistance or 7.0
+        local walkDist = trickOrTreat.walkDistance or 12.0
         local isInsideApproach = (trickOrTreat.approachOrigin == "Inside House")
         local appX, appZ
 
@@ -992,7 +992,7 @@ function trickOrTreat.runCycle()
                 end
 
                 local walkStart = os.clock()
-                local maxWalkTime = trickOrTreat.walkTimeout or 1.2
+                local maxWalkTime = trickOrTreat.walkTimeout or 1.8
                 while (os.clock() - walkStart < maxWalkTime) do
                     if not trickOrTreat.auto and not trickOrTreat.isSingleRun then break end
                     if not root or not humanoid or humanoid.Health <= 0 then break end
@@ -1246,10 +1246,10 @@ function afkRelog.saveState()
             CycleCooldown = trickOrTreat and trickOrTreat.cycleCooldown or 600,
             WalkUpEnabled = (trickOrTreat and trickOrTreat.walkUpEnabled) ~= false,
             DisableInsideCollision = (trickOrTreat and trickOrTreat.disableInsideCollision) ~= false,
-            ApproachOrigin = trickOrTreat and trickOrTreat.approachOrigin or "Inside House",
-            WalkDistance = trickOrTreat and trickOrTreat.walkDistance or 7.0,
-            WalkTimeout = trickOrTreat and trickOrTreat.walkTimeout or 1.2,
-            DoorDistance = trickOrTreat and trickOrTreat.doorDistance or 2.5,
+            ApproachOrigin = trickOrTreat and trickOrTreat.approachOrigin or "Outside Porch",
+            WalkDistance = trickOrTreat and trickOrTreat.walkDistance or 12.0,
+            WalkTimeout = trickOrTreat and trickOrTreat.walkTimeout or 1.8,
+            DoorDistance = trickOrTreat and trickOrTreat.doorDistance or 3.8,
             DoorHeightOffset = trickOrTreat and trickOrTreat.doorHeightOffset or 0.0,
         },
     }
@@ -6872,11 +6872,11 @@ TotTab:CreateSlider({
 })
 
 TotTab:CreateSlider({
-    Name = "Door Knock Distance (In Front)",
-    Range = {1.0, 8.0},
+    Name = "Door Stop Distance (In Front)",
+    Range = {1.5, 10.0},
     Increment = 0.5,
     Suffix = " studs",
-    CurrentValue = 2.5,
+    CurrentValue = 3.8,
     Flag = "Slider_ToT_DoorDistance",
     Callback = function(Value)
         trickOrTreat.doorDistance = Value
@@ -6906,12 +6906,12 @@ TotTab:CreateToggle({
 
 TotTab:CreateDropdown({
     Name = "Walk Approach Origin",
-    Options = {"Inside House", "Outside Porch"},
-    CurrentOption = {"Inside House"},
+    Options = {"Outside Porch", "Inside House"},
+    CurrentOption = {"Outside Porch"},
     Flag = "Dropdown_ToT_ApproachOrigin",
     Callback = function(Option)
         local chosen = type(Option) == "table" and Option[1] or Option
-        trickOrTreat.approachOrigin = chosen or "Inside House"
+        trickOrTreat.approachOrigin = chosen or "Outside Porch"
     end,
 })
 
@@ -6926,10 +6926,10 @@ TotTab:CreateToggle({
 
 TotTab:CreateSlider({
     Name = "Walk-Up Approach Distance (Studs)",
-    Range = {2.0, 15.0},
-    Increment = 0.5,
+    Range = {2.0, 30.0},
+    Increment = 1.0,
     Suffix = " studs",
-    CurrentValue = 7.0,
+    CurrentValue = 12.0,
     Flag = "Slider_ToT_WalkDistance",
     Callback = function(Value)
         trickOrTreat.walkDistance = Value
@@ -6938,10 +6938,10 @@ TotTab:CreateSlider({
 
 TotTab:CreateSlider({
     Name = "Walk-Up Timeout (Seconds)",
-    Range = {0.5, 3.0},
+    Range = {0.5, 5.0},
     Increment = 0.1,
     Suffix = "s",
-    CurrentValue = 1.2,
+    CurrentValue = 1.8,
     Flag = "Slider_ToT_WalkTimeout",
     Callback = function(Value)
         trickOrTreat.walkTimeout = Value
