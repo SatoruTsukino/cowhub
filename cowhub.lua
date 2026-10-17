@@ -23,8 +23,11 @@ local Window = Rayfield:CreateWindow({
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
-    ConfigurationSaving = {
-        Enabled = false,
+    configuration = {
+        autoSave = true,
+        autoLoad = true,
+        fileName = "CowHubConfig",
+        customFolder = "CowHub",
     },
     KeySystem = false
 })
@@ -35,6 +38,7 @@ local Window = Rayfield:CreateWindow({
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualUser = game:GetService("VirtualUser")
 
@@ -86,6 +90,7 @@ local chompEvent = cowRemotes:WaitForChild("ChompRequest")
 local fishingEvent = cowRemotes:FindFirstChild("FishingRequest") or cowRemotes:WaitForChild("FishingRequest", 5)
 local skinAuction = cowGame:WaitForChild("SkinAuction")
 local fishingSpotsFolder = workspace:FindFirstChild("Fishing Spots") or workspace:WaitForChild("Fishing Spots", 5)
+local trickOrTreatEvent = cowRemotes:FindFirstChild("TrickOrTreatRequest")
 
 -- Pre-configured Raycast Parameters (Zero allocation per frame)
 local raycastParams = RaycastParams.new()
@@ -115,6 +120,8 @@ updateWallRaycastFilter()
 
 local manatite
 local mithril
+local trickOrTreat
+local updateHeartbeatConnection
 
 local charConn = plr.CharacterAdded:Connect(function(newChar)
     char = newChar
@@ -148,6 +155,9 @@ local charConn = plr.CharacterAdded:Connect(function(newChar)
         mithril.orePart = nil
         mithril.payload = nil
     end
+    if trickOrTreat then
+        trickOrTreat.isCycling = false
+    end
 end)
 table.insert(scriptConnections, charConn)
 
@@ -174,8 +184,9 @@ local farm = {
     lastChompedNode = "",
     chompCooldown = 0,
     lastRaycastChompTime = 0,
-    grassChompDelay = 0.04,
-    grassChompRepeatDelay = 0.5,
+    grassChompDelay = 0.4, -- Hardcoded server minimum cooldown is 0.4s (Config.Grass.MinimumChewCooldown)
+    grassChompRepeatDelay = 0.6,
+    chompOnlyWhileMoving = true,
     lastChompedMob = "",
     mobChompCooldown = 0,
     castCooldown = 0,
@@ -385,6 +396,447 @@ mithril = {
     lastCacheTime = 0,
 }
 
+-- ==========================
+-- TRICK OR TREAT AUTOFARM (HALLOWEEN EVENT)
+-- ==========================
+trickOrTreat = {
+    auto = false,
+    isCycling = false,
+    isSingleRun = false,
+    returnOnFinish = true,
+    pauseFarmDuringCycle = true,
+    anchorDuringKnock = true,
+    savedPreCFrame = nil,
+    barnPosition = Vector3.new(-537, 727, 600),
+    barnLoadDelay = 2.5,
+    settleDelay = 0.3,
+    houseWaitTime = 1.4,
+    cycleCooldown = 600, -- Default 10 minutes (auto-detected from HalloweenConfig or server)
+    detectedCooldown = nil,
+    autoDetectCooldown = true,
+    nextCycleTime = 0,
+    lastCycleCompletedTime = 0,
+    housesVisitedCount = 0,
+    lastHouseName = "",
+    statusText = "Idle",
+    remote = nil,
+    loopRunning = false,
+    clientEventConn = nil,
+    statusCard = nil,
+    infoCard = nil,
+}
+
+local function stopCharacterVelocity()
+    if root then
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+    end
+    for _, part in ipairs(charBaseParts) do
+        if part and part.Parent then
+            part.AssemblyLinearVelocity = Vector3.zero
+            part.AssemblyAngularVelocity = Vector3.zero
+        end
+    end
+end
+
+function trickOrTreat.detectCooldown()
+    local detected = nil
+    pcall(function()
+        local shared = cowGame and cowGame:FindFirstChild("Shared")
+        if shared then
+            local hwConfigMod = shared:FindFirstChild("HalloweenConfig")
+            if hwConfigMod then
+                local hw = require(hwConfigMod)
+                if type(hw) == "table" and type(hw.TrickOrTreat) == "table" then
+                    local tot = hw.TrickOrTreat
+                    for _, k in ipairs({"Cooldown", "HouseCooldown", "KnockCooldown", "WaitTime", "CooldownSeconds", "CycleCooldown", "CycleSeconds"}) do
+                        if type(tot[k]) == "number" and tot[k] > 0 then
+                            detected = tot[k]
+                            break
+                        end
+                    end
+                end
+            end
+            if not detected then
+                local hwRulesMod = shared:FindFirstChild("HalloweenQuestRules")
+                if hwRulesMod then
+                    local rules = require(hwRulesMod)
+                    if type(rules) == "table" then
+                        for _, k in ipairs({"HouseCooldown", "Cooldown", "KnockCooldown", "WaitTime", "KnockWaitTime"}) do
+                            if type(rules[k]) == "number" and rules[k] > 0 then
+                                detected = rules[k]
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    if detected and detected > 0 then
+        trickOrTreat.detectedCooldown = detected
+        trickOrTreat.cycleCooldown = detected
+    end
+    return detected
+end
+
+function trickOrTreat.getHousesFolder()
+    local cowWorld = cache.cowWorldRef
+    if not cowWorld or not cowWorld.Parent then
+        cowWorld = workspace:FindFirstChild("CowWorld")
+        cache.cowWorldRef = cowWorld
+    end
+    if cowWorld then
+        local geometry = cowWorld:FindFirstChild("Geometry") or cowWorld:FindFirstChild("Geometry", true)
+        if geometry then
+            local fh = geometry:FindFirstChild("FarmerHouses")
+            if fh then return fh end
+        end
+        local fhDirect = cowWorld:FindFirstChild("FarmerHouses", true)
+        if fhDirect then return fhDirect end
+    end
+    return workspace:FindFirstChild("FarmerHouses", true)
+end
+
+function trickOrTreat.getHouseList()
+    local folder = trickOrTreat.getHousesFolder()
+    local list = {}
+    if folder then
+        for _, child in ipairs(folder:GetChildren()) do
+            if child:IsA("Model") then
+                if string.match(child.Name, "^%w+_House%d+$") or string.find(child.Name:lower(), "house") then
+                    table.insert(list, child)
+                end
+            end
+        end
+        table.sort(list, function(a, b) return a.Name < b.Name end)
+    end
+    return list
+end
+
+function trickOrTreat.getInsidePart(houseModel)
+    if not houseModel then return nil end
+    local inside = houseModel:FindFirstChild("Inside", true)
+    if inside and inside:IsA("BasePart") then
+        return inside
+    end
+    local interior = houseModel:FindFirstChild("Interior", true)
+    if interior and interior:IsA("BasePart") then
+        return interior
+    end
+    local threshold = houseModel:FindFirstChild("Threshold", true)
+    if threshold and threshold:IsA("BasePart") then
+        return threshold
+    end
+    if houseModel.PrimaryPart then
+        return houseModel.PrimaryPart
+    end
+    return houseModel:FindFirstChildWhichIsA("BasePart", true)
+end
+
+function trickOrTreat.getRemote()
+    if trickOrTreat.remote and trickOrTreat.remote.Parent then
+        return trickOrTreat.remote
+    end
+    local remote = nil
+    if cowRemotes then
+        remote = cowRemotes:FindFirstChild("TrickOrTreatRequest")
+    end
+    if not remote then
+        pcall(function()
+            remote = ReplicatedStorage:WaitForChild("CowGame", 2):WaitForChild("Remotes", 2):WaitForChild("TrickOrTreatRequest", 2)
+        end)
+    end
+    trickOrTreat.remote = remote
+    return remote
+end
+
+function trickOrTreat.initClientListener()
+    if trickOrTreat.clientEventConn then return end
+    pcall(function()
+        local clientEvent = cowRemotes and cowRemotes:FindFirstChild("ClientEvent")
+        if not clientEvent then
+            clientEvent = cowRemotes:WaitForChild("ClientEvent", 3)
+        end
+        if clientEvent and clientEvent:IsA("RemoteEvent") then
+            trickOrTreat.clientEventConn = clientEvent.OnClientEvent:Connect(function(eventName, payload)
+                if eventName == "TrickOrTreat" and type(payload) == "table" then
+                    if payload.Kind == "Refused" and tostring(payload.Reason) == "Cooldown" and type(payload.Wait) == "number" then
+                        local waitSecs = math.ceil(payload.Wait)
+                        if waitSecs > 0 then
+                            trickOrTreat.nextCycleTime = math.max(trickOrTreat.nextCycleTime, os.clock() + waitSecs)
+                            if trickOrTreat.autoDetectCooldown and waitSecs > 10 then
+                                trickOrTreat.cycleCooldown = waitSecs
+                            end
+                            trickOrTreat.updateStatusUI()
+                        end
+                    end
+                end
+            end)
+        end
+    end)
+end
+
+function trickOrTreat.updateStatusUI()
+    if not trickOrTreat.statusCard then return end
+    local now = os.clock()
+    local statusTitle = "Status: " .. trickOrTreat.statusText
+    local statusBody = ""
+
+    if trickOrTreat.isCycling then
+        statusBody = "Currently cycling through houses..."
+    elseif trickOrTreat.auto then
+        local cdRemaining = math.max(0, math.ceil(trickOrTreat.nextCycleTime - now))
+        if cdRemaining > 0 then
+            local m = math.floor(cdRemaining / 60)
+            local s = math.floor(cdRemaining % 60)
+            statusBody = string.format("Next cycle in: %02d:%02d\nAuto-repeating when ready.", m, s)
+        else
+            statusBody = "Ready! Starting next cycle shortly..."
+        end
+    else
+        statusBody = "Autofarm is currently OFF."
+    end
+
+    pcall(function()
+        if trickOrTreat.statusCard.SetTitle then
+            trickOrTreat.statusCard:SetTitle(statusTitle)
+            trickOrTreat.statusCard:Set(statusBody)
+        elseif trickOrTreat.statusCard.Set then
+            trickOrTreat.statusCard:Set({ Title = statusTitle, Content = statusBody })
+        end
+    end)
+
+    if trickOrTreat.infoCard then
+        local infoTitle = "Cycle Telemetry"
+        local cdMin = math.floor(trickOrTreat.cycleCooldown / 60)
+        local cdSec = math.floor(trickOrTreat.cycleCooldown % 60)
+        local infoBody = string.format("Configured Cooldown: %d:%02d (%ds)\nLast Cycle Houses Knocked: %d\nLast House: %s",
+            cdMin, cdSec, trickOrTreat.cycleCooldown,
+            trickOrTreat.housesVisitedCount,
+            trickOrTreat.lastHouseName ~= "" and trickOrTreat.lastHouseName or "None"
+        )
+        pcall(function()
+            if trickOrTreat.infoCard.SetTitle then
+                trickOrTreat.infoCard:SetTitle(infoTitle)
+                trickOrTreat.infoCard:Set(infoBody)
+            elseif trickOrTreat.infoCard.Set then
+                trickOrTreat.infoCard:Set({ Title = infoTitle, Content = infoBody })
+            end
+        end)
+    end
+end
+
+function trickOrTreat.runCycle()
+    if trickOrTreat.isCycling then return end
+    if not root or not char or not humanoid or humanoid.Health <= 0 then return end
+
+    trickOrTreat.isCycling = true
+    trickOrTreat.statusText = "Starting Cycle..."
+    trickOrTreat.updateStatusUI()
+
+    -- 1. Save original player position BEFORE teleporting to barn for map load
+    local preCycleCFrame = root.CFrame
+    trickOrTreat.savedPreCFrame = preCycleCFrame
+
+    -- 2. Teleport player to the barn (-537, 727, 600) so the map will load
+    trickOrTreat.statusText = "Loading Map at Barn..."
+    trickOrTreat.updateStatusUI()
+
+    pcall(function() root.Anchored = true end)
+    root.CFrame = CFrame.new(trickOrTreat.barnPosition)
+    stopCharacterVelocity()
+
+    -- Wait for map to load (poll for houses)
+    local barnStart = os.clock()
+    local houses = {}
+    while (os.clock() - barnStart < trickOrTreat.barnLoadDelay) do
+        if not trickOrTreat.auto and not trickOrTreat.isSingleRun then
+            pcall(function() root.Anchored = false end)
+            if trickOrTreat.returnOnFinish and preCycleCFrame then
+                char:PivotTo(preCycleCFrame)
+                root.CFrame = preCycleCFrame
+                stopCharacterVelocity()
+            end
+            trickOrTreat.isCycling = false
+            trickOrTreat.isSingleRun = false
+            trickOrTreat.statusText = "Aborted"
+            trickOrTreat.updateStatusUI()
+            return
+        end
+        task.wait(0.25)
+        houses = trickOrTreat.getHouseList()
+        if #houses > 0 and (os.clock() - barnStart >= 1.5) then
+            break
+        end
+    end
+
+    pcall(function() root.Anchored = false end)
+
+    if #houses == 0 then
+        houses = trickOrTreat.getHouseList()
+    end
+
+    if #houses == 0 then
+        trickOrTreat.statusText = "Error: FarmerHouses not loaded"
+        trickOrTreat.updateStatusUI()
+        if Window and Window.Notify then
+            Window:Notify({
+                Title = "Trick or Treat",
+                Content = "FarmerHouses folder not loaded yet! Check barn coordinates or network.",
+                Duration = 4,
+            })
+        end
+        if trickOrTreat.returnOnFinish and preCycleCFrame then
+            char:PivotTo(preCycleCFrame)
+            root.CFrame = preCycleCFrame
+            stopCharacterVelocity()
+        end
+        trickOrTreat.isCycling = false
+        trickOrTreat.isSingleRun = false
+        return
+    end
+
+    local remote = trickOrTreat.getRemote()
+    local knockedCount = 0
+
+    -- 3. Cycle through all houses in FarmerHouses
+    for i, house in ipairs(houses) do
+        if not trickOrTreat.auto and not trickOrTreat.isSingleRun then
+            break
+        end
+
+        local insidePart = trickOrTreat.getInsidePart(house)
+        if insidePart then
+            trickOrTreat.statusText = string.format("Knocking [%d/%d]: %s", i, #houses, house.Name)
+            trickOrTreat.lastHouseName = house.Name
+            trickOrTreat.updateStatusUI()
+
+            -- Teleport to Inside part descendant
+            local targetPos = insidePart.Position + Vector3.new(0, 2.5, 0)
+            root.CFrame = CFrame.new(targetPos)
+            stopCharacterVelocity()
+
+            if trickOrTreat.anchorDuringKnock then
+                pcall(function() root.Anchored = true end)
+            end
+
+            -- Pre-knock settle delay so server registers position
+            task.wait(trickOrTreat.settleDelay)
+
+            -- Fire Knock remote
+            if remote then
+                remote:FireServer("Knock", house.Name)
+            else
+                remote = trickOrTreat.getRemote()
+                if remote then
+                    remote:FireServer("Knock", house.Name)
+                end
+            end
+            knockedCount = knockedCount + 1
+
+            -- Wait interaction delay (throttle next knock, respecting NextKnockAt = 1.2s)
+            task.wait(trickOrTreat.houseWaitTime)
+
+            if trickOrTreat.anchorDuringKnock then
+                pcall(function() root.Anchored = false end)
+            end
+            stopCharacterVelocity()
+        end
+    end
+
+    pcall(function() root.Anchored = false end)
+
+    -- 4. Teleport back to original position before the cycle started
+    if trickOrTreat.returnOnFinish and preCycleCFrame then
+        trickOrTreat.statusText = "Returning to original position..."
+        trickOrTreat.updateStatusUI()
+        char:PivotTo(preCycleCFrame)
+        root.CFrame = preCycleCFrame
+        stopCharacterVelocity()
+        task.wait(0.2)
+        stopCharacterVelocity()
+    end
+
+    trickOrTreat.lastCycleCompletedTime = os.clock()
+    trickOrTreat.housesVisitedCount = knockedCount
+    trickOrTreat.nextCycleTime = os.clock() + trickOrTreat.cycleCooldown
+    trickOrTreat.isCycling = false
+    trickOrTreat.isSingleRun = false
+    trickOrTreat.statusText = string.format("Cycle finished (%d houses). On cooldown.", knockedCount)
+    trickOrTreat.updateStatusUI()
+
+    if Window and Window.Notify then
+        local cdMin = math.floor(trickOrTreat.cycleCooldown / 60)
+        local cdSec = math.floor(trickOrTreat.cycleCooldown % 60)
+        Window:Notify({
+            Title = "Trick or Treat Cycle Complete",
+            Content = string.format("Knocked %d houses! Returned to start. Next cycle in %d:%02d.", knockedCount, cdMin, cdSec),
+            Duration = 4,
+            Image = 4483362458,
+        })
+    end
+end
+
+function trickOrTreat.startLoop()
+    if trickOrTreat.loopRunning then return end
+    trickOrTreat.loopRunning = true
+    task.spawn(function()
+        while trickOrTreat.loopRunning do
+            task.wait(1)
+            trickOrTreat.updateStatusUI()
+            if trickOrTreat.auto and not trickOrTreat.isCycling then
+                local now = os.clock()
+                if now >= trickOrTreat.nextCycleTime then
+                    trickOrTreat.runCycle()
+                end
+            end
+        end
+    end)
+end
+
+function trickOrTreat.toggle(Value)
+    if trickOrTreat.auto == Value then return end
+    trickOrTreat.auto = Value
+
+    -- Synchronize UI buttons/toggles across tabs without recursive loops
+    if Window and Window.Flags then
+        if Window.Flags.Toggle_TrickOrTreat ~= Value then
+            pcall(function() Window:Set("Toggle_TrickOrTreat", Value) end)
+        end
+        if Window.Flags.Toggle_TrickOrTreat_Main ~= Value then
+            pcall(function() Window:Set("Toggle_TrickOrTreat_Main", Value) end)
+        end
+    end
+
+    if Value then
+        trickOrTreat.initClientListener()
+        trickOrTreat.detectCooldown()
+        trickOrTreat.nextCycleTime = 0
+        trickOrTreat.startLoop()
+        Window:Notify({
+            Title = "Trick or Treat Autofarm",
+            Content = "Autofarm enabled. Teleporting to barn to load map...",
+            Duration = 3,
+            Image = 4483362458,
+        })
+    else
+        trickOrTreat.statusText = "Idle"
+        if trickOrTreat.isCycling and trickOrTreat.returnOnFinish and trickOrTreat.savedPreCFrame and root then
+            pcall(function() root.Anchored = false end)
+            char:PivotTo(trickOrTreat.savedPreCFrame)
+            root.CFrame = trickOrTreat.savedPreCFrame
+            stopCharacterVelocity()
+        end
+        trickOrTreat.isCycling = false
+        trickOrTreat.isSingleRun = false
+        trickOrTreat.updateStatusUI()
+    end
+    if updateHeartbeatConnection then
+        updateHeartbeatConnection()
+    end
+end
+
 -- Visual ESP State Tables
 local penESP = {
     show = false,
@@ -439,6 +891,343 @@ local function saveWebhook(url)
 end
 
 local WEBHOOK_URL = loadWebhook()
+
+-- ==========================
+-- 6-HOUR AFK AUTO-REJOIN & STATE PERSISTENCE SYSTEM
+-- ==========================
+local afkRelog = {
+    enabled = true,
+    interval = 6 * 3600, -- 6 hours = 21,600 seconds
+    sessionStartTime = os.time(),
+    targetRejoinTime = os.time() + (6 * 3600),
+    isRejoining = false,
+    fileName = "CowHub_SessionPersistence.json",
+    timerThread = nil,
+    statusCard = nil,
+    lastLoggedPos = nil,
+    resumedSession = false,
+}
+
+function afkRelog.saveState()
+    -- Flush Rayfield Gen2 window configuration to disk
+    if Window and Window.Save then
+        pcall(function() Window:Save() end)
+    end
+
+    if not root or not char then return false end
+    local pos = root.Position
+    local cfComponents = { root.CFrame:GetComponents() }
+    afkRelog.lastLoggedPos = pos
+
+    local stateData = {
+        Timestamp = os.time(),
+        PlaceId = game.PlaceId,
+        JobId = game.JobId,
+        Position = { X = pos.X, Y = pos.Y, Z = pos.Z },
+        CFrameComponents = cfComponents,
+        Farm = {
+            On = farm.on == true,
+            AutoChomp = farm.autoChomp == true,
+            AutoChompMobs = farm.autoChompMobs == true,
+            GoldenAura = farm.goldenAura == true,
+            AutoFish = farm.autoFish == true,
+            AnchorPos = farm.anchorPos and { X = farm.anchorPos.X, Y = farm.anchorPos.Y, Z = farm.anchorPos.Z } or nil,
+            Radius = farm.radius or 75,
+            Pattern = farm.pattern or "Guided Zigzag (Nodes)",
+            PatternSpeed = farm.patternSpeed or 1.0,
+            GrassChompDelay = math.max(0.4, farm.grassChompDelay or 0.4),
+            OnlyMatureGrass = farm.onlyMatureGrass ~= false,
+            ChompOnlyWhileMoving = farm.chompOnlyWhileMoving ~= false,
+        },
+        Dodge = {
+            Auto = dodge.auto == true,
+            Method = dodge.method or "Teleport Away (Surface)",
+        },
+        Manatite = {
+            Auto = (manatite and manatite.auto) == true,
+        },
+        Mithril = {
+            Auto = (mithril and mithril.auto) == true,
+        },
+        TrickOrTreat = {
+            Auto = (trickOrTreat and trickOrTreat.auto) == true,
+            CycleCooldown = trickOrTreat and trickOrTreat.cycleCooldown or 600,
+        },
+    }
+
+    if writefile then
+        local success, encoded = pcall(function()
+            return HttpService:JSONEncode(stateData)
+        end)
+        if success and encoded then
+            local writeSuccess = pcall(function()
+                writefile(afkRelog.fileName, encoded)
+            end)
+            return writeSuccess
+        end
+    end
+    return false
+end
+
+function afkRelog.triggerRejoin()
+    if afkRelog.isRejoining then return end
+    afkRelog.isRejoining = true
+
+    -- 1. Log coordinates & save full persistence state
+    local saved = afkRelog.saveState()
+
+    -- 2. Notify player
+    if Window and Window.Notify then
+        Window:Notify({
+            Title = "6-Hour Auto-Rejoin",
+            Content = "AFK timer elapsed! Coordinates logged. Rejoining now...",
+            Duration = 6,
+            Image = 4483362458,
+        })
+    end
+
+    -- 3. Hook queue_on_teleport so cowhub auto-executes on reconnect
+    local qot = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
+    if qot then
+        pcall(function()
+            qot([[
+                task.wait(3)
+                loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/cowhub.lua'))()
+            ]])
+        end)
+    end
+
+    task.wait(1.5)
+
+    -- 4. Execute Teleport to rejoin
+    pcall(function()
+        if #Players:GetPlayers() <= 1 or not game.JobId or game.JobId == "" then
+            TeleportService:Teleport(game.PlaceId, plr)
+        else
+            -- Try rejoining same server instance first
+            local success = pcall(function()
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, plr)
+            end)
+            if not success then
+                TeleportService:Teleport(game.PlaceId, plr)
+            end
+        end
+    end)
+
+    -- Fallback repeat if first teleport attempt stalled
+    task.delay(10, function()
+        pcall(function()
+            TeleportService:Teleport(game.PlaceId, plr)
+        end)
+    end)
+end
+
+function afkRelog.checkAndResumeState()
+    if not (isfile and readfile and isfile(afkRelog.fileName)) then
+        return
+    end
+
+    local success, content = pcall(function()
+        return readfile(afkRelog.fileName)
+    end)
+    if not success or not content or content == "" then
+        return
+    end
+
+    local decodeSuccess, data = pcall(function()
+        return HttpService:JSONDecode(content)
+    end)
+    if not decodeSuccess or type(data) ~= "table" then
+        return
+    end
+
+    -- Check if state file was written recently (within 30 minutes)
+    local age = os.time() - (data.Timestamp or 0)
+    if age > 1800 or age < 0 then
+        if delfile then pcall(function() delfile(afkRelog.fileName) end) end
+        return
+    end
+
+    -- Clean up persistence file so it only triggers once
+    if delfile then
+        pcall(function() delfile(afkRelog.fileName) end)
+    end
+
+    afkRelog.resumedSession = true
+
+    -- Asynchronously wait for game & player to be fully ready before restoring
+    task.spawn(function()
+        local readyStart = os.clock()
+        while (not root or not char or not humanoid or humanoid.Health <= 0) and (os.clock() - readyStart < 20) do
+            task.wait(0.5)
+        end
+
+        task.wait(2.5) -- Allow geometry / map streaming to stabilize
+
+        -- 1. Restore position & CFrame
+        if data.CFrameComponents and #data.CFrameComponents == 12 then
+            pcall(function()
+                local restoredCF = CFrame.new(table.unpack(data.CFrameComponents))
+                char:PivotTo(restoredCF)
+                root.CFrame = restoredCF
+                if stopCharacterVelocity then stopCharacterVelocity() end
+            end)
+        elseif data.Position then
+            pcall(function()
+                local restoredPos = Vector3.new(data.Position.X, data.Position.Y, data.Position.Z)
+                char:PivotTo(CFrame.new(restoredPos))
+                root.CFrame = CFrame.new(restoredPos)
+                if stopCharacterVelocity then stopCharacterVelocity() end
+            end)
+        end
+
+        task.wait(1.0)
+
+        -- 2. Restore Farming & Feature States and Sync Rayfield Gen2 UI Elements
+        local f = data.Farm or {}
+        if f.AnchorPos then
+            farm.anchorPos = Vector3.new(f.AnchorPos.X, f.AnchorPos.Y, f.AnchorPos.Z)
+        elseif root then
+            farm.anchorPos = root.Position
+        end
+
+        if f.Radius then
+            farm.radius = f.Radius
+            farm.radiusSq = f.Radius * f.Radius
+            pcall(function() Window:Set("Slider_Radius", f.Radius) end)
+        end
+        if f.Pattern then
+            farm.pattern = f.Pattern
+            pcall(function() Window:Set("Dropdown_Pattern", f.Pattern) end)
+        end
+        if f.PatternSpeed then
+            farm.patternSpeed = f.PatternSpeed
+        end
+        if f.GrassChompDelay then
+            farm.grassChompDelay = math.max(0.4, f.GrassChompDelay)
+            pcall(function() Window:Set("Slider_GrassChompDelay", farm.grassChompDelay) end)
+        end
+        if f.OnlyMatureGrass ~= nil then
+            farm.onlyMatureGrass = f.OnlyMatureGrass
+            pcall(function() Window:Set("Toggle_OnlyMatureGrass", f.OnlyMatureGrass) end)
+        end
+        if f.ChompOnlyWhileMoving ~= nil then
+            farm.chompOnlyWhileMoving = f.ChompOnlyWhileMoving
+            pcall(function() Window:Set("Toggle_ChompOnlyMoving", f.ChompOnlyWhileMoving) end)
+        end
+
+        if f.AutoChomp then
+            farm.autoChomp = true
+            pcall(function() Window:Set("Toggle_Chomp", true) end)
+        end
+        if f.AutoChompMobs then
+            farm.autoChompMobs = true
+            pcall(function() Window:Set("Toggle_MobAura", true) end)
+        end
+        if f.GoldenAura then
+            farm.goldenAura = true
+            pcall(function() Window:Set("Toggle_GoldenAura", true) end)
+        end
+        if f.AutoFish then
+            farm.autoFish = true
+            cache.initRippleTracking()
+            pcall(function() Window:Set("Toggle_Fish", true) end)
+        end
+
+        if data.Dodge and data.Dodge.Auto then
+            dodge.auto = true
+            pcall(function() Window:Set("Toggle_AutoDodge", true) end)
+        end
+        if data.Manatite and data.Manatite.Auto and manatite then
+            manatite.auto = true
+            manatite.preCFrame = root and root.CFrame
+            pcall(function() Window:Set("Toggle_ManatiteFarm", true) end)
+        end
+        if data.Mithril and data.Mithril.Auto and mithril then
+            mithril.auto = true
+            mithril.preCFrame = root and root.CFrame
+            pcall(function() Window:Set("Toggle_MithrilFarm", true) end)
+        end
+        if data.TrickOrTreat and data.TrickOrTreat.Auto and trickOrTreat then
+            trickOrTreat.toggle(true)
+            pcall(function() Window:Set("Toggle_TrickOrTreat", true) end)
+            pcall(function() Window:Set("Toggle_TrickOrTreat_Main", true) end)
+        end
+
+        if f.On then
+            pcall(function() Window:Set("Toggle_Farm", true) end)
+            farm.on = true
+            farm.collisionDetection = true
+            if f.AnchorPos then
+                farm.anchorPos = Vector3.new(f.AnchorPos.X, f.AnchorPos.Y, f.AnchorPos.Z)
+            end
+        end
+
+        if updateHeartbeatConnection then
+            updateHeartbeatConnection()
+        end
+
+        -- 3. Notify user that state has been fully restored
+        local posX = data.Position and math.floor(data.Position.X) or 0
+        local posY = data.Position and math.floor(data.Position.Y) or 0
+        local posZ = data.Position and math.floor(data.Position.Z) or 0
+        Window:Notify({
+            Title = "Session Resumed Successfully",
+            Content = string.format("Restored coordinates (%d, %d, %d) and resumed previous farming tasks!", posX, posY, posZ),
+            Duration = 5,
+            Image = 4483362458,
+        })
+    end)
+end
+
+function afkRelog.startTimer()
+    if afkRelog.timerThread then return end
+    afkRelog.sessionStartTime = os.time()
+    afkRelog.targetRejoinTime = os.time() + afkRelog.interval
+
+    afkRelog.timerThread = task.spawn(function()
+        while true do
+            task.wait(1)
+            if afkRelog.enabled and not afkRelog.isRejoining then
+                local now = os.time()
+                local remaining = afkRelog.targetRejoinTime - now
+                if remaining <= 0 then
+                    afkRelog.triggerRejoin()
+                    break
+                end
+            end
+            if afkRelog.updateUI then
+                afkRelog.updateUI()
+            end
+        end
+    end)
+end
+
+function afkRelog.updateUI()
+    if not afkRelog.statusCard then return end
+    local now = os.time()
+    local remaining = math.max(0, afkRelog.targetRejoinTime - now)
+    local h = math.floor(remaining / 3600)
+    local m = math.floor((remaining % 3600) / 60)
+    local s = math.floor(remaining % 60)
+
+    local title = "AFK Rejoin Timer: " .. (afkRelog.enabled and string.format("%02dh %02dm %02ds", h, m, s) or "Disabled")
+    local posStr = root and string.format("(%d, %d, %d)", math.floor(root.Position.X), math.floor(root.Position.Y), math.floor(root.Position.Z)) or "N/A"
+    local body = string.format("Interval: %g hours (%ds)\nCurrent Coords: %s\nState Persistence: Ready",
+        afkRelog.interval / 3600,
+        afkRelog.interval,
+        posStr
+    )
+
+    pcall(function()
+        if afkRelog.statusCard.SetTitle then
+            afkRelog.statusCard:SetTitle(title)
+            afkRelog.statusCard:Set(body)
+        elseif afkRelog.statusCard.Set then
+            afkRelog.statusCard:Set({ Title = title, Content = body })
+        end
+    end)
+end
 
 -- ==========================
 -- SPIDER IDENTIFIER LOGGER & CACHE (JSON Persistence in Workspace)
@@ -3727,7 +4516,7 @@ function farm.processMovement(dt, now, rootPos)
             local tPos = cache.getNodePosition(farm.currentTargetNode)
             local distSq = get2DDistanceSq(rootPos, tPos)
             if distSq < 16 then
-                if farm.autoChomp and (now - farm.lastRaycastChompTime >= (farm.grassChompDelay or 0.04)) then
+                if farm.autoChomp and (now - farm.lastRaycastChompTime >= math.max(0.4, farm.grassChompDelay or 0.4)) then
                     farm.processGrassChomp(now, rootPos)
                 end
                 if not farm.currentTargetNode or (farm.currentNodeStartTime > 0 and (now - farm.currentNodeStartTime > 2.0)) then
@@ -4011,8 +4800,15 @@ function farm.processMobAura(now, rootPos)
 end
 
 function farm.processGrassChomp(now, rootPos)
-    local chompDelay = farm.grassChompDelay or 0.04
+    local chompDelay = math.max(0.4, farm.grassChompDelay or 0.4)
     if (now - farm.lastRaycastChompTime >= chompDelay) then
+        if farm.chompOnlyWhileMoving then
+            local isMoving = (humanoid and humanoid.MoveDirection.Magnitude > 0.05)
+                or (root and Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z).Magnitude > 0.5)
+            if not isMoving then
+                return
+            end
+        end
         farm.lastRaycastChompTime = now
 
         local targetGrassNode = nil
@@ -4056,8 +4852,8 @@ function farm.processGrassChomp(now, rootPos)
         if targetGrassNode then
             local nodeId = cache.getNodeID(targetGrassNode)
             if nodeId then
-                local repeatDelay = farm.grassChompRepeatDelay or 0.5
-                if nodeId ~= farm.lastChompedNode or (now - farm.chompCooldown >= repeatDelay) then
+                local repeatDelay = math.max(0.4, farm.grassChompRepeatDelay or 0.6)
+                if (now - farm.chompCooldown >= 0.4) and (nodeId ~= farm.lastChompedNode or (now - farm.chompCooldown >= repeatDelay)) then
                     chompEvent:FireServer(nodeId)
                     farm.lastChompedNode = nodeId
                     farm.chompCooldown = now
@@ -4271,8 +5067,8 @@ end
 -- ==========================
 -- MAIN ENGINE HEARTBEAT LOOP (Concise Dispatcher)
 -- ==========================
-local function updateHeartbeatConnection()
-    if farm.on or farm.autoChomp or farm.autoFish or farm.autoChompMobs or dodge.auto or farm.goldenAura or (manatite and manatite.auto) or (mithril and mithril.auto) then
+function updateHeartbeatConnection()
+    if farm.on or farm.autoChomp or farm.autoFish or farm.autoChompMobs or dodge.auto or farm.goldenAura or (manatite and manatite.auto) or (mithril and mithril.auto) or (trickOrTreat and trickOrTreat.auto) then
         if not HeartbeatConnection then
             HeartbeatConnection = RunService.Heartbeat:Connect(function(dt)
                 if not root or not humanoid or not root.Parent or not humanoid.Parent or humanoid.Health <= 0 then
@@ -4324,30 +5120,30 @@ local function updateHeartbeatConnection()
                 end
 
                 -- 1. Movement Logic
-                if farm.on and not (manatite and manatite.auto) and not (mithril and mithril.auto) and farm.anchorPos and not dodge.isDodging and not dodge.isUnderground then
+                if farm.on and not (manatite and manatite.auto) and not (mithril and mithril.auto) and not (trickOrTreat and trickOrTreat.isCycling) and farm.anchorPos and not dodge.isDodging and not dodge.isUnderground then
                     farm.processMovement(dt, now, rootPos)
                 end
 
                 local prioritizedMobThisFrame = false
 
                 -- 2. Priority Mob Aura Logic
-                if farm.autoChompMobs then
+                if farm.autoChompMobs and not (trickOrTreat and trickOrTreat.isCycling) then
                     prioritizedMobThisFrame = farm.processMobAura(now, rootPos)
                 end
 
                 -- 3. Raycast Grass Chomp Logic (Yields to Mobs & Dodging)
-                if farm.autoChomp and not (manatite and manatite.auto) and not (mithril and mithril.auto) and not prioritizedMobThisFrame and not dodge.isUnderground and not dodge.isDodging then
+                if farm.autoChomp and not (manatite and manatite.auto) and not (mithril and mithril.auto) and not (trickOrTreat and trickOrTreat.isCycling) and not prioritizedMobThisFrame and not dodge.isUnderground and not dodge.isDodging then
                     farm.processGrassChomp(now, rootPos)
                 end
 
                 -- 3b. Golden Grass Aura Logic (Periodic Pulse)
-                if farm.goldenAura and (now - farm.lastGoldenAuraTime > 0.3) then
+                if farm.goldenAura and not (trickOrTreat and trickOrTreat.isCycling) and (now - farm.lastGoldenAuraTime > 0.3) then
                     farm.lastGoldenAuraTime = now
                     farm.applyGoldenAura()
                 end
 
                 -- 4. Auto-Fishing Logic
-                if farm.autoFish and not (manatite and manatite.auto) and not (mithril and mithril.auto) then
+                if farm.autoFish and not (manatite and manatite.auto) and not (mithril and mithril.auto) and not (trickOrTreat and trickOrTreat.isCycling) then
                     farm.processFishing(now, rootPos)
                 end
 
@@ -4496,6 +5292,15 @@ MainTab:CreateToggle({
 })
 
 MainTab:CreateToggle({
+    Name = "Enable Trick or Treat Autofarm",
+    CurrentValue = false,
+    Flag = "Toggle_TrickOrTreat_Main",
+    Callback = function(Value)
+        trickOrTreat.toggle(Value)
+    end,
+})
+
+MainTab:CreateToggle({
     Name = "Enable Mob Attack Dodge",
     CurrentValue = false,
     Flag = "Toggle_AutoDodge",
@@ -4535,31 +5340,49 @@ MainTab:CreateSection({ Name = "Aura & Pattern Configuration" })
 
 MainTab:CreateDropdown({
     Name = "Grass Chomp Speed",
-    Options = {"Insane (0.01s)", "Very Fast (0.04s)", "Fast (0.1s)", "Normal (0.25s)", "Slow (0.5s)", "Very Slow (1.0s)"},
-    CurrentOption = {"Very Fast (0.04s)"},
+    Options = {
+        "Fastest (0.4s - Server Minimum)",
+        "Fast (0.5s)",
+        "Balanced (0.6s)",
+        "Default (0.7s - Game Base)",
+        "Safe (1.0s)",
+        "Very Slow (1.5s)"
+    },
+    CurrentOption = {"Fastest (0.4s - Server Minimum)"},
     MultipleOptions = false,
     Flag = "Dropdown_GrassSpeed",
     Callback = function(Option)
         local selection = type(Option) == "table" and Option[1] or Option
-        if selection == "Insane (0.01s)" then
-            farm.grassChompDelay = 0.01
-            farm.grassChompRepeatDelay = 0.2
-        elseif selection == "Very Fast (0.04s)" then
-            farm.grassChompDelay = 0.04
+        if selection == "Fastest (0.4s - Server Minimum)" or string.find(tostring(selection), "0.4") then
+            farm.grassChompDelay = 0.4
             farm.grassChompRepeatDelay = 0.5
-        elseif selection == "Fast (0.1s)" then
-            farm.grassChompDelay = 0.1
-            farm.grassChompRepeatDelay = 0.75
-        elseif selection == "Normal (0.25s)" then
-            farm.grassChompDelay = 0.25
-            farm.grassChompRepeatDelay = 1.0
-        elseif selection == "Slow (0.5s)" then
+        elseif selection == "Fast (0.5s)" or string.find(tostring(selection), "0.5") then
             farm.grassChompDelay = 0.5
-            farm.grassChompRepeatDelay = 1.5
-        elseif selection == "Very Slow (1.0s)" then
+            farm.grassChompRepeatDelay = 0.7
+        elseif selection == "Balanced (0.6s)" or string.find(tostring(selection), "0.6") then
+            farm.grassChompDelay = 0.6
+            farm.grassChompRepeatDelay = 0.8
+        elseif selection == "Default (0.7s - Game Base)" or string.find(tostring(selection), "0.7") then
+            farm.grassChompDelay = 0.7
+            farm.grassChompRepeatDelay = 1.0
+        elseif selection == "Safe (1.0s)" or string.find(tostring(selection), "1.0") then
             farm.grassChompDelay = 1.0
+            farm.grassChompRepeatDelay = 1.5
+        elseif selection == "Very Slow (1.5s)" or string.find(tostring(selection), "1.5") then
+            farm.grassChompDelay = 1.5
             farm.grassChompRepeatDelay = 2.0
+        else
+            farm.grassChompDelay = math.max(0.4, tonumber(string.match(tostring(selection), "(%d+%.?%d*)")) or 0.4)
         end
+    end,
+})
+
+MainTab:CreateToggle({
+    Name = "Chomp Only While Moving",
+    CurrentValue = true,
+    Flag = "Toggle_ChompOnlyMoving",
+    Callback = function(Value)
+        farm.chompOnlyWhileMoving = Value
     end,
 })
 
@@ -4729,6 +5552,18 @@ SlidersTab:CreateSlider({
     Flag = "Slider_GoldenRadius",
     Callback = function(Value)
         farm.goldenAuraRadius = Value
+    end,
+})
+
+SlidersTab:CreateSlider({
+    Name = "Grass Chomp Delay (Server Cap >= 0.4s)",
+    Range = {0.4, 2.0},
+    Increment = 0.05,
+    Suffix = "s",
+    CurrentValue = math.max(0.4, farm.grassChompDelay or 0.4),
+    Flag = "Slider_GrassChompDelay",
+    Callback = function(Value)
+        farm.grassChompDelay = math.max(0.4, Value)
     end,
 })
 
@@ -5080,6 +5915,7 @@ ScannerTab:CreateInput({
     Name = "Discord Webhook URL",
     Placeholder = WEBHOOK_URL ~= "" and "Saved webhook loaded! Paste to overwrite." or "Paste your Webhook URL here",
     RemoveTextAfterFocusLost = false,
+    Flag = "Input_DiscordWebhook",
     Callback = function(Text)
         if Text:match("discord%.com/api/webhooks") then
             WEBHOOK_URL = Text
@@ -5578,6 +6414,7 @@ ScannerTab:CreateInput({
     Name = "Max Auto Bid Limit (0 = Unlimited)",
     Placeholder = "Enter max coins (e.g. 5000000)",
     RemoveTextAfterFocusLost = false,
+    Flag = "Input_MaxAutoBid",
     Callback = function(Text)
         local num = tonumber(Text:gsub(",", ""):gsub("%$", ""))
         if num and num >= 0 then
@@ -5590,6 +6427,154 @@ ScannerTab:CreateInput({
         else
             Window:Notify({ Title = "Invalid Number", Content = "Please enter a valid number.", Duration = 3 })
         end
+    end,
+})
+
+-- ==========================
+-- UI SETUP: Trick or Treat Tab
+-- ==========================
+local TotTab = Window:CreateTab({ Name = "Trick or Treat", Icon = 4483362458 })
+
+TotTab:CreateSection({ Name = "Trick or Treat Autofarm" })
+
+TotTab:CreateToggle({
+    Name = "Enable Trick or Treat Autofarm",
+    CurrentValue = false,
+    Flag = "Toggle_TrickOrTreat",
+    Callback = function(Value)
+        trickOrTreat.toggle(Value)
+    end,
+})
+
+TotTab:CreateButton({
+    Name = "Run Single Cycle Now",
+    Callback = function()
+        if trickOrTreat.isCycling then
+            Window:Notify({ Title = "Already Running", Content = "A cycle is already in progress!", Duration = 3 })
+            return
+        end
+        trickOrTreat.initClientListener()
+        trickOrTreat.detectCooldown()
+        trickOrTreat.isSingleRun = true
+        task.spawn(trickOrTreat.runCycle)
+    end,
+})
+
+TotTab:CreateButton({
+    Name = "Return to Saved Position",
+    Callback = function()
+        if trickOrTreat.savedPreCFrame and root then
+            pcall(function() root.Anchored = false end)
+            char:PivotTo(trickOrTreat.savedPreCFrame)
+            root.CFrame = trickOrTreat.savedPreCFrame
+            stopCharacterVelocity()
+            Window:Notify({ Title = "Returned", Content = "Returned to original saved position.", Duration = 2 })
+        else
+            Window:Notify({ Title = "No Saved Position", Content = "No saved position exists yet.", Duration = 2 })
+        end
+    end,
+})
+
+TotTab:CreateSection({ Name = "Status & Live Telemetry" })
+
+pcall(function()
+    trickOrTreat.statusCard = TotTab:CreateParagraph({
+        Title = "Status: Idle",
+        Content = "Autofarm is currently OFF."
+    })
+end)
+
+pcall(function()
+    trickOrTreat.infoCard = TotTab:CreateParagraph({
+        Title = "Cycle Telemetry",
+        Content = string.format("Configured Cooldown: %ds\nHouses Knocked: 0", trickOrTreat.cycleCooldown)
+    })
+end)
+
+TotTab:CreateSection({ Name = "Timing & Sliders" })
+
+TotTab:CreateSlider({
+    Name = "Cycle Cooldown (Seconds)",
+    Range = {10, 1800},
+    Increment = 10,
+    Suffix = "s",
+    CurrentValue = trickOrTreat.cycleCooldown,
+    Flag = "Slider_ToT_CycleCooldown",
+    Callback = function(Value)
+        trickOrTreat.cycleCooldown = Value
+        trickOrTreat.updateStatusUI()
+    end,
+})
+
+TotTab:CreateSlider({
+    Name = "Barn Map Load Delay (Seconds)",
+    Range = {1, 10},
+    Increment = 0.5,
+    Suffix = "s",
+    CurrentValue = 2.5,
+    Flag = "Slider_ToT_BarnDelay",
+    Callback = function(Value)
+        trickOrTreat.barnLoadDelay = Value
+    end,
+})
+
+TotTab:CreateSlider({
+    Name = "House Interaction Delay (Seconds)",
+    Range = {1.0, 5.0},
+    Increment = 0.1,
+    Suffix = "s",
+    CurrentValue = 1.4,
+    Flag = "Slider_ToT_HouseWait",
+    Callback = function(Value)
+        trickOrTreat.houseWaitTime = Value
+    end,
+})
+
+TotTab:CreateSlider({
+    Name = "Pre-Knock Settle Delay (Seconds)",
+    Range = {0.1, 1.5},
+    Increment = 0.05,
+    Suffix = "s",
+    CurrentValue = 0.3,
+    Flag = "Slider_ToT_SettleDelay",
+    Callback = function(Value)
+        trickOrTreat.settleDelay = Value
+    end,
+})
+
+TotTab:CreateToggle({
+    Name = "Return to Original Position After Cycle",
+    CurrentValue = true,
+    Flag = "Toggle_ToT_ReturnOnFinish",
+    Callback = function(Value)
+        trickOrTreat.returnOnFinish = Value
+    end,
+})
+
+TotTab:CreateToggle({
+    Name = "Anchor During Knock (Anti-Ghost Push)",
+    CurrentValue = true,
+    Flag = "Toggle_ToT_AnchorKnock",
+    Callback = function(Value)
+        trickOrTreat.anchorDuringKnock = Value
+    end,
+})
+
+TotTab:CreateToggle({
+    Name = "Auto-Detect Game Cooldown",
+    CurrentValue = true,
+    Flag = "Toggle_ToT_AutoDetect",
+    Callback = function(Value)
+        trickOrTreat.autoDetectCooldown = Value
+    end,
+})
+
+TotTab:CreateToggle({
+    Name = "Pause Regular Farm During Cycle",
+    CurrentValue = true,
+    Flag = "Toggle_ToT_PauseFarm",
+    Callback = function(Value)
+        trickOrTreat.pauseFarmDuringCycle = Value
     end,
 })
 
@@ -5618,6 +6603,104 @@ SettingsTab:CreateToggle({
     Callback = function(Value)
         fps.capEnabled = Value
         if setfpscap then pcall(function() setfpscap(fps.capEnabled and fps.currentCap or 60) end) end
+    end,
+})
+
+SettingsTab:CreateSection({ Name = "AFK Anti-Cheat & Auto-Rejoin" })
+
+SettingsTab:CreateToggle({
+    Name = "Enable 6-Hour Auto-Rejoin & Resume",
+    CurrentValue = true,
+    Flag = "Toggle_AFK_Rejoin",
+    Callback = function(Value)
+        afkRelog.enabled = Value
+        afkRelog.updateUI()
+    end,
+})
+
+SettingsTab:CreateSlider({
+    Name = "Rejoin Interval (Hours)",
+    Range = {0.5, 12.0},
+    Increment = 0.5,
+    Suffix = " Hours",
+    CurrentValue = 6.0,
+    Flag = "Slider_AFK_Interval",
+    Callback = function(Value)
+        afkRelog.interval = Value * 3600
+        afkRelog.targetRejoinTime = os.time() + afkRelog.interval
+        afkRelog.updateUI()
+    end,
+})
+
+pcall(function()
+    afkRelog.statusCard = SettingsTab:CreateParagraph({
+        Title = "AFK Rejoin Timer: Initializing...",
+        Content = "State persistence: Ready"
+    })
+end)
+
+SettingsTab:CreateButton({
+    Name = "Save State & Test Rejoin Now",
+    Callback = function()
+        afkRelog.triggerRejoin()
+    end,
+})
+
+SettingsTab:CreateButton({
+    Name = "Clear Saved Persistence File",
+    Callback = function()
+        if delfile then
+            pcall(function() delfile(afkRelog.fileName) end)
+        end
+        Window:Notify({ Title = "Cleared", Content = "Saved persistence file removed.", Duration = 2 })
+    end,
+})
+
+SettingsTab:CreateSection({ Name = "Rayfield Gen2 Configuration Saving" })
+
+SettingsTab:CreateButton({
+    Name = "Save Configuration (CowHubConfig.rfld)",
+    Callback = function()
+        local success, err = pcall(function()
+            return Window:Save()
+        end)
+        if success then
+            Window:Notify({
+                Title = "Configuration Saved",
+                Content = "Saved current UI flags to Rayfield/Configurations/CowHub/CowHubConfig.rfld",
+                Duration = 4,
+                Image = 4483362458,
+            })
+        else
+            Window:Notify({
+                Title = "Save Error",
+                Content = "Failed to save configuration: " .. tostring(err),
+                Duration = 4,
+            })
+        end
+    end,
+})
+
+SettingsTab:CreateButton({
+    Name = "Reload Configuration (CowHubConfig.rfld)",
+    Callback = function()
+        local success, err = pcall(function()
+            return Window:Load()
+        end)
+        if success then
+            Window:Notify({
+                Title = "Configuration Loaded",
+                Content = "Restored and applied settings from Rayfield/Configurations/CowHub/CowHubConfig.rfld",
+                Duration = 4,
+                Image = 4483362458,
+            })
+        else
+            Window:Notify({
+                Title = "Load Error",
+                Content = "Failed to load configuration: " .. tostring(err),
+                Duration = 4,
+            })
+        end
     end,
 })
 
@@ -5695,6 +6778,23 @@ SettingsTab:CreateButton({
             dodge.isDodging = false
             dodge.currentAttackingMob = nil
         end
+        if trickOrTreat then
+            trickOrTreat.auto = false
+            trickOrTreat.loopRunning = false
+            if trickOrTreat.isCycling and trickOrTreat.savedPreCFrame and root then
+                pcall(function() root.Anchored = false end)
+                char:PivotTo(trickOrTreat.savedPreCFrame)
+                root.CFrame = trickOrTreat.savedPreCFrame
+                stopCharacterVelocity()
+            end
+            if trickOrTreat.clientEventConn then
+                pcall(function() trickOrTreat.clientEventConn:Disconnect() end)
+            end
+        end
+        if afkRelog then
+            afkRelog.enabled = false
+            afkRelog.isRejoining = false
+        end
         auction.scannerRunning = false
         penESP.show = false
         chestESP.show = false
@@ -5741,3 +6841,9 @@ SettingsTab:CreateButton({
         Window:Unload()
     end,
 })
+
+-- ==========================
+-- BOOT: Initialize 6-Hour AFK Timer & State Resume
+-- ==========================
+afkRelog.startTimer()
+afkRelog.checkAndResumeState()
