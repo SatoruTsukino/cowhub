@@ -11,7 +11,7 @@ if queueOnTeleport then
     pcall(function()
         queueOnTeleport([[
             task.wait(3)
-            loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/cowhub.lua'))()
+            loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/preview.lua'))()
         ]])
     end)
 end
