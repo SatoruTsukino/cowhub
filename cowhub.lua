@@ -420,11 +420,13 @@ trickOrTreat = {
     barnLoadDelay = 2.5,
     settleDelay = 0.3,
     houseWaitTime = 1.4,
-    walkUpEnabled = true,   -- Walk up to the door before knocking so game registers walking
-    walkDistance = 7.0,     -- Distance (studs) to start walk-up from in front of the door
-    walkTimeout = 1.2,      -- Max time (seconds) to walk up to the door
-    doorDistance = 2.5,     -- Final stop distance (studs) in front of the door
-    doorHeightOffset = 0.0, -- Vertical fine-tuning offset in front of the door
+    disableInsideCollision = true, -- Disables collision for Inside / Interior parts of houses
+    approachOrigin = "Inside House", -- "Inside House" (teleports deep inside, stops before door) or "Outside Porch"
+    walkUpEnabled = true,   -- Walk up towards the door from inside so game registers walking
+    walkDistance = 11.0,    -- Starting distance inside the house (farther away from door)
+    walkTimeout = 1.5,      -- Max time (seconds) to walk up to the door
+    doorDistance = 2.0,     -- Stop distance (studs before door inside house - does NOT exit)
+    doorHeightOffset = 0.0, -- Vertical fine-tuning offset inside the house
     cycleCooldown = 600, -- Default 10 minutes (auto-detected from HalloweenConfig or server)
     detectedCooldown = nil,
     autoDetectCooldown = true,
@@ -570,6 +572,90 @@ function trickOrTreat.getInsidePart(houseModel)
     return houseModel:FindFirstChildWhichIsA("BasePart", true)
 end
 
+function trickOrTreat.setHouseCollision(houseModel, canCollide)
+    if not houseModel then return end
+    for _, name in ipairs({"Inside", "Interior"}) do
+        local part = houseModel:FindFirstChild(name, true)
+        if part and part:IsA("BasePart") then
+            pcall(function() part.CanCollide = canCollide end)
+        end
+    end
+    local inside = houseModel:FindFirstChild("Inside", true) or houseModel:FindFirstChild("Interior", true)
+    if inside then
+        for _, desc in ipairs(inside:GetDescendants()) do
+            if desc:IsA("BasePart") then
+                pcall(function() desc.CanCollide = canCollide end)
+            end
+        end
+    end
+end
+
+function trickOrTreat.fireDoorPrompt(houseModel)
+    local firedAny = false
+
+    -- 1. Fire any ProximityPrompt instances found in the house
+    for _, prompt in ipairs(houseModel:GetDescendants()) do
+        if prompt:IsA("ProximityPrompt") and prompt.Enabled then
+            firedAny = true
+            if fireproximityprompt then
+                pcall(function() fireproximityprompt(prompt) end)
+            end
+            pcall(function()
+                prompt:InputHoldBegin()
+                task.wait(0.04)
+                prompt:InputHoldEnd()
+            end)
+        end
+    end
+
+    -- 2. Fire TrickOrTreatSign button in PlayerGui (decompiled client controller)
+    local pg = plr and plr:FindFirstChild("PlayerGui")
+    if pg then
+        for _, sign in ipairs(pg:GetChildren()) do
+            if sign.Name == "TrickOrTreatSign" and sign:IsA("BillboardGui") and sign.Enabled then
+                local knockBtn = sign:FindFirstChild("Knock", true)
+                if knockBtn and knockBtn:IsA("GuiButton") then
+                    firedAny = true
+                    if firesignal then
+                        pcall(function() firesignal(knockBtn.Activated) end)
+                    end
+                    pcall(function()
+                        if successVIM and VirtualInput and VirtualInput.SendMouseButtonEvent then
+                            local abs = knockBtn.AbsolutePosition + (knockBtn.AbsoluteSize * 0.5)
+                            VirtualInput:SendMouseButtonEvent(abs.X, abs.Y, 0, true, game, 1)
+                            task.wait(0.03)
+                            VirtualInput:SendMouseButtonEvent(abs.X, abs.Y, 0, false, game, 1)
+                        end
+                    end)
+                end
+            end
+        end
+    end
+
+    -- 3. Fire server remote TrickOrTreatRequest
+    local remote = trickOrTreat.getRemote()
+    if remote then
+        remote:FireServer("Knock", houseModel.Name)
+        firedAny = true
+    end
+
+    -- 4. Simulate virtual 'E' key press for ContextActionService binding
+    pcall(function()
+        if successVIM and VirtualInput and VirtualInput.SendKeyEvent then
+            VirtualInput:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+            task.wait(0.05)
+            VirtualInput:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+        elseif VirtualUser then
+            VirtualUser:CaptureController()
+            VirtualUser:SetKeyDown("0x65")
+            task.wait(0.05)
+            VirtualUser:SetKeyUp("0x65")
+        end
+    end)
+
+    return firedAny
+end
+
 function trickOrTreat.getTargetCFrame(houseModel)
     if not houseModel then return nil end
 
@@ -636,13 +722,36 @@ function trickOrTreat.getTargetCFrame(houseModel)
         outward = Vector3.new(0, 0, 1)
     end
 
-    -- 1. Destination knock position right in front of the door (e.g. 2.5 studs)
-    local dist = trickOrTreat.doorDistance or 2.5
-    local knockX = doorPos.X + outward.X * dist
-    local knockZ = doorPos.Z + outward.Z * dist
+    local isInsideApproach = (trickOrTreat.approachOrigin ~= "Outside Porch")
+    local doorDist = math.max(0.5, trickOrTreat.doorDistance or 2.0)
+    local walkDist = math.max(doorDist + 2.0, trickOrTreat.walkDistance or 11.0)
+
+    local knockX, knockZ, appX, appZ
+
+    if isInsideApproach then
+        -- INSIDE APPROACH (Default):
+        -- Teleports farther back inside the house, walks towards the door,
+        -- and STOPS BEFORE the door inside the house so it does not exit the front door
+        knockX = doorPos.X - (outward.X * doorDist)
+        knockZ = doorPos.Z - (outward.Z * doorDist)
+
+        appX = doorPos.X - (outward.X * walkDist)
+        appZ = doorPos.Z - (outward.Z * walkDist)
+    else
+        -- OUTSIDE APPROACH:
+        -- Spawns outside on the porch, walks towards the door
+        knockX = doorPos.X + (outward.X * doorDist)
+        knockZ = doorPos.Z + (outward.Z * doorDist)
+
+        local totalDist = doorDist + walkDist
+        appX = doorPos.X + (outward.X * totalDist)
+        appZ = doorPos.Z + (outward.Z * totalDist)
+    end
 
     local rayParams = RaycastParams.new()
-    rayParams.FilterDescendantsInstances = char and {char} or {}
+    local filter = char and {char} or {}
+    if insidePart then table.insert(filter, insidePart) end
+    rayParams.FilterDescendantsInstances = filter
     rayParams.FilterType = Enum.RaycastFilterType.Exclude
 
     local knockFloorY = nil
@@ -651,35 +760,34 @@ function trickOrTreat.getTargetCFrame(houseModel)
         knockFloorY = rayResult.Position.Y + 2.5
     elseif thresholdPart then
         knockFloorY = thresholdPart.Position.Y + 2.5
+    elseif insidePart and isInsideApproach then
+        knockFloorY = insidePart.Position.Y - (insidePart.Size.Y * 0.5) + 2.5
     elseif doorPart then
         knockFloorY = doorPart.Position.Y - (doorPart.Size.Y * 0.5) + 2.5
-    elseif insidePart then
-        knockFloorY = insidePart.Position.Y - (insidePart.Size.Y * 0.5) + 2.5
     else
         knockFloorY = doorPos.Y
     end
     knockFloorY = knockFloorY + (trickOrTreat.doorHeightOffset or 0.0)
 
     local knockPos = Vector3.new(knockX, knockFloorY, knockZ)
+    -- Standing inside the house, facing the front door
     local knockCF = CFrame.lookAt(knockPos, Vector3.new(doorPos.X, knockFloorY, doorPos.Z))
 
-    -- 2. Approach start position (further back along outward vector) for walking up
+    -- 2. Approach start position for walking up
     if trickOrTreat.walkUpEnabled and (trickOrTreat.walkDistance or 0) > 0 then
-        local walkDist = trickOrTreat.walkDistance or 7.0
-        local totalDist = dist + walkDist
-        local appX = doorPos.X + outward.X * totalDist
-        local appZ = doorPos.Z + outward.Z * totalDist
-
         local appFloorY = nil
         local appRay = workspace:Raycast(Vector3.new(appX, doorPos.Y + 6, appZ), Vector3.new(0, -30, 0), rayParams)
         if appRay then
             appFloorY = appRay.Position.Y + 2.5
+        elseif insidePart and isInsideApproach then
+            appFloorY = insidePart.Position.Y - (insidePart.Size.Y * 0.5) + 2.5
         else
             appFloorY = knockFloorY
         end
         appFloorY = appFloorY + (trickOrTreat.doorHeightOffset or 0.0)
 
         local approachPos = Vector3.new(appX, appFloorY, appZ)
+        -- Facing the door from deeper inside the house
         local approachCF = CFrame.lookAt(approachPos, Vector3.new(doorPos.X, appFloorY, doorPos.Z))
         return approachCF, knockPos, knockCF
     end
@@ -861,18 +969,29 @@ function trickOrTreat.runCycle()
 
         local approachCF, knockPos = trickOrTreat.getTargetCFrame(house)
         if approachCF and knockPos then
-            trickOrTreat.statusText = string.format("Approaching [%d/%d]: %s", i, #houses, house.Name)
+            local originLabel = trickOrTreat.approachOrigin or "Inside House"
+            trickOrTreat.statusText = string.format("Approaching [%d/%d] (%s): %s", i, #houses, originLabel, house.Name)
             trickOrTreat.lastHouseName = house.Name
             trickOrTreat.updateStatusUI()
 
-            -- 1. Teleport to approach start point outside in front of the door
+            -- 1. Disable collision on Inside / Interior part so player doesn't clip/fling
+            if trickOrTreat.disableInsideCollision then
+                trickOrTreat.setHouseCollision(house, false)
+            end
+
+            -- 2. Teleport to approach start point (inside house or outside porch)
             pcall(function() root.Anchored = false end)
             char:PivotTo(approachCF)
             root.CFrame = approachCF
             stopCharacterVelocity()
             task.wait(0.05)
 
-            -- 2. Walk up to the door so the game registers character movement into KnockRange
+            -- Keep inside collision disabled during walk
+            if trickOrTreat.disableInsideCollision then
+                trickOrTreat.setHouseCollision(house, false)
+            end
+
+            -- 3. Walk up towards the door so the game registers character movement into KnockRange
             if trickOrTreat.walkUpEnabled and (trickOrTreat.walkDistance or 0) > 0 then
                 trickOrTreat.statusText = string.format("Walking to Door [%d/%d]: %s", i, #houses, house.Name)
                 trickOrTreat.updateStatusUI()
@@ -883,7 +1002,7 @@ function trickOrTreat.runCycle()
                 end
 
                 local walkStart = os.clock()
-                local maxWalkTime = trickOrTreat.walkTimeout or 1.2
+                local maxWalkTime = trickOrTreat.walkTimeout or 1.8
                 while (os.clock() - walkStart < maxWalkTime) do
                     if not trickOrTreat.auto and not trickOrTreat.isSingleRun then break end
                     if not root or not humanoid or humanoid.Health <= 0 then break end
@@ -902,41 +1021,23 @@ function trickOrTreat.runCycle()
                 stopCharacterVelocity()
             end
 
-            -- 3. Anchor during knock to prevent being pushed away
+            -- 4. Anchor during knock to prevent being pushed away
             if trickOrTreat.anchorDuringKnock then
                 pcall(function() root.Anchored = true end)
             end
 
-            -- 4. Pre-knock settle delay so server and client register arrival
+            -- 5. Pre-knock settle delay so server and client register arrival
             task.wait(trickOrTreat.settleDelay)
 
-            -- 5. Trigger knock: fire server remote & simulate virtual 'E' key press
+            -- 6. Trigger knock: fire proximity prompts, GUI button, remote & virtual key
             trickOrTreat.statusText = string.format("Knocking [%d/%d]: %s", i, #houses, house.Name)
             trickOrTreat.updateStatusUI()
 
-            if not remote or not remote.Parent then
-                remote = trickOrTreat.getRemote()
-            end
-            if remote then
-                remote:FireServer("Knock", house.Name)
-            end
-
-            pcall(function()
-                if successVIM and VirtualInput and VirtualInput.SendKeyEvent then
-                    VirtualInput:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-                    task.wait(0.05)
-                    VirtualInput:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-                elseif VirtualUser then
-                    VirtualUser:CaptureController()
-                    VirtualUser:SetKeyDown("0x65")
-                    task.wait(0.05)
-                    VirtualUser:SetKeyUp("0x65")
-                end
-            end)
+            trickOrTreat.fireDoorPrompt(house)
 
             knockedCount = knockedCount + 1
 
-            -- 6. Wait interaction delay (throttle next knock, respecting NextKnockAt = 1.2s)
+            -- 7. Wait interaction delay (throttle next knock, respecting NextKnockAt = 1.2s)
             task.wait(trickOrTreat.houseWaitTime)
 
             if trickOrTreat.anchorDuringKnock then
@@ -1154,9 +1255,11 @@ function afkRelog.saveState()
             Auto = (trickOrTreat and trickOrTreat.auto) == true,
             CycleCooldown = trickOrTreat and trickOrTreat.cycleCooldown or 600,
             WalkUpEnabled = (trickOrTreat and trickOrTreat.walkUpEnabled) ~= false,
-            WalkDistance = trickOrTreat and trickOrTreat.walkDistance or 7.0,
-            WalkTimeout = trickOrTreat and trickOrTreat.walkTimeout or 1.2,
-            DoorDistance = trickOrTreat and trickOrTreat.doorDistance or 2.5,
+            DisableInsideCollision = (trickOrTreat and trickOrTreat.disableInsideCollision) ~= false,
+            ApproachOrigin = trickOrTreat and trickOrTreat.approachOrigin or "Inside House",
+            WalkDistance = trickOrTreat and trickOrTreat.walkDistance or 11.0,
+            WalkTimeout = trickOrTreat and trickOrTreat.walkTimeout or 1.5,
+            DoorDistance = trickOrTreat and trickOrTreat.doorDistance or 2.0,
             DoorHeightOffset = trickOrTreat and trickOrTreat.doorHeightOffset or 0.0,
         },
     }
@@ -1355,6 +1458,14 @@ function afkRelog.checkAndResumeState()
             pcall(function() Window:Set("Toggle_MithrilFarm", true) end)
         end
         if data.TrickOrTreat then
+            if data.TrickOrTreat.DisableInsideCollision ~= nil then
+                trickOrTreat.disableInsideCollision = data.TrickOrTreat.DisableInsideCollision
+                pcall(function() Window:Set("Toggle_ToT_DisableInsideCollision", data.TrickOrTreat.DisableInsideCollision) end)
+            end
+            if data.TrickOrTreat.ApproachOrigin then
+                trickOrTreat.approachOrigin = data.TrickOrTreat.ApproachOrigin
+                pcall(function() Window:Set("Dropdown_ToT_ApproachOrigin", data.TrickOrTreat.ApproachOrigin) end)
+            end
             if data.TrickOrTreat.WalkUpEnabled ~= nil then
                 trickOrTreat.walkUpEnabled = data.TrickOrTreat.WalkUpEnabled
                 pcall(function() Window:Set("Toggle_ToT_WalkUp", data.TrickOrTreat.WalkUpEnabled) end)
@@ -6771,11 +6882,11 @@ TotTab:CreateSlider({
 })
 
 TotTab:CreateSlider({
-    Name = "Door Knock Distance (In Front)",
-    Range = {1.0, 8.0},
+    Name = "Inside Stop Distance (Studs Before Door)",
+    Range = {0.5, 10},
     Increment = 0.5,
     Suffix = " studs",
-    CurrentValue = 2.5,
+    CurrentValue = 2.0,
     Flag = "Slider_ToT_DoorDistance",
     Callback = function(Value)
         trickOrTreat.doorDistance = Value
@@ -6795,6 +6906,26 @@ TotTab:CreateSlider({
 })
 
 TotTab:CreateToggle({
+    Name = "Disable House Inside Collision",
+    CurrentValue = true,
+    Flag = "Toggle_ToT_DisableInsideCollision",
+    Callback = function(Value)
+        trickOrTreat.disableInsideCollision = Value
+    end,
+})
+
+TotTab:CreateDropdown({
+    Name = "Walk Approach Origin",
+    Options = {"Inside House", "Outside Porch"},
+    CurrentOption = {"Inside House"},
+    Flag = "Dropdown_ToT_ApproachOrigin",
+    Callback = function(Option)
+        local chosen = type(Option) == "table" and Option[1] or Option
+        trickOrTreat.approachOrigin = chosen or "Inside House"
+    end,
+})
+
+TotTab:CreateToggle({
     Name = "Walk Up to Door Before Knocking",
     CurrentValue = true,
     Flag = "Toggle_ToT_WalkUp",
@@ -6804,11 +6935,11 @@ TotTab:CreateToggle({
 })
 
 TotTab:CreateSlider({
-    Name = "Walk-Up Approach Distance (Studs)",
-    Range = {2.0, 15.0},
-    Increment = 0.5,
+    Name = "Inside Start Distance (Studs from Door)",
+    Range = {4.0, 25.0},
+    Increment = 1.0,
     Suffix = " studs",
-    CurrentValue = 7.0,
+    CurrentValue = 11.0,
     Flag = "Slider_ToT_WalkDistance",
     Callback = function(Value)
         trickOrTreat.walkDistance = Value
@@ -6817,10 +6948,10 @@ TotTab:CreateSlider({
 
 TotTab:CreateSlider({
     Name = "Walk-Up Timeout (Seconds)",
-    Range = {0.5, 3.0},
+    Range = {0.5, 4.0},
     Increment = 0.1,
     Suffix = "s",
-    CurrentValue = 1.2,
+    CurrentValue = 1.5,
     Flag = "Slider_ToT_WalkTimeout",
     Callback = function(Value)
         trickOrTreat.walkTimeout = Value
