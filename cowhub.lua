@@ -4,6 +4,10 @@
 -- Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+
 -- 1. The Server-Hop Queue Hook
 local queueOnTeleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
 if queueOnTeleport then
@@ -55,7 +59,15 @@ local RAYCAST_DOWN = Vector3.new(0, -15, 0)
 -- PLAYER & CHARACTER STATE
 -- ==========================
 local plr = Players.LocalPlayer
-local char = plr.Character or plr.CharacterAdded:Wait()
+while not plr do
+    task.wait(0.1)
+    plr = Players.LocalPlayer
+end
+
+local char = plr.Character
+if not char or not char.Parent then
+    char = plr.CharacterAdded:Wait()
+end
 local root = char:WaitForChild("HumanoidRootPart")
 local humanoid = char:WaitForChild("Humanoid")
 local scriptConnections = {}
