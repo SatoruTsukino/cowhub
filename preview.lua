@@ -325,7 +325,7 @@ local farm = {
     lastChompedNode = "",
     chompCooldown = 0,
     lastRaycastChompTime = 0,
-    grassChompDelay = 0.4, -- Hardcoded server minimum cooldown is 0.4s (Config.Grass.MinimumChewCooldown)
+    grassChompDelay = 0.4, -- Server intended minimum is 0.4s (Config.Grass.MinimumChewCooldown); speeds < 0.4s fire faster than server intends (unsafe)
     grassChompRepeatDelay = 0.6,
     chompOnlyWhileMoving = true,
     lastChompedMob = "",
@@ -490,8 +490,23 @@ local townAuction = {
     isFetching = false,
     autoRefresh = false,
     autoRefreshInterval = 5,
-    autoRefreshThread = nil,
     connections = {},
+    autoBidConnections = {},
+    autoBidAll = false,
+    autoBidActive = {
+        Global1 = false,
+        Global2 = false,
+        Server2 = false,
+        Server3 = false,
+        BuyNow = false,
+        BuyNow2 = false,
+        Player1 = false,
+        Player2 = false,
+    },
+    maxAutoBidLimit = 0,
+    isAutoBiddingSlot = {},
+    lastAutoBidTime = {},
+    autoBidLoopRunning = true,
 }
 
 local fps = {
@@ -1418,7 +1433,7 @@ function afkRelog.saveState()
             Radius = farm.radius or 75,
             Pattern = farm.pattern or "Guided Zigzag (Nodes)",
             PatternSpeed = farm.patternSpeed or 1.0,
-            GrassChompDelay = math.max(0.4, farm.grassChompDelay or 0.4),
+            GrassChompDelay = math.max(0.01, farm.grassChompDelay or 0.4),
             OnlyMatureGrass = farm.onlyMatureGrass ~= false,
             ChompOnlyWhileMoving = farm.chompOnlyWhileMoving ~= false,
         },
@@ -1442,6 +1457,11 @@ function afkRelog.saveState()
             WalkTimeout = trickOrTreat and trickOrTreat.walkTimeout or 1.5,
             DoorDistance = trickOrTreat and trickOrTreat.doorDistance or 2.0,
             DoorHeightOffset = trickOrTreat and trickOrTreat.doorHeightOffset or 0.0,
+        },
+        TownAuction = {
+            AutoBidAll = townAuction and townAuction.autoBidAll == true,
+            AutoBidActive = townAuction and townAuction.autoBidActive or {},
+            MaxAutoBidLimit = townAuction and townAuction.maxAutoBidLimit or 0,
         },
     }
 
@@ -1594,7 +1614,8 @@ function afkRelog.checkAndResumeState()
             farm.patternSpeed = f.PatternSpeed
         end
         if f.GrassChompDelay then
-            farm.grassChompDelay = math.max(0.4, f.GrassChompDelay)
+            farm.grassChompDelay = math.max(0.01, tonumber(f.GrassChompDelay) or 0.4)
+            farm.grassChompRepeatDelay = farm.grassChompDelay + 0.1
             pcall(function() Window:Set("Slider_GrassChompDelay", farm.grassChompDelay) end)
         end
         if f.OnlyMatureGrass ~= nil then
@@ -1671,6 +1692,25 @@ function afkRelog.checkAndResumeState()
                 trickOrTreat.toggle(true)
                 pcall(function() Window:Set("Toggle_TrickOrTreat", true) end)
                 pcall(function() Window:Set("Toggle_TrickOrTreat_Main", true) end)
+            end
+        end
+
+        if data.TownAuction then
+            local ta = data.TownAuction
+            if ta.AutoBidAll then
+                townAuction.autoBidAll = true
+                pcall(function() Window:Set("Toggle_TownAutoBidAll", true) end)
+            end
+            if type(ta.AutoBidActive) == "table" then
+                for slot, active in pairs(ta.AutoBidActive) do
+                    if active then
+                        townAuction.autoBidActive[slot] = true
+                        pcall(function() Window:Set("Toggle_TownAutoBid_" .. slot, true) end)
+                    end
+                end
+            end
+            if ta.MaxAutoBidLimit and ta.MaxAutoBidLimit > 0 then
+                townAuction.maxAutoBidLimit = ta.MaxAutoBidLimit
             end
         end
 
@@ -5085,7 +5125,7 @@ function farm.processMovement(dt, now, rootPos)
             local tPos = cache.getNodePosition(farm.currentTargetNode)
             local distSq = get2DDistanceSq(rootPos, tPos)
             if distSq < 16 then
-                if farm.autoChomp and (now - farm.lastRaycastChompTime >= math.max(0.4, farm.grassChompDelay or 0.4)) then
+                if farm.autoChomp and (now - farm.lastRaycastChompTime >= (farm.grassChompDelay or 0.4)) then
                     farm.processGrassChomp(now, rootPos)
                 end
                 if not farm.currentTargetNode or (farm.currentNodeStartTime > 0 and (now - farm.currentNodeStartTime > 2.0)) then
@@ -5368,7 +5408,7 @@ function farm.processMobAura(now, rootPos)
 end
 
 function farm.processGrassChomp(now, rootPos)
-    local chompDelay = math.max(0.4, farm.grassChompDelay or 0.4)
+    local chompDelay = farm.grassChompDelay or 0.4
     if (now - farm.lastRaycastChompTime >= chompDelay) then
         if farm.chompOnlyWhileMoving then
             local isMoving = (humanoid and humanoid.MoveDirection.Magnitude > 0.05)
@@ -5413,8 +5453,8 @@ function farm.processGrassChomp(now, rootPos)
 
         -- 3. Fire Chomp Request
         if targetNodeId then
-            local repeatDelay = math.max(0.4, farm.grassChompRepeatDelay or 0.6)
-            if (now - farm.chompCooldown >= 0.4) and (targetNodeId ~= farm.lastChompedNode or (now - farm.chompCooldown >= repeatDelay)) then
+            local repeatDelay = farm.grassChompRepeatDelay or (chompDelay + 0.1)
+            if (now - farm.chompCooldown >= chompDelay) and (targetNodeId ~= farm.lastChompedNode or (now - farm.chompCooldown >= repeatDelay)) then
                 chompEvent:FireServer(targetNodeId)
                 farm.lastChompedNode = targetNodeId
                 farm.chompCooldown = now
@@ -5427,6 +5467,7 @@ function farm.processGrassChomp(now, rootPos)
                         or (currId and currId == targetNodeId) then
                         farm.currentTargetNode = nil
                         farm.currentNodeStartTime = 0
+                        farm.lastNodeSearchTime = 0
                     end
                 end
             end
@@ -5924,38 +5965,66 @@ MainTab:CreateSection({ Name = "Aura & Pattern Configuration" })
 MainTab:CreateDropdown({
     Name = "Grass Chomp Speed",
     Options = {
-        "Fastest (0.4s - Server Minimum)",
+        "Instant (0.05s) [Unsafe - Firing faster than server intends]",
+        "Extreme (0.1s) [Unsafe - Firing faster than server intends]",
+        "Ultra (0.2s) [Unsafe - Firing faster than server intends]",
+        "Hyper (0.3s) [Unsafe - Firing faster than server intends]",
+        "Fastest Safe (0.4s - Server Minimum)",
         "Fast (0.5s)",
         "Balanced (0.6s)",
         "Default (0.7s - Game Base)",
         "Safe (1.0s)",
         "Very Slow (1.5s)"
     },
-    CurrentOption = {"Fastest (0.4s - Server Minimum)"},
+    CurrentOption = {"Fastest Safe (0.4s - Server Minimum)"},
     MultipleOptions = false,
     Flag = "Dropdown_GrassSpeed",
     Callback = function(Option)
         local selection = type(Option) == "table" and Option[1] or Option
-        if selection == "Fastest (0.4s - Server Minimum)" or string.find(tostring(selection), "0.4") then
+        local selStr = tostring(selection)
+        if string.find(selStr, "0.05") then
+            farm.grassChompDelay = 0.05
+            farm.grassChompRepeatDelay = 0.08
+        elseif string.find(selStr, "0.1") then
+            farm.grassChompDelay = 0.1
+            farm.grassChompRepeatDelay = 0.15
+        elseif string.find(selStr, "0.2") then
+            farm.grassChompDelay = 0.2
+            farm.grassChompRepeatDelay = 0.25
+        elseif string.find(selStr, "0.3") then
+            farm.grassChompDelay = 0.3
+            farm.grassChompRepeatDelay = 0.35
+        elseif string.find(selStr, "0.4") then
             farm.grassChompDelay = 0.4
             farm.grassChompRepeatDelay = 0.5
-        elseif selection == "Fast (0.5s)" or string.find(tostring(selection), "0.5") then
+        elseif string.find(selStr, "0.5") then
             farm.grassChompDelay = 0.5
             farm.grassChompRepeatDelay = 0.7
-        elseif selection == "Balanced (0.6s)" or string.find(tostring(selection), "0.6") then
+        elseif string.find(selStr, "0.6") then
             farm.grassChompDelay = 0.6
             farm.grassChompRepeatDelay = 0.8
-        elseif selection == "Default (0.7s - Game Base)" or string.find(tostring(selection), "0.7") then
+        elseif string.find(selStr, "0.7") then
             farm.grassChompDelay = 0.7
             farm.grassChompRepeatDelay = 1.0
-        elseif selection == "Safe (1.0s)" or string.find(tostring(selection), "1.0") then
+        elseif string.find(selStr, "1.0") then
             farm.grassChompDelay = 1.0
             farm.grassChompRepeatDelay = 1.5
-        elseif selection == "Very Slow (1.5s)" or string.find(tostring(selection), "1.5") then
+        elseif string.find(selStr, "1.5") then
             farm.grassChompDelay = 1.5
             farm.grassChompRepeatDelay = 2.0
         else
-            farm.grassChompDelay = math.max(0.4, tonumber(string.match(tostring(selection), "(%d+%.?%d*)")) or 0.4)
+            farm.grassChompDelay = math.max(0.01, tonumber(string.match(selStr, "(%d+%.?%d*)")) or 0.4)
+            farm.grassChompRepeatDelay = farm.grassChompDelay + 0.1
+        end
+        pcall(function() Window:Set("Slider_GrassChompDelay", farm.grassChompDelay) end)
+        if farm.grassChompDelay < 0.4 then
+            pcall(function()
+                Window:Notify({
+                    Title = "Unsafe Chomp Speed",
+                    Content = string.format("Set to %.2fs (Unsafe: Firing faster than server intends).", farm.grassChompDelay),
+                    Duration = 3,
+                })
+            end)
         end
     end,
 })
@@ -6139,14 +6208,15 @@ SlidersTab:CreateSlider({
 })
 
 SlidersTab:CreateSlider({
-    Name = "Grass Chomp Delay (Server Cap >= 0.4s)",
-    Range = {0.4, 2.0},
+    Name = "Grass Chomp Delay (<0.4s Unsafe: Faster than Server Intends)",
+    Range = {0.05, 2.0},
     Increment = 0.05,
     Suffix = "s",
-    CurrentValue = math.max(0.4, farm.grassChompDelay or 0.4),
+    CurrentValue = farm.grassChompDelay or 0.4,
     Flag = "Slider_GrassChompDelay",
     Callback = function(Value)
-        farm.grassChompDelay = math.max(0.4, Value)
+        farm.grassChompDelay = Value
+        farm.grassChompRepeatDelay = Value + 0.1
     end,
 })
 
@@ -6845,11 +6915,12 @@ function auction.setupLotUI(tab, lotName)
 
     tab:CreateInput({
         Name = "Bid Amount (" .. lotName .. ")",
-        Placeholder = "Enter custom amount or leave blank for min",
+        CurrentValue = "",
+        PlaceholderText = "Enter custom amount (e.g. 50000 or 50k)",
         RemoveTextAfterFocusLost = false,
         Flag = "Input_SkinBid_" .. lotName,
         Callback = function(Text)
-            local num = tonumber(Text:gsub(",", ""):gsub("%$", ""))
+            local num = auction.parseAmount(Text)
             if num and num > 0 then
                 auction.customBidAmounts[lotName] = num
             else
@@ -6857,6 +6928,19 @@ function auction.setupLotUI(tab, lotName)
             end
         end,
     })
+
+    task.spawn(function()
+        task.wait(0.2)
+        local tb = auction.findTextBox(lotName)
+        if tb then
+            tb:GetPropertyChangedSignal("Text"):Connect(function()
+                local num = auction.parseAmount(tb.Text)
+                if num and num > 0 then
+                    auction.customBidAmounts[lotName] = num
+                end
+            end)
+        end
+    end)
 
     tab:CreateButton({
         Name = "Bid Minimum / Next " .. lotName,
@@ -6868,7 +6952,7 @@ function auction.setupLotUI(tab, lotName)
     tab:CreateButton({
         Name = "Bid Custom Amount (" .. lotName .. ")",
         Callback = function()
-            local custom = auction.customBidAmounts[lotName]
+            local custom = auction.resolveCustomAmount(lotName)
             if not custom then
                 Window:Notify({ Title = "No Amount", Content = "Please enter an amount in the input above first.", Duration = 3 })
                 return
@@ -7028,21 +7112,18 @@ end
 
 ScannerTab:CreateInput({
     Name = "Max Auto Bid Limit (0 = Unlimited)",
-    Placeholder = "Enter max coins (e.g. 5000000)",
+    CurrentValue = "",
+    PlaceholderText = "Enter max coins (e.g. 5000000 or 5m)",
     RemoveTextAfterFocusLost = false,
     Flag = "Input_MaxAutoBid",
     Callback = function(Text)
-        local num = tonumber(Text:gsub(",", ""):gsub("%$", ""))
-        if num and num >= 0 then
-            auction.maxAutoBidLimit = num
-            Window:Notify({
-                Title = "Limit Updated",
-                Content = num == 0 and "Max bid limit set to Unlimited." or ("Max bid limit set to: " .. formatNumber(num)),
-                Duration = 3
-            })
-        else
-            Window:Notify({ Title = "Invalid Number", Content = "Please enter a valid number.", Duration = 3 })
-        end
+        local num = auction.parseAmount(Text) or 0
+        auction.maxAutoBidLimit = num
+        Window:Notify({
+            Title = "Limit Updated",
+            Content = num == 0 and "Max bid limit set to Unlimited." or ("Max bid limit set to: " .. formatNumber(num)),
+            Duration = 3
+        })
     end,
 })
 
@@ -7169,9 +7250,12 @@ function townAuction.getSlotDisplayInfo(slotName)
         ownedCount = townAuction.ownedCopies[itemId]
     end
 
+    local isBuyNow = string.find(slotName, "BuyNow") ~= nil
     local title = string.format("%s: %s [%s] (%s)", slotName, tostring(itemName), tostring(rarity), tostring(scope))
     local priceLine = ""
-    if price and price > 0 then
+    if isBuyNow then
+        priceLine = string.format("Price: 🪙 %s %s", formatNumber(price or minBid or 0), currency)
+    elseif price and price > 0 then
         priceLine = string.format("Price: 🪙 %s %s | Next Min: 🪙 %s %s", formatNumber(price), currency, formatNumber(minBid), currency)
     else
         priceLine = string.format("Current Bid: 🪙 %s %s | Next Min: 🪙 %s %s", formatNumber(bid), currency, formatNumber(minBid), currency)
@@ -7279,6 +7363,14 @@ function townAuction.handleSnapshotResult(res)
     end
 
     townAuction.updateAllCards()
+
+    if townAuction.hasAnyAutoBidActive and townAuction.hasAnyAutoBidActive() then
+        for _, slotName in ipairs(townAuction.slots) do
+            if townAuction.autoBidAll or townAuction.autoBidActive[slotName] then
+                task.spawn(function() townAuction.checkAndAutoBidSlot(slotName) end)
+            end
+        end
+    end
 end
 
 function townAuction.fetchSnapshot(isManual)
@@ -7318,7 +7410,195 @@ function townAuction.fetchSnapshot(isManual)
     end
 end
 
-function townAuction.executeBid(slotName, customAmount)
+function townAuction.parseAmount(input)
+    if not input then return nil end
+    local str = type(input) == "table" and (input.CurrentValue or input.Text or input[1]) or tostring(input)
+    str = str:gsub("%$", ""):gsub(",", ""):gsub("_", ""):gsub("%s+", "")
+    if str == "" then return nil end
+
+    local mult = 1
+    local lower = str:lower()
+    if lower:sub(-1) == "k" then
+        mult = 1000
+        str = str:sub(1, -2)
+    elseif lower:sub(-1) == "m" then
+        mult = 1000000
+        str = str:sub(1, -2)
+    elseif lower:sub(-1) == "b" then
+        mult = 1000000000
+        str = str:sub(1, -2)
+    end
+
+    local num = tonumber(str)
+    if num and num > 0 then
+        return math.floor(num * mult)
+    end
+    return nil
+end
+
+function townAuction.findTextBox(slotName)
+    local parent = nil
+    if gethui then
+        pcall(function() parent = gethui() end)
+    end
+    if not parent then
+        pcall(function() parent = game:GetService("CoreGui") end)
+    end
+    if not parent and plr then
+        pcall(function() parent = plr:FindFirstChild("PlayerGui") end)
+    end
+    if not parent then return nil end
+
+    local searchPattern = "Bid Amount (" .. slotName .. ")"
+    for _, desc in ipairs(parent:GetDescendants()) do
+        if desc:IsA("TextBox") then
+            local p = desc.Parent
+            while p and p ~= parent do
+                local title = p:FindFirstChild("Title")
+                if title and title:IsA("TextLabel") and title.Text == searchPattern then
+                    return desc
+                end
+                p = p.Parent
+            end
+        end
+    end
+    return nil
+end
+
+function townAuction.resolveCustomAmount(slotName)
+    local val = townAuction.customBidAmounts[slotName]
+    if val and val > 0 then return val end
+
+    local flagName = "Input_TownBid_" .. slotName
+    if Window and Window.Flags and Window.Flags[flagName] ~= nil then
+        val = townAuction.parseAmount(Window.Flags[flagName])
+        if val and val > 0 then
+            townAuction.customBidAmounts[slotName] = val
+            return val
+        end
+    end
+
+    if Rayfield and Rayfield.Flags and Rayfield.Flags[flagName] ~= nil then
+        val = townAuction.parseAmount(Rayfield.Flags[flagName])
+        if val and val > 0 then
+            townAuction.customBidAmounts[slotName] = val
+            return val
+        end
+    end
+
+    local tb = townAuction.findTextBox(slotName)
+    if tb and tb.Text and tb.Text ~= "" then
+        val = townAuction.parseAmount(tb.Text)
+        if val and val > 0 then
+            townAuction.customBidAmounts[slotName] = val
+            return val
+        end
+    end
+
+    return nil
+end
+
+function townAuction.hasAnyAutoBidActive()
+    if townAuction.autoBidAll then return true end
+    for _, active in pairs(townAuction.autoBidActive) do
+        if active then return true end
+    end
+    return false
+end
+
+function townAuction.checkAndAutoBidSlot(slotName)
+    if not (townAuction.autoBidAll or townAuction.autoBidActive[slotName]) then return end
+
+    local remote = townAuction.getRemote()
+    if not remote then return end
+
+    local lot = townAuction.lotsBySlot[slotName]
+    local fitout = townAuction.getFitoutModel()
+    local model = fitout and (fitout:FindFirstChild(slotName) or (slotName == "BuyNow" and fitout:FindFirstChild("BuyNow1")))
+
+    local isEmpty = (lot and lot.Empty == true)
+        or (model and model:GetAttribute("TownAuctionEmpty") == true)
+    if isEmpty then return end
+
+    local itemId = (lot and lot.ItemId)
+        or (model and (model:GetAttribute("TownAuctionItemID") or model:GetAttribute("ItemId")))
+    if not itemId or itemId == "" or itemId == "N/A" then return end
+
+    local round = (lot and lot.Round)
+        or (model and (model:GetAttribute("TownAuctionRound") or model:GetAttribute("Round")))
+    if not round or round == "" or round == "N/A" then return end
+
+    local isBuyNow = string.find(slotName, "BuyNow") ~= nil
+    local price = (lot and lot.Price)
+        or (model and (model:GetAttribute("TownAuctionPrice") or model:GetAttribute("Price")))
+    local minBid = (lot and lot.Minimum)
+        or (model and (model:GetAttribute("TownAuctionMinimum") or model:GetAttribute("Minimum")))
+        or (price or 1)
+
+    local amount = isBuyNow and (price or minBid or 1) or (minBid or 1)
+    if not amount or type(amount) ~= "number" or amount <= 0 then return end
+
+    if townAuction.maxAutoBidLimit > 0 and amount > townAuction.maxAutoBidLimit then
+        return
+    end
+
+    -- Check if we are already leading
+    local leaderName = (lot and lot.Leader) or (model and model:GetAttribute("Leader"))
+    local leaderId = (lot and lot.LeaderId) or (model and model:GetAttribute("LeaderId"))
+    local myDisplayName = tostring(plr:GetAttribute("DisplayName") or plr.DisplayName or plr.Name)
+    local myUsername = plr.Name
+    local myUserId = plr.UserId
+
+    if (leaderId and leaderId == myUserId)
+        or (leaderName and (leaderName == myDisplayName or leaderName == myUsername or leaderName == plr.DisplayName)) then
+        return
+    end
+
+    -- Throttle to avoid duplicate rapid requests
+    local now = os.clock()
+    if townAuction.isAutoBiddingSlot[slotName] then return end
+    if townAuction.lastAutoBidTime[slotName] and (now - townAuction.lastAutoBidTime[slotName] < 1.5) then return end
+
+    townAuction.isAutoBiddingSlot[slotName] = true
+    townAuction.lastAutoBidTime[slotName] = now
+
+    task.spawn(function()
+        local success, result = pcall(function()
+            return remote:InvokeServer({
+                Slot = slotName,
+                Round = round,
+                Action = "Bid",
+                Amount = amount
+            })
+        end)
+
+        townAuction.isAutoBiddingSlot[slotName] = false
+
+        if success then
+            local isOk = (type(result) == "table" and result.Ok ~= false) or (result == true or result == nil)
+            if isOk then
+                local itemName = (lot and lot.Name)
+                    or (model and (model:GetAttribute("TownAuctionName") or model:GetAttribute("TownAuctionItemID")))
+                    or slotName
+                Window:Notify({
+                    Title = isBuyNow and "Auto Buy Placed!" or "Auto Outbid Placed!",
+                    Content = string.format("%s (%s)\nAmount: 🪙 %s %s\nOutbidding: %s",
+                        slotName,
+                        tostring(itemName),
+                        formatNumber(amount),
+                        townAuction.currency,
+                        tostring(leaderName or "None")),
+                    Duration = 4
+                })
+                task.delay(0.5, function()
+                    townAuction.fetchSnapshot(false)
+                end)
+            end
+        end
+    end)
+end
+
+function townAuction.executeBid(slotName, customAmount, forcePrice)
     local remote = townAuction.getRemote()
     if not remote then
         Window:Notify({ Title = "Error", Content = "CowTownAuctionRequest remote not found.", Duration = 4 })
@@ -7327,15 +7607,26 @@ function townAuction.executeBid(slotName, customAmount)
 
     local lot = townAuction.lotsBySlot[slotName]
     local fitout = townAuction.getFitoutModel()
-    local model = fitout and fitout:FindFirstChild(slotName)
+    local model = fitout and (fitout:FindFirstChild(slotName) or (slotName == "BuyNow" and fitout:FindFirstChild("BuyNow1")))
 
     local round = (lot and lot.Round)
         or (model and (model:GetAttribute("TownAuctionRound") or model:GetAttribute("Round")))
+
+    local isBuyNow = string.find(slotName, "BuyNow") ~= nil
+    local price = (lot and lot.Price)
+        or (model and (model:GetAttribute("TownAuctionPrice") or model:GetAttribute("Price")))
     local minAmount = (lot and (lot.Minimum or lot.Price))
         or (model and (model:GetAttribute("TownAuctionMinimum") or model:GetAttribute("TownAuctionPrice") or model:GetAttribute("Minimum") or model:GetAttribute("Price")))
         or 1
 
-    local amount = tonumber(customAmount) or tonumber(townAuction.customBidAmounts[slotName]) or tonumber(minAmount) or 1
+    local amount
+    if forcePrice or (isBuyNow and not customAmount) then
+        amount = tonumber(price) or tonumber(minAmount) or 1
+    elseif customAmount then
+        amount = tonumber(customAmount) or 1
+    else
+        amount = tonumber(minAmount) or 1
+    end
 
     if not round or round == "" or round == "N/A" then
         Window:Notify({ Title = "Error", Content = slotName .. " has no active round.", Duration = 4 })
@@ -7358,8 +7649,9 @@ function townAuction.executeBid(slotName, customAmount)
             or slotName
 
         if isOk then
+            local actionTitle = isBuyNow and "Purchase Placed!" or "Bid Placed!"
             Window:Notify({
-                Title = "Bid Placed!",
+                Title = actionTitle,
                 Content = string.format("%s (%s)\nAmount: 🪙 %s %s", slotName, tostring(itemName), formatNumber(amount), townAuction.currency),
                 Duration = 4
             })
@@ -7370,7 +7662,7 @@ function townAuction.executeBid(slotName, customAmount)
         else
             local errMsg = (type(result) == "table" and (result.Error or result.Message or result.Reason)) or tostring(result)
             Window:Notify({
-                Title = "Bid Rejected",
+                Title = isBuyNow and "Purchase Rejected" or "Bid Rejected",
                 Content = string.format("%s: %s", slotName, tostring(errMsg)),
                 Duration = 4
             })
@@ -7378,7 +7670,7 @@ function townAuction.executeBid(slotName, customAmount)
         end
     else
         Window:Notify({
-            Title = "Bid Failed",
+            Title = isBuyNow and "Purchase Failed" or "Bid Failed",
             Content = string.format("%s: %s", slotName, tostring(result)),
             Duration = 4
         })
@@ -7423,27 +7715,41 @@ end
 
 function townAuction.cleanup()
     townAuction.stopAutoRefresh()
+    townAuction.autoBidLoopRunning = false
+    townAuction.autoBidAll = false
     for _, conn in ipairs(townAuction.connections) do
         if conn and conn.Disconnect then
             pcall(function() conn:Disconnect() end)
         end
     end
+    for _, conn in ipairs(townAuction.autoBidConnections) do
+        if conn and conn.Disconnect then
+            pcall(function() conn:Disconnect() end)
+        end
+    end
     table.clear(townAuction.connections)
+    table.clear(townAuction.autoBidConnections)
     table.clear(townAuction.cards)
     table.clear(townAuction.lotsBySlot)
     table.clear(townAuction.ownedCopies)
+    table.clear(townAuction.customBidAmounts)
+    table.clear(townAuction.autoBidActive)
 end
 
 function townAuction.initWorkspaceListeners()
     local fitout = townAuction.getFitoutModel()
     if not fitout then return end
     for _, slotName in ipairs(townAuction.slots) do
-        local model = fitout:FindFirstChild(slotName)
+        local model = fitout:FindFirstChild(slotName) or (slotName == "BuyNow" and fitout:FindFirstChild("BuyNow1"))
         if model then
             local conn = model.AttributeChanged:Connect(function()
                 townAuction.updateCard(slotName)
+                if townAuction.autoBidAll or townAuction.autoBidActive[slotName] then
+                    townAuction.checkAndAutoBidSlot(slotName)
+                end
             end)
             table.insert(townAuction.connections, conn)
+            table.insert(townAuction.autoBidConnections, conn)
         end
     end
 end
@@ -7471,11 +7777,12 @@ function townAuction.setupSlotUI(tab, slotName)
 
     tab:CreateInput({
         Name = "Bid Amount (" .. slotName .. ")",
-        Placeholder = "Enter custom amount or leave blank for min",
+        CurrentValue = "",
+        PlaceholderText = "Enter custom amount (e.g. 50000 or 50k)",
         RemoveTextAfterFocusLost = false,
         Flag = "Input_TownBid_" .. slotName,
         Callback = function(Text)
-            local num = tonumber(Text:gsub(",", ""):gsub("%$", ""))
+            local num = townAuction.parseAmount(Text)
             if num and num > 0 then
                 townAuction.customBidAmounts[slotName] = num
             else
@@ -7484,19 +7791,32 @@ function townAuction.setupSlotUI(tab, slotName)
         end,
     })
 
+    task.spawn(function()
+        task.wait(0.2)
+        local tb = townAuction.findTextBox(slotName)
+        if tb then
+            tb:GetPropertyChangedSignal("Text"):Connect(function()
+                local num = townAuction.parseAmount(tb.Text)
+                if num and num > 0 then
+                    townAuction.customBidAmounts[slotName] = num
+                end
+            end)
+        end
+    end)
+
     local isBuyNow = string.find(slotName, "BuyNow") ~= nil
-    local btnName = isBuyNow and ("Buy Now / Bid " .. slotName) or ("Bid Minimum / Next " .. slotName)
+    local btnName = isBuyNow and ("Buy Now (" .. slotName .. ")") or ("Bid Minimum / Next " .. slotName)
     tab:CreateButton({
         Name = btnName,
         Callback = function()
-            townAuction.executeBid(slotName, nil)
+            townAuction.executeBid(slotName, nil, isBuyNow)
         end,
     })
 
     tab:CreateButton({
         Name = "Bid Custom Amount (" .. slotName .. ")",
         Callback = function()
-            local custom = townAuction.customBidAmounts[slotName]
+            local custom = townAuction.resolveCustomAmount(slotName)
             if not custom then
                 Window:Notify({ Title = "No Amount", Content = "Please enter an amount in the input above first.", Duration = 3 })
                 return
@@ -7559,6 +7879,55 @@ TownAuctionTab:CreateButton({
     end,
 })
 
+TownAuctionTab:CreateSection({ Name = "Auto Outbid & Auto Buy (When Not Leading)" })
+
+TownAuctionTab:CreateToggle({
+    Name = "Auto Outbid / Buy All Lots",
+    CurrentValue = false,
+    Flag = "Toggle_TownAutoBidAll",
+    Callback = function(Value)
+        townAuction.autoBidAll = Value
+        if Value then
+            for _, slotName in ipairs(townAuction.slots) do
+                task.spawn(function() townAuction.checkAndAutoBidSlot(slotName) end)
+            end
+        end
+    end,
+})
+
+for _, slotName in ipairs(townAuction.slots) do
+    local isBuyNow = string.find(slotName, "BuyNow") ~= nil
+    local toggleName = isBuyNow and ("Auto Buy Now (" .. slotName .. ")") or ("Auto Outbid " .. slotName)
+    TownAuctionTab:CreateToggle({
+        Name = toggleName,
+        CurrentValue = false,
+        Flag = "Toggle_TownAutoBid_" .. slotName,
+        Callback = function(Value)
+            townAuction.autoBidActive[slotName] = Value
+            if Value then
+                task.spawn(function() townAuction.checkAndAutoBidSlot(slotName) end)
+            end
+        end,
+    })
+end
+
+TownAuctionTab:CreateInput({
+    Name = "Max Auto Bid Limit (0 = Unlimited)",
+    CurrentValue = "",
+    PlaceholderText = "Enter max MooBucks (e.g. 5000000 or 5m)",
+    RemoveTextAfterFocusLost = false,
+    Flag = "Input_TownMaxAutoBid",
+    Callback = function(Text)
+        local num = townAuction.parseAmount(Text) or 0
+        townAuction.maxAutoBidLimit = num
+        Window:Notify({
+            Title = "Limit Updated",
+            Content = num == 0 and "Max bid limit set to Unlimited." or ("Max bid limit set to: " .. formatNumber(num) .. " " .. townAuction.currency),
+            Duration = 3
+        })
+    end,
+})
+
 TownAuctionTab:CreateSection({ Name = "Global Auction Lots" })
 townAuction.setupSlotUI(TownAuctionTab, "Global1")
 townAuction.setupSlotUI(TownAuctionTab, "Global2")
@@ -7576,6 +7945,19 @@ townAuction.setupSlotUI(TownAuctionTab, "Player1")
 townAuction.setupSlotUI(TownAuctionTab, "Player2")
 
 townAuction.initWorkspaceListeners()
+
+task.spawn(function()
+    while townAuction.autoBidLoopRunning do
+        task.wait(1)
+        if townAuction.hasAnyAutoBidActive and townAuction.hasAnyAutoBidActive() then
+            for _, slotName in ipairs(townAuction.slots) do
+                if townAuction.autoBidAll or townAuction.autoBidActive[slotName] then
+                    townAuction.checkAndAutoBidSlot(slotName)
+                end
+            end
+        end
+    end
+end)
 
 task.spawn(function()
     task.wait(1.5)
