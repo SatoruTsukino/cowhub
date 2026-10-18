@@ -2070,6 +2070,31 @@ function cache.getCleanGrassName(nodeName)
     end
 end
 
+function cache.extractGrassNodeId(target)
+    if not target then return nil end
+    local rawName = nil
+    if typeof(target) == "Instance" then
+        local attrId = target:GetAttribute("nodeID")
+        if attrId == nil then attrId = target:GetAttribute("NodeID") end
+        if attrId == nil then attrId = target:GetAttribute("nodeId") end
+        if attrId == nil then attrId = target:GetAttribute("NodeId") end
+        if attrId and type(attrId) == "string" and attrId ~= "" then
+            rawName = attrId
+        else
+            rawName = target.Name
+        end
+    elseif type(target) == "string" and target ~= "" then
+        rawName = target
+    end
+
+    if not rawName or rawName == "" then return nil end
+    local clean = cache.getCleanGrassName(rawName)
+    if not clean and typeof(target) == "Instance" and target.Parent and target.Parent ~= workspace then
+        clean = cache.extractGrassNodeId(target.Parent)
+    end
+    return clean
+end
+
 function cache.getMobPayload(mobName)
     local cached = cache.mobPayloads[mobName]
     if cached then return cached end
@@ -5150,54 +5175,52 @@ function farm.processGrassChomp(now, rootPos)
         end
         farm.lastRaycastChompTime = now
 
-        local targetGrassNode = nil
-        local hit = workspace:Raycast(rootPos, RAYCAST_DOWN, raycastParams)
-        if hit and hit.Instance then
-            targetGrassNode = cache.resolveGrassNode(hit.Instance)
+        local targetNodeId = nil
+        local targetInstance = nil
+
+        -- 1. Primary: Read game's CowGrassPrediction SelectionBox in Camera
+        local camera = workspace.CurrentCamera or workspace:FindFirstChildOfClass("Camera") or workspace:FindFirstChild("Camera")
+        local predBox = camera and camera:FindFirstChild("CowGrassPrediction")
+        if predBox then
+            local adornee = nil
+            local pcallOk, propVal = pcall(function() return predBox.Adornee end)
+            if pcallOk and propVal then
+                adornee = propVal
+            else
+                adornee = predBox:GetAttribute("Adornee") or predBox:GetAttribute("Target") or predBox:GetAttribute("Node")
+            end
+
+            if adornee then
+                targetNodeId = cache.extractGrassNodeId(adornee)
+                if typeof(adornee) == "Instance" then
+                    targetInstance = adornee
+                end
+            end
         end
 
-        -- Proximity Fallback 1: Current target node within 6 studs (36 sq)
-        if not targetGrassNode and farm.currentTargetNode and farm.currentTargetNode.Parent then
+        -- 2. Fallback: Proximity to currentTargetNode if prediction box is inactive/nil
+        if not targetNodeId and farm.currentTargetNode and farm.currentTargetNode.Parent then
             local tPos = cache.getNodePosition(farm.currentTargetNode)
             if tPos and get2DDistanceSq(rootPos, tPos) <= 36 then
-                local id = cache.getNodeID(farm.currentTargetNode)
-                if id then
-                    targetGrassNode = farm.currentTargetNode
-                end
+                targetNodeId = cache.getNodeID(farm.currentTargetNode)
+                targetInstance = farm.currentTargetNode
             end
         end
 
-        -- Proximity Fallback 2: Any grass node in CowVirtualGrass within 6 studs
-        if not targetGrassNode then
-            local grassNodes = cache.getGrassNodes()
-            local bestDistSq = 36
-            for _, node in ipairs(grassNodes) do
-                if node and node.Parent then
-                    local nodePos = cache.getNodePosition(node)
-                    if nodePos then
-                        local dSq = get2DDistanceSq(rootPos, nodePos)
-                        if dSq < bestDistSq then
-                            local nodeId = cache.getNodeID(node)
-                            if nodeId then
-                                bestDistSq = dSq
-                                targetGrassNode = node
-                            end
-                        end
-                    end
-                end
-            end
-        end
+        -- 3. Fire Chomp Request
+        if targetNodeId then
+            local repeatDelay = math.max(0.4, farm.grassChompRepeatDelay or 0.6)
+            if (now - farm.chompCooldown >= 0.4) and (targetNodeId ~= farm.lastChompedNode or (now - farm.chompCooldown >= repeatDelay)) then
+                chompEvent:FireServer(targetNodeId)
+                farm.lastChompedNode = targetNodeId
+                farm.chompCooldown = now
 
-        if targetGrassNode then
-            local nodeId = cache.getNodeID(targetGrassNode)
-            if nodeId then
-                local repeatDelay = math.max(0.4, farm.grassChompRepeatDelay or 0.6)
-                if (now - farm.chompCooldown >= 0.4) and (nodeId ~= farm.lastChompedNode or (now - farm.chompCooldown >= repeatDelay)) then
-                    chompEvent:FireServer(nodeId)
-                    farm.lastChompedNode = nodeId
-                    farm.chompCooldown = now
-
-                    if farm.currentTargetNode and (farm.currentTargetNode == targetGrassNode or farm.currentTargetNode.Name == targetGrassNode.Name) then
+                if farm.currentTargetNode then
+                    local currId = cache.getNodeID(farm.currentTargetNode)
+                    if farm.currentTargetNode == targetInstance
+                        or farm.currentTargetNode.Name == targetNodeId
+                        or (targetInstance and farm.currentTargetNode.Name == targetInstance.Name)
+                        or (currId and currId == targetNodeId) then
                         farm.currentTargetNode = nil
                         farm.currentNodeStartTime = 0
                     end
