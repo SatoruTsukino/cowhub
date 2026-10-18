@@ -3839,7 +3839,7 @@ function penESP.update()
         penESP.visualizer.CFrame = CFrame.new(farm.anchorPos) * CFrame.Angles(0, 0, math.rad(90))
     else
         if penESP.visualizer then
-            penESP.visualizer:Destroy()
+            pcall(function() penESP.visualizer:Destroy() end)
             penESP.visualizer = nil
         end
     end
@@ -3848,15 +3848,15 @@ end
 -- Cleanup single-chest ESP instances
 function chestESP.cleanup()
     if chestESP.espConn then
-        chestESP.espConn:Disconnect()
+        pcall(function() chestESP.espConn:Disconnect() end)
         chestESP.espConn = nil
     end
     if chestESP.highlight then
-        chestESP.highlight:Destroy()
+        pcall(function() chestESP.highlight:Destroy() end)
         chestESP.highlight = nil
     end
     if chestESP.billboard then
-        chestESP.billboard:Destroy()
+        pcall(function() chestESP.billboard:Destroy() end)
         chestESP.billboard = nil
     end
 end
@@ -3946,11 +3946,11 @@ function chestESP.update()
         end
     else
         if chestESP.childAddedConn then
-            chestESP.childAddedConn:Disconnect()
+            pcall(function() chestESP.childAddedConn:Disconnect() end)
             chestESP.childAddedConn = nil
         end
         if chestESP.childRemovedConn then
-            chestESP.childRemovedConn:Disconnect()
+            pcall(function() chestESP.childRemovedConn:Disconnect() end)
             chestESP.childRemovedConn = nil
         end
         chestESP.cleanup()
@@ -3962,7 +3962,7 @@ end
 -- ==========================
 function manatite.cleanupVisuals()
     if manatite.espConn then
-        manatite.espConn:Disconnect()
+        pcall(function() manatite.espConn:Disconnect() end)
         manatite.espConn = nil
     end
     for model, visual in pairs(manatite.visuals) do
@@ -4057,7 +4057,7 @@ end
 -- ==========================
 function mithril.cleanupVisuals()
     if mithril.espConn then
-        mithril.espConn:Disconnect()
+        pcall(function() mithril.espConn:Disconnect() end)
         mithril.espConn = nil
     end
     for model, visual in pairs(mithril.visuals) do
@@ -7938,145 +7938,194 @@ SettingsTab:CreateSection({ Name = "Script Controls" })
 SettingsTab:CreateButton({
     Name = "Close Script & Destroy UI",
     Callback = function()
-        if auction.scannerRunning and httpRequest and WEBHOOK_URL ~= "" then
-            task.spawn(function()
-                httpRequest({
-                    Url = WEBHOOK_URL,
-                    Method = "POST",
-                    Headers = {["Content-Type"] = "application/json"},
-                    Body = HttpService:JSONEncode({["embeds"] = {{
-                        ["title"] = "🛑 Scanner Offline",
-                        ["description"] = "The script has been closed and the auction scanner is no longer active.",
-                        ["color"] = 0xFF0000,
-                        ["footer"] = {["text"] = "Auction Scanner • " .. os.date("%X")}
-                    }}})
-                })
-            end)
-        end
-
-        farm.on = false
-        farm.autoChomp = false
-        farm.autoChompMobs = false
-        farm.autoFish = false
-        cache.cleanupRippleTracking()
-        dodge.auto = false
-        if manatite then
-            manatite.auto = false
-            manatite.showESP = false
-            manatite.cleanupVisuals()
-            if manatite.anchor and root then
-                pcall(function() root.Anchored = false end)
-            end
-            manatite.model = nil
-            manatite.target = nil
-            manatite.payload = nil
-        end
-        if mithril then
-            mithril.auto = false
-            mithril.showESP = false
-            mithril.cleanupVisuals()
-            if mithril.anchor and root then
-                pcall(function() root.Anchored = false end)
-            end
-            mithril.model = nil
-            mithril.orePart = nil
-            mithril.payload = nil
-        end
-        if aerial.active and root then
-            aerial.active = false
-            pcall(function() root.Anchored = false end)
-            if aerial.preCFrame then
-                pcall(function() char:PivotTo(aerial.preCFrame) end)
-                pcall(function() setRootCFrame(aerial.preCFrame) end)
-            end
-            pcall(function()
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
-            end)
-            aerial.cframe = nil
-            aerial.preCFrame = nil
-        end
-        if dodge.isUnderground and root and dodge.lastSurfaceCFrame then
-            setRootCFrame(dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0))
-            pcall(function() root.Anchored = false end)
-            pcall(function()
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
-            end)
-            dodge.isUnderground = false
-            dodge.currentUndergroundRetreatOffset = nil
-        end
-        if dodge.isDodging then
-            if humanoid then humanoid.WalkSpeed = dodge.originalWalkSpeed or 16 end
-            dodge.isDodging = false
-            dodge.currentAttackingMob = nil
-        end
-        if trickOrTreat then
-            trickOrTreat.auto = false
-            trickOrTreat.loopRunning = false
-            if trickOrTreat.isCycling and trickOrTreat.savedPreCFrame and root then
-                pcall(function() root.Anchored = false end)
-                char:PivotTo(trickOrTreat.savedPreCFrame)
-                root.CFrame = trickOrTreat.savedPreCFrame
-                stopCharacterVelocity()
-            end
-            if trickOrTreat.clientEventConn then
-                pcall(function() trickOrTreat.clientEventConn:Disconnect() end)
-            end
-        end
-        if afkRelog then
-            afkRelog.enabled = false
-            afkRelog.isRejoining = false
-        end
-        auction.scannerRunning = false
-        penESP.show = false
-        chestESP.show = false
-        penESP.update()
-        chestESP.update()
-
-        table.clear(cache.activeAuraMobs)
-        table.clear(cache.mithrilCaveMobSet)
         pcall(function()
-            if successVIM and VirtualInput then
-                VirtualInput:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-            elseif keyrelease then
-                keyrelease(0x45)
-            elseif VirtualUser then
-                VirtualUser:SetKeyUp("0x65")
+            if auction.scannerRunning and httpRequest and WEBHOOK_URL ~= "" then
+                task.spawn(function()
+                    pcall(function()
+                        httpRequest({
+                            Url = WEBHOOK_URL,
+                            Method = "POST",
+                            Headers = {["Content-Type"] = "application/json"},
+                            Body = HttpService:JSONEncode({["embeds"] = {{
+                                ["title"] = "🛑 Scanner Offline",
+                                ["description"] = "The script has been closed and the auction scanner is no longer active.",
+                                ["color"] = 0xFF0000,
+                                ["footer"] = {["text"] = "Auction Scanner • " .. os.date("%X")}
+                            }}})
+                        })
+                    end)
+                end)
             end
+
+            farm.on = false
+            farm.autoChomp = false
+            farm.autoChompMobs = false
+            farm.autoFish = false
+            farm.goldenAura = false
+            cache.cleanupRippleTracking()
+            dodge.auto = false
+
+            if manatite then
+                pcall(function()
+                    manatite.auto = false
+                    manatite.showESP = false
+                    manatite.cleanupVisuals()
+                    if manatite.anchor and root then
+                        pcall(function() root.Anchored = false end)
+                    end
+                    manatite.model = nil
+                    manatite.target = nil
+                    manatite.payload = nil
+                end)
+            end
+
+            if mithril then
+                pcall(function()
+                    mithril.auto = false
+                    mithril.showESP = false
+                    mithril.cleanupVisuals()
+                    if mithril.anchor and root then
+                        pcall(function() root.Anchored = false end)
+                    end
+                    mithril.model = nil
+                    mithril.orePart = nil
+                    mithril.payload = nil
+                end)
+            end
+
+            if aerial then
+                pcall(function()
+                    if aerial.active and root then
+                        aerial.active = false
+                        pcall(function() root.Anchored = false end)
+                        if aerial.preCFrame then
+                            pcall(function() char:PivotTo(aerial.preCFrame) end)
+                            pcall(function() setRootCFrame(aerial.preCFrame) end)
+                        end
+                        pcall(function()
+                            root.AssemblyLinearVelocity = Vector3.zero
+                            root.AssemblyAngularVelocity = Vector3.zero
+                        end)
+                        aerial.cframe = nil
+                        aerial.preCFrame = nil
+                    end
+                end)
+            end
+
+            if dodge then
+                pcall(function()
+                    if dodge.isUnderground and root and dodge.lastSurfaceCFrame then
+                        setRootCFrame(dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0))
+                        pcall(function() root.Anchored = false end)
+                        pcall(function()
+                            root.AssemblyLinearVelocity = Vector3.zero
+                            root.AssemblyAngularVelocity = Vector3.zero
+                        end)
+                        dodge.isUnderground = false
+                        dodge.currentUndergroundRetreatOffset = nil
+                    end
+                    if dodge.isDodging then
+                        if humanoid then humanoid.WalkSpeed = dodge.originalWalkSpeed or 16 end
+                        dodge.isDodging = false
+                        dodge.currentAttackingMob = nil
+                    end
+                end)
+            end
+
+            if trickOrTreat then
+                pcall(function()
+                    trickOrTreat.auto = false
+                    trickOrTreat.loopRunning = false
+                    if trickOrTreat.isCycling and trickOrTreat.savedPreCFrame and root then
+                        pcall(function() root.Anchored = false end)
+                        pcall(function() char:PivotTo(trickOrTreat.savedPreCFrame) end)
+                        pcall(function() setRootCFrame(trickOrTreat.savedPreCFrame) end)
+                        pcall(stopCharacterVelocity)
+                    end
+                    if trickOrTreat.clientEventConn then
+                        pcall(function() trickOrTreat.clientEventConn:Disconnect() end)
+                    end
+                end)
+            end
+
+            if afkRelog then
+                pcall(function()
+                    afkRelog.enabled = false
+                    afkRelog.isRejoining = false
+                end)
+            end
+
+            auction.scannerRunning = false
+            pcall(function()
+                penESP.show = false
+                penESP.update()
+            end)
+            pcall(function()
+                chestESP.show = false
+                chestESP.update()
+            end)
+
+            pcall(function() table.clear(cache.activeAuraMobs) end)
+            pcall(function() table.clear(cache.mithrilCaveMobSet) end)
+
+            pcall(function()
+                if successVIM and VirtualInput then
+                    VirtualInput:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+                elseif keyrelease then
+                    keyrelease(0x45)
+                elseif VirtualUser then
+                    VirtualUser:SetKeyUp("0x65")
+                end
+            end)
+
+            spamThreads.E = spamThreads.E + 1
+            spamThreads.Q = spamThreads.Q + 1
+
+            for _, conn in ipairs(auction.connections) do
+                if conn and conn.Disconnect then
+                    pcall(function() conn:Disconnect() end)
+                end
+            end
+            table.clear(auction.connections)
+
+            auction.autoBidLoopRunning = false
+            for _, conn in ipairs(auction.autoBidConnections) do
+                if conn and conn.Disconnect then
+                    pcall(function() conn:Disconnect() end)
+                end
+            end
+            table.clear(auction.autoBidConnections)
+            table.clear(auction.cards)
+            table.clear(auction.customBidAmounts)
+
+            if townAuction and townAuction.cleanup then
+                pcall(function() townAuction.cleanup() end)
+            end
+
+            for _, conn in ipairs(scriptConnections) do
+                if conn and conn.Disconnect then
+                    pcall(function() conn:Disconnect() end)
+                end
+            end
+            table.clear(scriptConnections)
+
+            pcall(function() RunService:Set3dRenderingEnabled(true) end)
+            if setfpscap then pcall(function() setfpscap(60) end) end
+
+            if HeartbeatConnection then
+                pcall(function() HeartbeatConnection:Disconnect() end)
+                HeartbeatConnection = nil
+            end
+            pcall(function() if humanoid then humanoid:Move(Vector3.zero, false) end end)
         end)
 
-        spamThreads.E = spamThreads.E + 1
-        spamThreads.Q = spamThreads.Q + 1
-
-        for _, conn in ipairs(auction.connections) do conn:Disconnect() end
-        table.clear(auction.connections)
-
-        auction.autoBidLoopRunning = false
-        for _, conn in ipairs(auction.autoBidConnections) do conn:Disconnect() end
-        table.clear(auction.autoBidConnections)
-        table.clear(auction.cards)
-        table.clear(auction.customBidAmounts)
-
-        if townAuction and townAuction.cleanup then
-            pcall(function() townAuction.cleanup() end)
-        end
-
-        for _, conn in ipairs(scriptConnections) do
-            if conn and conn.Disconnect then conn:Disconnect() end
-        end
-        table.clear(scriptConnections)
-
-        pcall(function() RunService:Set3dRenderingEnabled(true) end)
-        if setfpscap then pcall(function() setfpscap(60) end) end
-
-        if HeartbeatConnection then
-            HeartbeatConnection:Disconnect()
-            HeartbeatConnection = nil
-        end
-        pcall(function() if humanoid then humanoid:Move(Vector3.zero, false) end end)
-
-        Window:Unload()
+        task.delay(0.05, function()
+            pcall(function()
+                if Window and Window.Unload then
+                    Window:Unload()
+                end
+            end)
+        end)
     end,
 })
 
