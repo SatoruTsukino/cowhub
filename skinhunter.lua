@@ -185,6 +185,7 @@ local TARGET_SKIN_LIST = {} -- Sorted array of all active target skin strings
 local TARGET_SKIN_SET = {} -- Fast lookup set: [skinId] = true
 
 local TargetDropdown = nil -- Forward declaration for UI dropdown
+local syncAllDropdowns = nil -- Forward declaration for syncing all rarity dropdowns
 local saveConfig
 local saveState
 
@@ -369,10 +370,14 @@ loadState()
 -- AUCTION SKINS CATALOGUE
 -- ============================
 local DEFAULT_AUCTION_SKINS = {
+    "AcrobatCoat",
+    "AerialStuntCoat",
     "AngusCoat",
+    "AuctionKingCoat",
     "AyrshireCoat",
     "BeltedGallowayCoat",
     "BlueRoanCoat",
+    "BlueRobotCoat",
     "BrindleCoat",
     "BrownSwissCoat",
     "BubblegumCoat",
@@ -380,21 +385,28 @@ local DEFAULT_AUCTION_SKINS = {
     "BurgerCoat",
     "CharolaisCoat",
     "ChocolateMilkCoat",
+    "CopperSocksCoat",
     "CreamHighlandCoat",
     "DinoCoat",
     "DutchBeltedCoat",
+    "FireflySquidCoat",
+    "GiantIsopodCoat",
     "GuernseyCoat",
+    "HazmatCoat",
     "HerefordCoat",
     "HolsteinCoat",
     "JackOLanternCoat",
     "JerseyCoat",
     "JuicySliceCoat",
+    "KrakenCoat",
+    "LanternfishCoat",
     "LovestruckCoat",
     "MatchaLatteCoat",
     "MintChipCoat",
     "MoonWalkerCoat",
     "NeapolitanCoat",
     "NormandeCoat",
+    "OrcaCoat",
     "PandaCoat",
     "PirateCoat",
     "PlushieCoat",
@@ -402,14 +414,103 @@ local DEFAULT_AUCTION_SKINS = {
     "RedAngusCoat",
     "RedHolsteinCoat",
     "RoboCoat",
+    "RocktailCoat",
     "SheepCoat",
     "SilverHighlandCoat",
     "SleepyheadCoat",
     "SpaDayCoat",
     "SpeckleParkCoat",
     "UnicornCoat",
+    "YinAndYangCoat",
 }
 
+-- Comprehensive rarity & auction status catalog for all auction coats
+local AUCTION_COAT_META = {
+    -- Mythic (Active)
+    AuctionKingCoat = { Rarity = "Mythic", Status = "Active" },
+    UnicornCoat = { Rarity = "Mythic", Status = "Active" },
+
+    -- Super Rare (Active)
+    DinoCoat = { Rarity = "Super Rare", Status = "Active" },
+    MoonWalkerCoat = { Rarity = "Super Rare", Status = "Active" },
+    RainCloudCoat = { Rarity = "Super Rare", Status = "Active" },
+    RoboCoat = { Rarity = "Super Rare", Status = "Active" },
+
+    -- Rare (Active)
+    ChocolateMilkCoat = { Rarity = "Rare", Status = "Active" },
+    MatchaLatteCoat = { Rarity = "Rare", Status = "Active" },
+    MintChipCoat = { Rarity = "Rare", Status = "Active" },
+    NeapolitanCoat = { Rarity = "Rare", Status = "Active" },
+    PandaCoat = { Rarity = "Rare", Status = "Active" },
+    PlushieCoat = { Rarity = "Rare", Status = "Active" },
+    SleepyheadCoat = { Rarity = "Rare", Status = "Active" },
+    SpaDayCoat = { Rarity = "Rare", Status = "Active" },
+
+    -- Uncommon (Active)
+    AngusCoat = { Rarity = "Uncommon", Status = "Active" },
+    BeltedGallowayCoat = { Rarity = "Uncommon", Status = "Active" },
+    BrindleCoat = { Rarity = "Uncommon", Status = "Active" },
+    CopperSocksCoat = { Rarity = "Uncommon", Status = "Active" },
+    CreamHighlandCoat = { Rarity = "Uncommon", Status = "Active" },
+    DutchBeltedCoat = { Rarity = "Uncommon", Status = "Active" },
+    JuicySliceCoat = { Rarity = "Uncommon", Status = "Active" },
+    RedAngusCoat = { Rarity = "Uncommon", Status = "Active" },
+    SheepCoat = { Rarity = "Uncommon", Status = "Active" },
+    SilverHighlandCoat = { Rarity = "Uncommon", Status = "Active" },
+    SpeckleParkCoat = { Rarity = "Uncommon", Status = "Active" },
+
+    -- Common (Active)
+    AyrshireCoat = { Rarity = "Common", Status = "Active" },
+    BlueRoanCoat = { Rarity = "Common", Status = "Active" },
+    BrownSwissCoat = { Rarity = "Common", Status = "Active" },
+    CharolaisCoat = { Rarity = "Common", Status = "Active" },
+    GuernseyCoat = { Rarity = "Common", Status = "Active" },
+    HerefordCoat = { Rarity = "Common", Status = "Active" },
+    HolsteinCoat = { Rarity = "Common", Status = "Active" },
+    JerseyCoat = { Rarity = "Common", Status = "Active" },
+    NormandeCoat = { Rarity = "Common", Status = "Active" },
+    RedHolsteinCoat = { Rarity = "Common", Status = "Active" },
+
+    -- Super Rare (Deferred / Other Status)
+    AcrobatCoat = { Rarity = "Super Rare", Status = "Deferred" },
+    AerialStuntCoat = { Rarity = "Super Rare", Status = "Deferred" },
+    BlueRobotCoat = { Rarity = "Super Rare", Status = "Deferred" },
+    BumbleCoat = { Rarity = "Super Rare", Status = "Deferred" },
+    BurgerCoat = { Rarity = "Super Rare", Status = "Deferred" },
+    FireflySquidCoat = { Rarity = "Super Rare", Status = "Deferred" },
+    GiantIsopodCoat = { Rarity = "Super Rare", Status = "Deferred" },
+    HazmatCoat = { Rarity = "Super Rare", Status = "Deferred" },
+    JackOLanternCoat = { Rarity = "Super Rare", Status = "Deferred" },
+    KrakenCoat = { Rarity = "Super Rare", Status = "Deferred" },
+    LanternfishCoat = { Rarity = "Super Rare", Status = "Deferred" },
+    LovestruckCoat = { Rarity = "Super Rare", Status = "Deferred" },
+    OrcaCoat = { Rarity = "Super Rare", Status = "Deferred" },
+    PirateCoat = { Rarity = "Super Rare", Status = "Deferred" },
+    RocktailCoat = { Rarity = "Super Rare", Status = "Deferred" },
+    YinAndYangCoat = { Rarity = "Super Rare", Status = "Deferred" },
+
+    -- Rare (Deferred / Other Status)
+    BubblegumCoat = { Rarity = "Rare", Status = "Deferred" },
+}
+
+local ACTIVE_COATS_BY_RARITY = {
+    Mythic = {},
+    ["Super Rare"] = {},
+    Rare = {},
+    Uncommon = {},
+    Common = {},
+}
+
+local OTHER_COATS_BY_RARITY = {
+    Mythic = {},
+    ["Super Rare"] = {},
+    Rare = {},
+    Uncommon = {},
+    Common = {},
+}
+
+local ALL_ACTIVE_COATS = {}
+local ALL_OTHER_COATS = {}
 local HALLOWEEN_SKINS = {}
 
 local function getAuctionSkins()
@@ -439,6 +540,21 @@ local function getAuctionSkins()
         local cowGame = ReplicatedStorage:FindFirstChild("CowGame")
         local shared = cowGame and cowGame:FindFirstChild("Shared")
         if shared then
+            local cosmeticConfigMod = shared:FindFirstChild("CosmeticConfig")
+            if cosmeticConfigMod then
+                local cosmeticCfg = require(cosmeticConfigMod)
+                if type(cosmeticCfg) == "table" and type(cosmeticCfg.Definitions) == "table" then
+                    for id, def in pairs(cosmeticCfg.Definitions) do
+                        if type(def) == "table" and def.Slot == "Coat" and def.UnlockRule == "Auction" then
+                            add(id)
+                            local r = def.Rarity or (AUCTION_COAT_META[id] and AUCTION_COAT_META[id].Rarity) or "Common"
+                            local s = def.AuctionStatus or (AUCTION_COAT_META[id] and AUCTION_COAT_META[id].Status) or "Active"
+                            AUCTION_COAT_META[id] = { Rarity = r, Status = s }
+                        end
+                    end
+                end
+            end
+
             local auctionConfigMod = shared:FindFirstChild("SkinAuctionConfig")
             if auctionConfigMod then
                 local cfg = require(auctionConfigMod)
@@ -466,6 +582,11 @@ local function getAuctionSkins()
                         addHalloween(id)
                     end
                 end
+                if type(hw) == "table" and hw.EventRunning == true then
+                    if AUCTION_COAT_META.JackOLanternCoat then
+                        AUCTION_COAT_META.JackOLanternCoat.Status = "Active"
+                    end
+                end
             end
         end
     end)
@@ -476,15 +597,42 @@ local function getAuctionSkins()
         end
     end
 
+    -- Re-categorize all discovered skins into Active and Other by rarity
+    table.clear(ALL_ACTIVE_COATS)
+    table.clear(ALL_OTHER_COATS)
+    for _, tbl in pairs(ACTIVE_COATS_BY_RARITY) do table.clear(tbl) end
+    for _, tbl in pairs(OTHER_COATS_BY_RARITY) do table.clear(tbl) end
+
+    for _, id in ipairs(skins) do
+        local meta = AUCTION_COAT_META[id] or { Rarity = "Common", Status = "Active" }
+        local rarity = meta.Rarity or "Common"
+        local status = meta.Status or "Active"
+
+        if status == "Active" then
+            table.insert(ALL_ACTIVE_COATS, id)
+            if not ACTIVE_COATS_BY_RARITY[rarity] then ACTIVE_COATS_BY_RARITY[rarity] = {} end
+            table.insert(ACTIVE_COATS_BY_RARITY[rarity], id)
+        else
+            table.insert(ALL_OTHER_COATS, id)
+            if not OTHER_COATS_BY_RARITY[rarity] then OTHER_COATS_BY_RARITY[rarity] = {} end
+            table.insert(OTHER_COATS_BY_RARITY[rarity], id)
+        end
+    end
+
     table.sort(skins)
+    table.sort(ALL_ACTIVE_COATS)
+    table.sort(ALL_OTHER_COATS)
     table.sort(HALLOWEEN_SKINS)
+    for _, tbl in pairs(ACTIVE_COATS_BY_RARITY) do table.sort(tbl) end
+    for _, tbl in pairs(OTHER_COATS_BY_RARITY) do table.sort(tbl) end
+
     return skins
 end
 
 local AUCTION_SKIN_OPTIONS = getAuctionSkins()
 
 if #getTargetSkinList() == 0 then
-    local defaultSkin = AUCTION_SKIN_OPTIONS[1] or "HolsteinCoat"
+    local defaultSkin = (ALL_ACTIVE_COATS and ALL_ACTIVE_COATS[1]) or AUCTION_SKIN_OPTIONS[1] or "HolsteinCoat"
     setTargetSkins({ defaultSkin }, false)
 end
 
@@ -1478,48 +1626,229 @@ end
 -- ============================
 -- UI: MAIN TAB (RAYFIELD 2022)
 -- ============================
-MainTab:CreateSection("Target Configuration (Multi-Select)")
+local RarityDropdowns = {}
+local DropdownOptionSets = {}
+local DropdownOptionLists = {}
+local dropdownSelections = {}
+local ALL_DROPDOWN_OPTIONS_SET = {}
+local isSyncingDropdowns = false
 
-TargetDropdown = MainTab:CreateDropdown({
-    Name = "Select Target Skins",
-    Options = AUCTION_SKIN_OPTIONS,
-    CurrentOption = getTargetSkinList(),
-    MultipleOptions = true,
-    Flag = "Dropdown_TargetSkins",
-    Callback = function(Options)
-        local selections = {}
-        if type(Options) == "table" then
-            for _, opt in ipairs(Options) do
-                if type(opt) == "string" and opt ~= "" then
-                    table.insert(selections, opt)
-                end
-            end
-        elseif type(Options) == "string" and Options ~= "" then
-            table.insert(selections, Options)
-        end
+syncAllDropdowns = function()
+    isSyncingDropdowns = true
+    local currentTargets = getTargetSkinList()
+    local targetSet = {}
+    for _, id in ipairs(currentTargets) do
+        targetSet[id] = true
+    end
 
-        local changed = setTargetSkins(selections, true)
-        if changed then
-            if #TARGET_SKIN_LIST > 0 then
-                Rayfield:Notify({
-                    Title = "Target Skins Updated",
-                    Content = string.format("Hunting %d skin(s): %s", #TARGET_SKIN_LIST, getTargetSkinsDisplayString(3)),
-                    Duration = 3,
-                    Image = 4483362458,
-                })
-                log("Target skins updated from dropdown: " .. table.concat(TARGET_SKIN_LIST, ", "))
-            else
-                Rayfield:Notify({
-                    Title = "No Targets Selected",
-                    Content = "Please select at least one skin to hunt.",
-                    Duration = 3,
-                    Image = 4483362458,
-                })
-                log("All target skins deselected.")
+    for key, dropdown in pairs(RarityDropdowns) do
+        local optionSet = DropdownOptionSets[key] or {}
+        local matching = {}
+        for _, id in ipairs(currentTargets) do
+            if optionSet[id] then
+                table.insert(matching, id)
             end
         end
+        dropdownSelections[key] = matching
+        if dropdown and dropdown.Set then
+            pcall(function() dropdown:Set(matching) end)
+        end
+    end
+    isSyncingDropdowns = false
+end
+
+TargetDropdown = {
+    Set = function(_, list)
+        if syncAllDropdowns then syncAllDropdowns() end
     end,
-})
+    Refresh = function(...) end,
+}
+
+local ACTIVE_RARITY_ORDER = {"Mythic", "Super Rare", "Rare", "Uncommon", "Common"}
+local OTHER_RARITY_ORDER = {"Super Rare", "Rare", "Mythic", "Uncommon", "Common"}
+
+-- ============================
+-- SECTION: ACTIVE AUCTION COATS
+-- ============================
+MainTab:CreateSection("Active Auction Coats (AuctionStatus = \"Active\")")
+
+for _, rarity in ipairs(ACTIVE_RARITY_ORDER) do
+    local options = ACTIVE_COATS_BY_RARITY[rarity] or {}
+    if #options > 0 then
+        local key = "Active_" .. rarity:gsub("%s+", "")
+        local optSet = {}
+        for _, id in ipairs(options) do
+            optSet[id] = true
+            ALL_DROPDOWN_OPTIONS_SET[id] = true
+        end
+        DropdownOptionSets[key] = optSet
+        DropdownOptionLists[key] = options
+
+        local initialSelected = {}
+        for _, id in ipairs(getTargetSkinList()) do
+            if optSet[id] then
+                table.insert(initialSelected, id)
+            end
+        end
+        dropdownSelections[key] = initialSelected
+
+        RarityDropdowns[key] = MainTab:CreateDropdown({
+            Name = string.format("%s Coats (Active - %d)", rarity, #options),
+            Options = options,
+            CurrentOption = initialSelected,
+            MultipleOptions = true,
+            Flag = "Dropdown_" .. key,
+            Callback = function(Options)
+                if isSyncingDropdowns then return end
+
+                local selections = {}
+                if type(Options) == "table" then
+                    for _, opt in ipairs(Options) do
+                        if type(opt) == "string" and opt ~= "" then
+                            table.insert(selections, opt)
+                        end
+                    end
+                elseif type(Options) == "string" and Options ~= "" then
+                    table.insert(selections, Options)
+                end
+                dropdownSelections[key] = selections
+
+                local combined = {}
+                local seen = {}
+                for _, list in pairs(dropdownSelections) do
+                    for _, id in ipairs(list) do
+                        if not seen[id] then
+                            seen[id] = true
+                            table.insert(combined, id)
+                        end
+                    end
+                end
+                for _, id in ipairs(TARGET_SKIN_LIST) do
+                    if not ALL_DROPDOWN_OPTIONS_SET[id] and not seen[id] then
+                        seen[id] = true
+                        table.insert(combined, id)
+                    end
+                end
+                table.sort(combined)
+
+                local changed = setTargetSkins(combined, true)
+                if changed then
+                    if #TARGET_SKIN_LIST > 0 then
+                        Rayfield:Notify({
+                            Title = "Target Skins Updated",
+                            Content = string.format("Hunting %d skin(s): %s", #TARGET_SKIN_LIST, getTargetSkinsDisplayString(3)),
+                            Duration = 3,
+                            Image = 4483362458,
+                        })
+                        log("Target skins updated: " .. table.concat(TARGET_SKIN_LIST, ", "))
+                    else
+                        Rayfield:Notify({
+                            Title = "No Targets Selected",
+                            Content = "Please select at least one skin to hunt.",
+                            Duration = 3,
+                            Image = 4483362458,
+                        })
+                        log("All target skins deselected.")
+                    end
+                end
+            end,
+        })
+    end
+end
+
+-- ============================
+-- SECTION: DEFERRED / OTHER AUCTION COATS
+-- ============================
+MainTab:CreateSection("Other Auction Coats (AuctionStatus ~= \"Active\")")
+
+for _, rarity in ipairs(OTHER_RARITY_ORDER) do
+    local options = OTHER_COATS_BY_RARITY[rarity] or {}
+    if #options > 0 then
+        local key = "Other_" .. rarity:gsub("%s+", "")
+        local optSet = {}
+        for _, id in ipairs(options) do
+            optSet[id] = true
+            ALL_DROPDOWN_OPTIONS_SET[id] = true
+        end
+        DropdownOptionSets[key] = optSet
+        DropdownOptionLists[key] = options
+
+        local initialSelected = {}
+        for _, id in ipairs(getTargetSkinList()) do
+            if optSet[id] then
+                table.insert(initialSelected, id)
+            end
+        end
+        dropdownSelections[key] = initialSelected
+
+        RarityDropdowns[key] = MainTab:CreateDropdown({
+            Name = string.format("%s Coats (Deferred - %d)", rarity, #options),
+            Options = options,
+            CurrentOption = initialSelected,
+            MultipleOptions = true,
+            Flag = "Dropdown_" .. key,
+            Callback = function(Options)
+                if isSyncingDropdowns then return end
+
+                local selections = {}
+                if type(Options) == "table" then
+                    for _, opt in ipairs(Options) do
+                        if type(opt) == "string" and opt ~= "" then
+                            table.insert(selections, opt)
+                        end
+                    end
+                elseif type(Options) == "string" and Options ~= "" then
+                    table.insert(selections, Options)
+                end
+                dropdownSelections[key] = selections
+
+                local combined = {}
+                local seen = {}
+                for _, list in pairs(dropdownSelections) do
+                    for _, id in ipairs(list) do
+                        if not seen[id] then
+                            seen[id] = true
+                            table.insert(combined, id)
+                        end
+                    end
+                end
+                for _, id in ipairs(TARGET_SKIN_LIST) do
+                    if not ALL_DROPDOWN_OPTIONS_SET[id] and not seen[id] then
+                        seen[id] = true
+                        table.insert(combined, id)
+                    end
+                end
+                table.sort(combined)
+
+                local changed = setTargetSkins(combined, true)
+                if changed then
+                    if #TARGET_SKIN_LIST > 0 then
+                        Rayfield:Notify({
+                            Title = "Target Skins Updated",
+                            Content = string.format("Hunting %d skin(s): %s", #TARGET_SKIN_LIST, getTargetSkinsDisplayString(3)),
+                            Duration = 3,
+                            Image = 4483362458,
+                        })
+                        log("Target skins updated: " .. table.concat(TARGET_SKIN_LIST, ", "))
+                    else
+                        Rayfield:Notify({
+                            Title = "No Targets Selected",
+                            Content = "Please select at least one skin to hunt.",
+                            Duration = 3,
+                            Image = 4483362458,
+                        })
+                        log("All target skins deselected.")
+                    end
+                end
+            end,
+        })
+    end
+end
+
+-- ============================
+-- SECTION: TARGET MANAGEMENT & PRESETS
+-- ============================
+MainTab:CreateSection("Target Management & Presets")
 
 MainTab:CreateInput({
     Name = "Add Custom Skin ID(s)",
@@ -1534,30 +1863,18 @@ MainTab:CreateInput({
                 table.insert(currentList, id)
             end
 
-            local refreshedOptions = false
             for item in string.gmatch(Text, "[^,%s]+") do
                 local trimmed = item:gsub("^%s*(.-)%s*$", "%1")
                 if trimmed ~= "" and not isTargetSkin(trimmed) then
                     table.insert(currentList, trimmed)
                     table.insert(added, trimmed)
-                    if not table.find(AUCTION_SKIN_OPTIONS, trimmed) then
-                        table.insert(AUCTION_SKIN_OPTIONS, trimmed)
-                        refreshedOptions = true
-                    end
                 end
             end
 
             if #added > 0 then
-                if refreshedOptions then
-                    table.sort(AUCTION_SKIN_OPTIONS)
-                    if TargetDropdown and TargetDropdown.Refresh then
-                        pcall(function() TargetDropdown:Refresh(AUCTION_SKIN_OPTIONS) end)
-                    end
-                end
-
                 setTargetSkins(currentList, true)
-                if TargetDropdown and TargetDropdown.Set then
-                    pcall(function() TargetDropdown:Set(getTargetSkinList()) end)
+                if syncAllDropdowns then
+                    syncAllDropdowns()
                 end
 
                 Rayfield:Notify({
@@ -1579,7 +1896,7 @@ MainTab:CreateButton({
         if #list == 0 then
             Rayfield:Notify({
                 Title = "Target Skins (0)",
-                Content = "No skins currently targeted. Select from dropdown or enter custom IDs.",
+                Content = "No skins currently targeted. Select from dropdowns or enter custom IDs.",
                 Duration = 4,
                 Image = 4483362458,
             })
@@ -1591,6 +1908,47 @@ MainTab:CreateButton({
                 Image = 4483362458,
             })
         end
+    end,
+})
+
+MainTab:CreateButton({
+    Name = string.format("Preset: Select All Active Coats (%d)", #ALL_ACTIVE_COATS),
+    Callback = function()
+        setTargetSkins(ALL_ACTIVE_COATS, true)
+        if syncAllDropdowns then
+            syncAllDropdowns()
+        end
+
+        Rayfield:Notify({
+            Title = "Active Preset Applied",
+            Content = string.format("Now hunting all %d active auction coats!", #ALL_ACTIVE_COATS),
+            Duration = 4,
+            Image = 4483362458,
+        })
+        log("Applied Active coats preset: " .. table.concat(ALL_ACTIVE_COATS, ", "))
+    end,
+})
+
+local mythicAndSR = {}
+for _, id in ipairs(ACTIVE_COATS_BY_RARITY.Mythic or {}) do table.insert(mythicAndSR, id) end
+for _, id in ipairs(ACTIVE_COATS_BY_RARITY["Super Rare"] or {}) do table.insert(mythicAndSR, id) end
+table.sort(mythicAndSR)
+
+MainTab:CreateButton({
+    Name = string.format("Preset: Select Active Mythic & Super Rare (%d)", #mythicAndSR),
+    Callback = function()
+        setTargetSkins(mythicAndSR, true)
+        if syncAllDropdowns then
+            syncAllDropdowns()
+        end
+
+        Rayfield:Notify({
+            Title = "High-Tier Preset Applied",
+            Content = string.format("Now hunting %d Mythic & Super Rare active coats!", #mythicAndSR),
+            Duration = 4,
+            Image = 4483362458,
+        })
+        log("Applied Mythic & Super Rare preset: " .. table.concat(mythicAndSR, ", "))
     end,
 })
 
@@ -1608,8 +1966,8 @@ if #HALLOWEEN_SKINS > 0 then
             end
 
             setTargetSkins(combined, true)
-            if TargetDropdown and TargetDropdown.Set then
-                pcall(function() TargetDropdown:Set(getTargetSkinList()) end)
+            if syncAllDropdowns then
+                syncAllDropdowns()
             end
 
             Rayfield:Notify({
@@ -1627,8 +1985,8 @@ MainTab:CreateButton({
     Name = "Clear All Targets",
     Callback = function()
         setTargetSkins({}, true)
-        if TargetDropdown and TargetDropdown.Set then
-            pcall(function() TargetDropdown:Set({}) end)
+        if syncAllDropdowns then
+            syncAllDropdowns()
         end
         Rayfield:Notify({
             Title = "Targets Cleared",
