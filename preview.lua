@@ -61,12 +61,121 @@ while not plr do
     plr = Players.LocalPlayer
 end
 
-local char = plr.Character
+local char
+local root
+local humanoid
+
+local function resolveCharacter()
+    if plr.Character and plr.Character.Parent then
+        return plr.Character
+    end
+    local cowWorld = workspace:FindFirstChild("CowWorld")
+    local dynamic = cowWorld and cowWorld:FindFirstChild("Dynamic")
+    local playerCows = dynamic and dynamic:FindFirstChild("PlayerCows")
+    local myCow = playerCows and playerCows:FindFirstChild(plr.Name)
+    if myCow and myCow.Parent then
+        return myCow
+    end
+    return plr.Character
+end
+
+local function resolveRoot(character)
+    if not character then return nil end
+    if character:IsA("BasePart") then return character end
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if hrp and hrp:IsA("BasePart") then return hrp end
+    if character.PrimaryPart and character.PrimaryPart:IsA("BasePart") then
+        return character.PrimaryPart
+    end
+    for _, name in ipairs({"HumanoidRootPart", "RootPart", "Torso", "UpperTorso", "CowRoot", "Body", "Head"}) do
+        local part = character:FindFirstChild(name)
+        if part and part:IsA("BasePart") then return part end
+    end
+    local anyBasePart = character:FindFirstChildWhichIsA("BasePart")
+    if anyBasePart then return anyBasePart end
+    for _, desc in ipairs(character:GetDescendants()) do
+        if desc:IsA("BasePart") then return desc end
+    end
+    return nil
+end
+
+local function resolveHumanoid(character)
+    if not character then return nil end
+    local hum = character:FindFirstChildOfClass("Humanoid") or character:FindFirstChild("Humanoid")
+    if hum and hum:IsA("Humanoid") then return hum end
+    return character:FindFirstChildWhichIsA("Humanoid")
+end
+
+local function getRootPos(targetRoot)
+    local r = targetRoot or root
+    if not r then
+        local c = resolveCharacter()
+        r = resolveRoot(c)
+        if r then root = r end
+    end
+    if not r then return nil end
+    if r:IsA("BasePart") then
+        return r.Position
+    elseif r:IsA("Model") then
+        local prim = r.PrimaryPart
+        if prim and prim:IsA("BasePart") then return prim.Position end
+        local pivot = r:GetPivot()
+        return pivot.Position
+    end
+    return nil
+end
+
+local function getRootCFrame(targetRoot)
+    local r = targetRoot or root
+    if not r then
+        local c = resolveCharacter()
+        r = resolveRoot(c)
+        if r then root = r end
+    end
+    if not r then return nil end
+    if r:IsA("BasePart") then
+        return r.CFrame
+    elseif r:IsA("Model") then
+        local prim = r.PrimaryPart
+        if prim and prim:IsA("BasePart") then return prim.CFrame end
+        return r:GetPivot()
+    end
+    return nil
+end
+
+local function setRootCFrame(cf, targetRoot)
+    local r = targetRoot or root
+    if not r or not cf then return end
+    if r:IsA("BasePart") then
+        r.CFrame = cf
+    elseif r:IsA("Model") then
+        r:PivotTo(cf)
+    end
+end
+
+char = resolveCharacter()
 if not char or not char.Parent then
     char = plr.CharacterAdded:Wait()
 end
-local root = char:WaitForChild("HumanoidRootPart")
-local humanoid = char:WaitForChild("Humanoid")
+
+root = resolveRoot(char)
+if not root then
+    local waited = char:WaitForChild("HumanoidRootPart", 2)
+    if waited and waited:IsA("BasePart") then
+        root = waited
+    else
+        root = resolveRoot(char)
+    end
+end
+
+humanoid = resolveHumanoid(char)
+if not humanoid then
+    local waited = char:WaitForChild("Humanoid", 2)
+    if waited and waited:IsA("Humanoid") then
+        humanoid = waited
+    end
+end
+
 local scriptConnections = {}
 
 -- Pre-cached character baseparts for zero-allocation collision toggling
@@ -134,9 +243,32 @@ local updateHeartbeatConnection
 
 local charConn = plr.CharacterAdded:Connect(function(newChar)
     char = newChar
-    root = char:WaitForChild("HumanoidRootPart")
-    humanoid = char:WaitForChild("Humanoid")
-    if humanoid then dodge.originalWalkSpeed = humanoid.WalkSpeed end
+    root = resolveRoot(newChar)
+    if not root then
+        task.spawn(function()
+            local waited = newChar:WaitForChild("HumanoidRootPart", 2)
+            if waited and waited:IsA("BasePart") then
+                root = waited
+            else
+                root = resolveRoot(newChar)
+            end
+        end)
+    end
+    humanoid = resolveHumanoid(newChar)
+    if not humanoid then
+        task.spawn(function()
+            local waited = newChar:WaitForChild("Humanoid", 2)
+            if waited and waited:IsA("Humanoid") then
+                humanoid = waited
+                if dodge and (dodge.originalWalkSpeed == nil or dodge.originalWalkSpeed == 16) then
+                    dodge.originalWalkSpeed = humanoid.WalkSpeed
+                end
+            end
+        end)
+    end
+    if humanoid and dodge and (dodge.originalWalkSpeed == nil or dodge.originalWalkSpeed == 16) then
+        dodge.originalWalkSpeed = humanoid.WalkSpeed
+    end
     raycastParams.FilterDescendantsInstances = {char}
     updateWallRaycastFilter()
     updateCharBaseParts(newChar)
@@ -1052,7 +1184,9 @@ function trickOrTreat.runCycle()
                     if not trickOrTreat.auto and not trickOrTreat.isSingleRun then break end
                     if not root or not humanoid or humanoid.Health <= 0 then break end
 
-                    local currentFlat = Vector3.new(root.Position.X, 0, root.Position.Z)
+                    local rPos = getRootPos(root)
+                    if not rPos then break end
+                    local currentFlat = Vector3.new(rPos.X, 0, rPos.Z)
                     local targetFlat = Vector3.new(knockPos.X, 0, knockPos.Z)
                     if (currentFlat - targetFlat).Magnitude <= 1.2 then
                         break
@@ -1262,8 +1396,10 @@ function afkRelog.saveState()
     end
 
     if not root or not char then return false end
-    local pos = root.Position
-    local cfComponents = { root.CFrame:GetComponents() }
+    local pos = getRootPos(root)
+    if not pos then return false end
+    local rootCF = getRootCFrame(root)
+    local cfComponents = rootCF and { rootCF:GetComponents() } or { pos.X, pos.Y, pos.Z, 1, 0, 0, 0, 1, 0, 0, 0, 1 }
     afkRelog.lastLoggedPos = pos
 
     local stateData = {
@@ -1442,7 +1578,7 @@ function afkRelog.checkAndResumeState()
         if f.AnchorPos then
             farm.anchorPos = Vector3.new(f.AnchorPos.X, f.AnchorPos.Y, f.AnchorPos.Z)
         elseif root then
-            farm.anchorPos = root.Position
+            farm.anchorPos = getRootPos(root)
         end
 
         if f.Radius then
@@ -1596,7 +1732,8 @@ function afkRelog.updateUI()
     local s = math.floor(remaining % 60)
 
     local title = "AFK Rejoin Timer: " .. (afkRelog.enabled and string.format("%02dh %02dm %02ds", h, m, s) or "Disabled")
-    local posStr = root and string.format("(%d, %d, %d)", math.floor(root.Position.X), math.floor(root.Position.Y), math.floor(root.Position.Z)) or "N/A"
+    local rPos = getRootPos(root)
+    local posStr = rPos and string.format("(%d, %d, %d)", math.floor(rPos.X), math.floor(rPos.Y), math.floor(rPos.Z)) or "N/A"
     local body = string.format("Interval: %g hours (%ds)\nCurrent Coords: %s\nState Persistence: Ready",
         afkRelog.interval / 3600,
         afkRelog.interval,
@@ -2459,7 +2596,7 @@ function manatite.findNext(searchOrigin, avoidMobs)
     if not models or #models == 0 then return nil, nil end
 
     local now = os.clock()
-    local origin = searchOrigin or (root and root.Position) or Vector3.zero
+    local origin = searchOrigin or getRootPos(root) or Vector3.zero
     local requireSafe = (avoidMobs == true) or (avoidMobs == nil and dodge.retreatOnThreat)
 
     local safeCandidates = {}
@@ -2523,7 +2660,7 @@ function manatite.retreatToSafeCrystal(now, rootPos)
         pcall(function() root.Anchored = false end)
     end
 
-    local nextModel, nextTarget = manatite.findNext(rootPos or (root and root.Position), true)
+    local nextModel, nextTarget = manatite.findNext(rootPos or getRootPos(root), true)
     if nextModel and nextTarget then
         manatite.model = nextModel
         manatite.target = nextTarget
@@ -2740,7 +2877,7 @@ function mithril.findNext(searchOrigin, avoidMobs)
     if not models or #models == 0 then return nil, nil end
 
     local now = os.clock()
-    local origin = searchOrigin or (root and root.Position) or Vector3.zero
+    local origin = searchOrigin or getRootPos(root) or Vector3.zero
     local requireSafe = (avoidMobs == true) or (avoidMobs == nil and dodge.retreatOnThreat)
 
     local safeCandidates = {}
@@ -2796,7 +2933,7 @@ function mithril.retreatToSafeOre(now, rootPos)
         pcall(function() root.Anchored = false end)
     end
 
-    local nextModel, nextOre = mithril.findNext(rootPos or (root and root.Position), true)
+    local nextModel, nextOre = mithril.findNext(rootPos or getRootPos(root), true)
     if nextModel and nextOre then
         mithril.model = nextModel
         mithril.orePart = nextOre
@@ -3771,8 +3908,9 @@ function chestESP.attach(trackedChest)
         local now = os.clock()
         if now - lastChestUpdate > 0.1 then
             lastChestUpdate = now
-            if root and chestPart.Parent then
-                local dist = math.floor(get2DDistance(root.Position, chestPart.Position))
+            local rPos = getRootPos(root)
+            if rPos and chestPart.Parent then
+                local dist = math.floor(get2DDistance(rPos, chestPart.Position))
                 if dist ~= lastDist then
                     lastDist = dist
                     textLabel.Text = "📦 Team Chest\n[" .. dist .. " studs]"
@@ -4872,7 +5010,8 @@ function farm.findClearEscapeDirection(rootPos)
     end
 
     if not bestDir then
-        local look = root and root.CFrame.LookVector or Vector3.new(0, 0, -1)
+        local rootCF = getRootCFrame(root)
+        local look = rootCF and rootCF.LookVector or Vector3.new(0, 0, -1)
         bestDir = -Vector3.new(look.X, 0, look.Z).Unit
     end
 
@@ -5296,10 +5435,10 @@ function farm.processGrassChomp(now, rootPos)
 end
 
 function farm.applyGoldenAura(customRadius)
-    if not root then return 0 end
+    local rootPos = getRootPos(root)
+    if not rootPos then return 0 end
     local radius = customRadius or farm.goldenAuraRadius or 60
     local radiusSq = radius * radius
-    local rootPos = root.Position
     local grassNodes = cache.getGrassNodes()
     local count = 0
 
@@ -5498,10 +5637,24 @@ function updateHeartbeatConnection()
     if farm.on or farm.autoChomp or farm.autoFish or farm.autoChompMobs or dodge.auto or farm.goldenAura or (manatite and manatite.auto) or (mithril and mithril.auto) or (trickOrTreat and trickOrTreat.auto) then
         if not HeartbeatConnection then
             HeartbeatConnection = RunService.Heartbeat:Connect(function(dt)
+                if not root or not root.Parent or not root:IsA("BasePart") then
+                    local currentCharacter = resolveCharacter()
+                    if currentCharacter then
+                        char = currentCharacter
+                        root = resolveRoot(currentCharacter)
+                    end
+                end
+                if not humanoid or not humanoid.Parent then
+                    local currentCharacter = resolveCharacter()
+                    if currentCharacter then
+                        humanoid = resolveHumanoid(currentCharacter)
+                    end
+                end
+
                 if not root or not humanoid or not root.Parent or not humanoid.Parent or humanoid.Health <= 0 then
                     if dodge.isUnderground then
                         dodge.isUnderground = false
-                        pcall(function() if root then root.Anchored = false end end)
+                        pcall(function() if root and root:IsA("BasePart") then root.Anchored = false end end)
                     end
                     if dodge.isDodging then
                         dodge.isDodging = false
@@ -5521,7 +5674,8 @@ function updateHeartbeatConnection()
                 end
 
                 local now = os.clock()
-                local rootPos = root.Position
+                local rootPos = getRootPos(root)
+                if not rootPos then return end
 
                 -- Targeted background caches refresh (only when mobs need caching)
                 if (farm.autoChompMobs or dodge.auto) and (now - cache.lastBackgroundTime > 1.5) then
@@ -5594,8 +5748,8 @@ function updateHeartbeatConnection()
             HeartbeatConnection = nil
         end
         if dodge.isUnderground and root and dodge.lastSurfaceCFrame then
-            root.CFrame = dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
-            root.Anchored = false
+            setRootCFrame(dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0))
+            pcall(function() root.Anchored = false end)
             for _, part in ipairs(charBaseParts) do
                 part.AssemblyLinearVelocity = Vector3.zero
                 part.AssemblyAngularVelocity = Vector3.zero
@@ -5654,7 +5808,7 @@ MainTab:CreateToggle({
             farm.isUnsticking = false
             farm.unstickTargetPos = nil
             farm.stuckCounter = 0
-            farm.anchorPos = root.Position
+            farm.anchorPos = getRootPos(root) or Vector3.zero
 
             Window:Notify({
                 Title = "Autofarm Enabled",
@@ -5735,10 +5889,12 @@ MainTab:CreateToggle({
         dodge.auto = Value
         if not Value then
             if dodge.isUnderground and root and dodge.lastSurfaceCFrame then
-                root.CFrame = dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
-                root.Anchored = false
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
+                setRootCFrame(dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0))
+                pcall(function() root.Anchored = false end)
+                pcall(function()
+                    root.AssemblyLinearVelocity = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
+                end)
                 for _, part in ipairs(charBaseParts) do
                     if part.Name == "HumanoidRootPart" or part.Name == "UpperTorso" or part.Name == "Torso" then
                         part.CanCollide = true
@@ -5886,8 +6042,8 @@ MainTab:CreateDropdown({
     Callback = function(Option)
         dodge.method = type(Option) == "table" and Option[1] or Option
         if dodge.method ~= "Underground" and dodge.isUnderground and root and dodge.lastSurfaceCFrame then
-            root.CFrame = dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
-            root.Anchored = false
+            setRootCFrame(dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0))
+            pcall(function() root.Anchored = false end)
             dodge.isUnderground = false
         end
     end,
@@ -7828,21 +7984,25 @@ SettingsTab:CreateButton({
         end
         if aerial.active and root then
             aerial.active = false
-            root.Anchored = false
+            pcall(function() root.Anchored = false end)
             if aerial.preCFrame then
                 pcall(function() char:PivotTo(aerial.preCFrame) end)
-                pcall(function() root.CFrame = aerial.preCFrame end)
+                pcall(function() setRootCFrame(aerial.preCFrame) end)
             end
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
+            pcall(function()
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            end)
             aerial.cframe = nil
             aerial.preCFrame = nil
         end
         if dodge.isUnderground and root and dodge.lastSurfaceCFrame then
-            root.CFrame = dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0)
-            root.Anchored = false
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
+            setRootCFrame(dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0))
+            pcall(function() root.Anchored = false end)
+            pcall(function()
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            end)
             dodge.isUnderground = false
             dodge.currentUndergroundRetreatOffset = nil
         end
