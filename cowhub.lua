@@ -2158,6 +2158,11 @@ function cache.getMobPayload(mobName)
     local cached = cache.mobPayloads[mobName]
     if cached then return cached end
 
+    if string.sub(mobName, 1, 10) == "Fjord_Mob_" or string.sub(mobName, 1, 11) == "Cavern_Mob_" then
+        cache.mobPayloads[mobName] = mobName
+        return mobName
+    end
+
     local formattedMobName = string.gsub(mobName, "(%a+)(%d+)", "%1_%2")
     if string.find(mobName, "Spider", 1, true) then
         cached = "Cavern_Mob_" .. formattedMobName
@@ -2166,6 +2171,75 @@ function cache.getMobPayload(mobName)
     end
     cache.mobPayloads[mobName] = cached
     return cached
+end
+
+function cache.extractEligibilityPayload(adornee)
+    if not adornee then return nil, nil, false end
+
+    -- 1. Check if adornee is an Instance
+    if typeof(adornee) == "Instance" then
+        -- Check if it is a mob or part of a mob (e.g. BlueSnake, Cavern_Mob_Spider, etc.)
+        local curr = adornee
+        local mobCandidate = nil
+        while curr and curr ~= workspace do
+            local name = curr.Name
+            if string.find(name, "Snake", 1, true) or string.find(name, "Spider", 1, true) or string.find(name, "Mob", 1, true) then
+                mobCandidate = curr
+                if curr:IsA("Model") then
+                    break
+                end
+            end
+            curr = curr.Parent
+        end
+
+        local mobModel = mobCandidate
+        if mobModel then
+            if string.find(mobModel.Name, "Spider", 1, true) and cache.findSpiderIdentifier then
+                local spiderId = cache.findSpiderIdentifier(mobModel)
+                if spiderId then
+                    return "Cavern_Mob_Spider_" .. tostring(spiderId), mobModel, true
+                end
+            end
+            local payload = cache.getMobPayload(mobModel.Name)
+            return payload or mobModel.Name, mobModel, true
+        end
+
+        -- Check if it is a grass node
+        local grassId = cache.extractGrassNodeId(adornee) or cache.getNodeID(adornee)
+        if grassId then
+            return grassId, adornee, false
+        end
+
+        -- Check attribute nodeID or raw name as fallback
+        local attrId = adornee:GetAttribute("nodeID")
+            or adornee:GetAttribute("NodeID")
+            or adornee:GetAttribute("nodeId")
+            or adornee:GetAttribute("NodeId")
+        if attrId and type(attrId) == "string" and attrId ~= "" then
+            local clean = cache.getCleanGrassName(attrId)
+            if clean then
+                return clean, adornee, false
+            end
+        end
+
+    -- 2. Check if adornee is a string
+    elseif type(adornee) == "string" and adornee ~= "" then
+        if string.find(adornee, "Snake", 1, true) or string.find(adornee, "Spider", 1, true) or string.find(adornee, "Mob", 1, true) then
+            local payload = cache.getMobPayload(adornee)
+            return payload or adornee, nil, true
+        end
+
+        local cleanGrass = cache.getCleanGrassName(adornee)
+        if cleanGrass then
+            return cleanGrass, nil, false
+        end
+
+        if isValidGrassNodeID(adornee) then
+            return adornee, nil, false
+        end
+    end
+
+    return nil, nil, false
 end
 
 function cache.cleanupNodeBlacklist(now)
@@ -5234,54 +5308,76 @@ function farm.processGrassChomp(now, rootPos)
         end
         farm.lastRaycastChompTime = now
 
-        local targetNodeId = nil
+        local targetPayload = nil
         local targetInstance = nil
+        local isMobTarget = false
 
-        -- 1. Primary: Read game's CowGrassPrediction SelectionBox in Camera
+        -- 1. Primary: Read game's CowGrassEligibility SelectionBox in Camera (includes mobs like BlueSnake* and grass nodes)
         local camera = workspace.CurrentCamera or workspace:FindFirstChildOfClass("Camera") or workspace:FindFirstChild("Camera")
-        local predBox = camera and camera:FindFirstChild("CowGrassPrediction")
-        if predBox then
-            local adornee = nil
-            local pcallOk, propVal = pcall(function() return predBox.Adornee end)
-            if pcallOk and propVal then
-                adornee = propVal
-            else
-                adornee = predBox:GetAttribute("Adornee") or predBox:GetAttribute("Target") or predBox:GetAttribute("Node")
+        local eligBox = (camera and (camera:FindFirstChild("CowGrassEligibility") or camera:FindFirstChild("CowGrassPrediction")))
+            or workspace:FindFirstChild("CowGrassEligibility")
+            or workspace:FindFirstChild("CowGrassPrediction")
+
+        if eligBox then
+            local adornee = eligBox:GetAttribute("Adornee")
+                or eligBox:GetAttribute("Target")
+                or eligBox:GetAttribute("Node")
+
+            if not adornee then
+                local pcallOk, propVal = pcall(function() return eligBox.Adornee end)
+                if pcallOk and propVal then
+                    adornee = propVal
+                end
             end
 
             if adornee then
-                targetNodeId = cache.extractGrassNodeId(adornee)
-                if typeof(adornee) == "Instance" then
-                    targetInstance = adornee
+                targetPayload, targetInstance, isMobTarget = cache.extractEligibilityPayload(adornee)
+            end
+
+            if not targetPayload then
+                local pcallOk, propVal = pcall(function() return eligBox.Adornee end)
+                if pcallOk and propVal and propVal ~= adornee then
+                    targetPayload, targetInstance, isMobTarget = cache.extractEligibilityPayload(propVal)
                 end
             end
         end
 
-        -- 2. Fallback: Proximity to currentTargetNode if prediction box is inactive/nil
-        if not targetNodeId and farm.currentTargetNode and farm.currentTargetNode.Parent then
+        -- 2. Fallback: Proximity to currentTargetNode if eligibility box is inactive/nil
+        if not targetPayload and farm.currentTargetNode and farm.currentTargetNode.Parent then
             local tPos = cache.getNodePosition(farm.currentTargetNode)
             if tPos and get2DDistanceSq(rootPos, tPos) <= 36 then
-                targetNodeId = cache.getNodeID(farm.currentTargetNode)
+                targetPayload = cache.getNodeID(farm.currentTargetNode)
                 targetInstance = farm.currentTargetNode
+                isMobTarget = false
             end
         end
 
-        -- 3. Fire Chomp Request
-        if targetNodeId then
-            local repeatDelay = math.max(0.4, farm.grassChompRepeatDelay or 0.6)
-            if (now - farm.chompCooldown >= 0.4) and (targetNodeId ~= farm.lastChompedNode or (now - farm.chompCooldown >= repeatDelay)) then
-                chompEvent:FireServer(targetNodeId)
-                farm.lastChompedNode = targetNodeId
-                farm.chompCooldown = now
+        -- 3. Fire Chomp Request (Handles both Mobs and Grass)
+        if targetPayload then
+            if isMobTarget then
+                local mobDelay = math.max(0.3, farm.mobAuraDelay or 0.4)
+                if (now - farm.mobChompCooldown >= mobDelay) or (targetPayload ~= farm.lastChompedMob) then
+                    chompEvent:FireServer(targetPayload)
+                    farm.lastChompedMob = targetPayload
+                    farm.mobChompCooldown = now
+                    farm.chompCooldown = now
+                end
+            else
+                local repeatDelay = math.max(0.4, farm.grassChompRepeatDelay or 0.6)
+                if (now - farm.chompCooldown >= 0.4) and (targetPayload ~= farm.lastChompedNode or (now - farm.chompCooldown >= repeatDelay)) then
+                    chompEvent:FireServer(targetPayload)
+                    farm.lastChompedNode = targetPayload
+                    farm.chompCooldown = now
 
-                if farm.currentTargetNode then
-                    local currId = cache.getNodeID(farm.currentTargetNode)
-                    if farm.currentTargetNode == targetInstance
-                        or farm.currentTargetNode.Name == targetNodeId
-                        or (targetInstance and farm.currentTargetNode.Name == targetInstance.Name)
-                        or (currId and currId == targetNodeId) then
-                        farm.currentTargetNode = nil
-                        farm.currentNodeStartTime = 0
+                    if farm.currentTargetNode then
+                        local currId = cache.getNodeID(farm.currentTargetNode)
+                        if farm.currentTargetNode == targetInstance
+                            or farm.currentTargetNode.Name == targetPayload
+                            or (targetInstance and farm.currentTargetNode.Name == targetInstance.Name)
+                            or (currId and currId == targetPayload) then
+                            farm.currentTargetNode = nil
+                            farm.currentNodeStartTime = 0
+                        end
                     end
                 end
             end
