@@ -302,6 +302,7 @@ local auction = {
     connections = {},
     isChecking = false,
     cards = {},
+    customBidAmounts = {},
     remote = nil,
     autoBidAll = false,
     autoBidActive = {
@@ -6468,28 +6469,7 @@ function auction.updateAllLotDisplays()
     end
 end
 
--- Create live cards for each lot in Rayfield Gen2
-for _, lotName in ipairs(auction.lotNames) do
-    local initialTitle, initialBody = auction.getLotDisplayInfo(lotName)
-    local card = nil
-    if ScannerTab.CreateText then
-        pcall(function()
-            card = ScannerTab:CreateText({
-                name = initialTitle,
-                text = initialBody
-            })
-        end)
-    end
-    if not card and ScannerTab.CreateParagraph then
-        pcall(function()
-            card = ScannerTab:CreateParagraph({
-                Title = initialTitle,
-                Content = initialBody
-            })
-        end)
-    end
-    auction.cards[lotName] = card
-end
+ScannerTab:CreateSection({ Name = "Auction House Tools" })
 
 ScannerTab:CreateButton({
     Name = "Refresh Auction Display",
@@ -6498,8 +6478,6 @@ ScannerTab:CreateButton({
         Window:Notify({ Title = "Refreshed", Content = "Auction lot displays updated.", Duration = 2 })
     end,
 })
-
-ScannerTab:CreateSection({ Name = "Auction House Tools" })
 
 -- Show Current Auction Skins button
 ScannerTab:CreateButton({
@@ -6602,9 +6580,12 @@ ScannerTab:CreateButton({
     end,
 })
 
--- Manual Bid Buttons
+function auction.executeBid(lotName, customAmount, isManual)
+    if type(customAmount) == "boolean" and isManual == nil then
+        isManual = customAmount
+        customAmount = nil
+    end
 
-function auction.executeBid(lotName, isManual)
     if not auction.remote then
         auction.remote = cowRemotes:FindFirstChild("SkinAuctionRequest")
         if not auction.remote then
@@ -6642,12 +6623,14 @@ function auction.executeBid(lotName, isManual)
         return false
     end
 
+    local amount = tonumber(customAmount) or tonumber(auction.customBidAmounts[lotName]) or tonumber(minBid) or minBid
+
     local success, result = pcall(function()
         return auction.remote:InvokeServer({
             Slot = slot,
             Round = round,
             Action = "Bid",
-            Amount = minBid
+            Amount = amount
         })
     end)
 
@@ -6655,7 +6638,7 @@ function auction.executeBid(lotName, isManual)
         local skinName = lot:GetAttribute("SkinName") or skinId
         Window:Notify({
             Title = isManual and "Manual Bid Placed" or "Auto Bid Placed!",
-            Content = lotName .. " (" .. tostring(skinName) .. ") | Amount: " .. formatNumber(minBid),
+            Content = string.format("%s (%s)\nAmount: 🪙 %s", lotName, tostring(skinName), formatNumber(amount)),
             Duration = 4
         })
         task.spawn(function()
@@ -6675,15 +6658,66 @@ function auction.executeBid(lotName, isManual)
     end
 end
 
-ScannerTab:CreateSection({ Name = "Manual Bidding" })
+function auction.setupLotUI(tab, lotName)
+    tab:CreateSection({ Name = "Skin Lot: " .. lotName })
 
-for _, lotName in ipairs(auction.lotNames) do
-    ScannerTab:CreateButton({
-        Name = "Bid " .. lotName,
-        Callback = function()
-            auction.executeBid(lotName, true)
+    local initialTitle, initialBody = auction.getLotDisplayInfo(lotName)
+    local card = nil
+    if tab.CreateText then
+        pcall(function()
+            card = tab:CreateText({
+                name = initialTitle,
+                text = initialBody
+            })
+        end)
+    end
+    if not card and tab.CreateParagraph then
+        pcall(function()
+            card = tab:CreateParagraph({
+                Title = initialTitle,
+                Content = initialBody
+            })
+        end)
+    end
+    auction.cards[lotName] = card
+
+    tab:CreateInput({
+        Name = "Bid Amount (" .. lotName .. ")",
+        Placeholder = "Enter custom amount or leave blank for min",
+        RemoveTextAfterFocusLost = false,
+        Flag = "Input_SkinBid_" .. lotName,
+        Callback = function(Text)
+            local num = tonumber(Text:gsub(",", ""):gsub("%$", ""))
+            if num and num > 0 then
+                auction.customBidAmounts[lotName] = num
+            else
+                auction.customBidAmounts[lotName] = nil
+            end
         end,
     })
+
+    tab:CreateButton({
+        Name = "Bid Minimum / Next " .. lotName,
+        Callback = function()
+            auction.executeBid(lotName, nil, true)
+        end,
+    })
+
+    tab:CreateButton({
+        Name = "Bid Custom Amount (" .. lotName .. ")",
+        Callback = function()
+            local custom = auction.customBidAmounts[lotName]
+            if not custom then
+                Window:Notify({ Title = "No Amount", Content = "Please enter an amount in the input above first.", Duration = 3 })
+                return
+            end
+            auction.executeBid(lotName, custom, true)
+        end,
+    })
+end
+
+for _, lotName in ipairs(auction.lotNames) do
+    auction.setupLotUI(ScannerTab, lotName)
 end
 
 -- ==========================
@@ -7856,6 +7890,7 @@ SettingsTab:CreateButton({
         for _, conn in ipairs(auction.autoBidConnections) do conn:Disconnect() end
         table.clear(auction.autoBidConnections)
         table.clear(auction.cards)
+        table.clear(auction.customBidAmounts)
 
         if townAuction and townAuction.cleanup then
             pcall(function() townAuction.cleanup() end)
