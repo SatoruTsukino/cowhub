@@ -317,6 +317,50 @@ local auction = {
     isAutoBiddingLot = {},
 }
 
+local townAuction = {
+    remote = nil,
+    fitoutModel = nil,
+    slots = {
+        "Global1",
+        "Global2",
+        "Server2",
+        "Server3",
+        "BuyNow",
+        "BuyNow2",
+        "Player1",
+        "Player2"
+    },
+    slotCategories = {
+        Global1 = "Global Auction",
+        Global2 = "Global Auction",
+        Server2 = "Server Auction",
+        Server3 = "Server Auction",
+        BuyNow = "Buy Now Store",
+        BuyNow2 = "Buy Now Store",
+        Player1 = "Player Consignment",
+        Player2 = "Player Consignment"
+    },
+    snapshot = nil,
+    lastSnapshotTime = 0,
+    snapshotTimestamp = 0,
+    serverNow = 0,
+    balance = 0,
+    currency = "MooBucks",
+    taxBasisPoints = 1000,
+    deliveryHeld = 0,
+    held = 0,
+    lotsBySlot = {},
+    ownedCopies = {},
+    cards = {},
+    customBidAmounts = {},
+    infoCard = nil,
+    isFetching = false,
+    autoRefresh = false,
+    autoRefreshInterval = 5,
+    autoRefreshThread = nil,
+    connections = {},
+}
+
 local fps = {
     capEnabled = false,
     currentCap = 60,
@@ -1862,6 +1906,20 @@ pcall(function()
                     end
                 end
             end
+
+            if (self == townAuction.remote or (typeof(self) == "Instance" and self.Name == "CowTownAuctionRequest"))
+                and (method == "InvokeServer" or method == "invokeServer") then
+                local result = oldNamecall(self, ...)
+                if type(result) == "table" and result.Ok and result.Lots then
+                    task.spawn(function()
+                        if townAuction.handleSnapshotResult then
+                            townAuction.handleSnapshotResult(result)
+                        end
+                    end)
+                end
+                return result
+            end
+
             return oldNamecall(self, ...)
         end)
     end
@@ -6793,6 +6851,542 @@ ScannerTab:CreateInput({
 })
 
 -- ==========================
+-- TOWN AUCTION LOGIC & UI SETUP
+-- ==========================
+function townAuction.getFitoutModel()
+    if townAuction.fitoutModel and townAuction.fitoutModel.Parent then
+        return townAuction.fitoutModel
+    end
+    local cowWorld = workspace:FindFirstChild("CowWorld")
+    local geom = cowWorld and cowWorld:FindFirstChild("Geometry")
+    local townUpdate = geom and geom:FindFirstChild("Cow Town WIP Update (DO NOT DELETE UNDER ANY CIRCUMSTANCES)")
+    local village = townUpdate and townUpdate:FindFirstChild("RoundaboutVillage")
+    local creamery = village and village:FindFirstChild("ButtercupCreamery")
+    local fitout = creamery and creamery:FindFirstChild("TownStoreFitout")
+    if not fitout then
+        fitout = workspace:FindFirstChild("TownStoreFitout", true)
+    end
+    townAuction.fitoutModel = fitout
+    return fitout
+end
+
+function townAuction.getRemote()
+    if townAuction.remote and townAuction.remote.Parent then
+        return townAuction.remote
+    end
+    if cowRemotes then
+        townAuction.remote = cowRemotes:FindFirstChild("CowTownAuctionRequest")
+    end
+    if not townAuction.remote then
+        pcall(function()
+            local cg = game:GetService("ReplicatedStorage"):WaitForChild("CowGame", 2)
+            local rem = cg and cg:WaitForChild("Remotes", 2)
+            townAuction.remote = rem and rem:FindFirstChild("CowTownAuctionRequest")
+        end)
+    end
+    return townAuction.remote
+end
+
+function townAuction.formatRemainingTime(endsAt)
+    if not endsAt or type(endsAt) ~= "number" or endsAt <= 0 then return "N/A" end
+    local nowTime = os.time()
+    if townAuction.serverNow and townAuction.snapshotTimestamp and townAuction.snapshotTimestamp > 0 then
+        nowTime = townAuction.serverNow + (os.time() - townAuction.snapshotTimestamp)
+    end
+    local remaining = math.max(0, endsAt - nowTime)
+    if remaining <= 0 then
+        return "Ended / Rotating"
+    end
+    local days = math.floor(remaining / 86400)
+    local hours = math.floor((remaining % 86400) / 3600)
+    local minutes = math.floor((remaining % 3600) / 60)
+    local seconds = remaining % 60
+    if days > 0 then
+        return string.format("%dd %02dh %02dm", days, hours, minutes)
+    elseif hours > 0 then
+        return string.format("%dh %02dm %02ds", hours, minutes, seconds)
+    else
+        return string.format("%dm %02ds", minutes, seconds)
+    end
+end
+
+function townAuction.getSlotDisplayInfo(slotName)
+    local lot = townAuction.lotsBySlot[slotName]
+    local fitout = townAuction.getFitoutModel()
+    local model = fitout and fitout:FindFirstChild(slotName)
+
+    local category = townAuction.slotCategories[slotName] or "Auction"
+
+    local itemName = (lot and lot.Name)
+        or (model and (model:GetAttribute("TownAuctionName") or model:GetAttribute("Name") or model:GetAttribute("TownAuctionItemID")))
+        or "[Unknown Item]"
+    local itemId = (lot and lot.ItemId)
+        or (model and (model:GetAttribute("TownAuctionItemID") or model:GetAttribute("ItemId")))
+        or "N/A"
+    local rarity = (lot and lot.Rarity)
+        or (model and (model:GetAttribute("TownAuctionRarity") or model:GetAttribute("Rarity")))
+        or "Common"
+    local scope = (lot and lot.Scope)
+        or (model and (model:GetAttribute("TownAuctionScope") or model:GetAttribute("Scope")))
+        or category
+    local round = (lot and lot.Round)
+        or (model and (model:GetAttribute("TownAuctionRound") or model:GetAttribute("Round")))
+        or "N/A"
+    local endsAt = (lot and lot.EndsAt)
+        or (model and (model:GetAttribute("TownAuctionEndsAt") or model:GetAttribute("EndsAt")))
+    local price = (lot and lot.Price)
+        or (model and (model:GetAttribute("TownAuctionPrice") or model:GetAttribute("Price")))
+    local bid = (lot and lot.Bid)
+        or (model and (model:GetAttribute("TownAuctionBid") or model:GetAttribute("Bid")))
+        or 0
+    local minBid = (lot and lot.Minimum)
+        or (model and (model:GetAttribute("TownAuctionMinimum") or model:GetAttribute("Minimum")))
+        or (price or 1)
+    local currency = (lot and lot.Currency) or townAuction.currency or "MooBucks"
+    local isEmpty = (lot and lot.Empty == true)
+        or (model and model:GetAttribute("TownAuctionEmpty") == true)
+        or (itemId == "N/A" and (not lot or not lot.Name))
+
+    if isEmpty then
+        local title = string.format("%s: [Empty / Inactive] (%s)", slotName, scope)
+        local body = string.format("Status: Empty Lot\nNo active item listed for this slot.\nScope: %s | Round: %s", scope, tostring(round))
+        return title, body, nil, minBid, round
+    end
+
+    local leaderName = (lot and lot.Leader) or (model and model:GetAttribute("Leader"))
+    local leaderId = (lot and lot.LeaderId) or (model and model:GetAttribute("LeaderId"))
+    local myDisplayName = tostring(plr:GetAttribute("DisplayName") or plr.DisplayName or plr.Name)
+    local myUsername = plr.Name
+    local myUserId = plr.UserId
+
+    local leaderStatus
+    if not leaderName or leaderName == "" or leaderName == "None" then
+        leaderStatus = "None (No bids yet)"
+    elseif (leaderId and leaderId == myUserId) or leaderName == myDisplayName or leaderName == myUsername then
+        leaderStatus = "⭐ YOU (" .. tostring(leaderName) .. ") - Leading"
+    else
+        leaderStatus = "👤 " .. tostring(leaderName) .. " (Outbid)"
+    end
+
+    local ownedCount = 0
+    if itemId and townAuction.ownedCopies[itemId] then
+        ownedCount = townAuction.ownedCopies[itemId]
+    end
+
+    local title = string.format("%s: %s [%s] (%s)", slotName, tostring(itemName), tostring(rarity), tostring(scope))
+    local priceLine = ""
+    if price and price > 0 then
+        priceLine = string.format("Price: 🪙 %s %s | Next Min: 🪙 %s %s", formatNumber(price), currency, formatNumber(minBid), currency)
+    else
+        priceLine = string.format("Current Bid: 🪙 %s %s | Next Min: 🪙 %s %s", formatNumber(bid), currency, formatNumber(minBid), currency)
+    end
+
+    local body = string.format("%s\nLeader: %s\nRound: %s | Ends In: %s\nItem ID: %s | Owned Copies: %d",
+        priceLine,
+        leaderStatus,
+        tostring(round),
+        townAuction.formatRemainingTime(endsAt),
+        tostring(itemId),
+        ownedCount
+    )
+
+    return title, body, itemName, minBid, round
+end
+
+function townAuction.updateCard(slotName)
+    local card = townAuction.cards[slotName]
+    if not card then return end
+    local title, body = townAuction.getSlotDisplayInfo(slotName)
+    pcall(function()
+        if card.SetTitle then
+            card:SetTitle(title)
+            card:Set(body)
+        elseif card.Set then
+            card:Set({ Title = title, Content = body })
+        end
+    end)
+end
+
+function townAuction.updateInfoCard()
+    if not townAuction.infoCard then return end
+    local balanceStr = formatNumber(townAuction.balance)
+    local taxPct = string.format("%.1f%%", (townAuction.taxBasisPoints or 1000) / 100)
+    local lastUpdated = townAuction.lastSnapshotTime > 0
+        and os.date("%I:%M:%S %p", townAuction.lastSnapshotTime)
+        or "Not fetched yet"
+    local activeCount = 0
+    for _, slotName in ipairs(townAuction.slots) do
+        local lot = townAuction.lotsBySlot[slotName]
+        if lot and not lot.Empty then
+            activeCount = activeCount + 1
+        end
+    end
+
+    local title = string.format("Town Auction Overview | %s %s", balanceStr, townAuction.currency)
+    local body = string.format(
+        "🪙 Balance: %s %s | Tax Basis: %s\n📦 Delivery Held: %s | Held: %s\n🏷️ Active Lots: %d / %d | Last Sync: %s",
+        balanceStr,
+        townAuction.currency,
+        taxPct,
+        formatNumber(townAuction.deliveryHeld or 0),
+        formatNumber(townAuction.held or 0),
+        activeCount,
+        #townAuction.slots,
+        lastUpdated
+    )
+
+    pcall(function()
+        if townAuction.infoCard.SetTitle then
+            townAuction.infoCard:SetTitle(title)
+            townAuction.infoCard:Set(body)
+        elseif townAuction.infoCard.Set then
+            townAuction.infoCard:Set({ Title = title, Content = body })
+        end
+    end)
+end
+
+function townAuction.updateAllCards()
+    for _, slotName in ipairs(townAuction.slots) do
+        townAuction.updateCard(slotName)
+    end
+    townAuction.updateInfoCard()
+end
+
+function townAuction.handleSnapshotResult(res)
+    if not res or type(res) ~= "table" or not res.Ok then return end
+    townAuction.snapshot = res
+    townAuction.lastSnapshotTime = os.time()
+    townAuction.snapshotTimestamp = os.time()
+    townAuction.serverNow = res.Now or os.time()
+    townAuction.balance = res.Balance or 0
+    townAuction.currency = res.Currency or "MooBucks"
+    townAuction.taxBasisPoints = res.PlayerTaxBasisPoints or 1000
+    townAuction.deliveryHeld = res.DeliveryHeld or 0
+    townAuction.held = res.Held or 0
+
+    table.clear(townAuction.lotsBySlot)
+    if type(res.Lots) == "table" then
+        for _, lot in ipairs(res.Lots) do
+            if lot.Slot then
+                townAuction.lotsBySlot[lot.Slot] = lot
+            end
+        end
+    end
+
+    table.clear(townAuction.ownedCopies)
+    if type(res.Copies) == "table" then
+        for _, copy in ipairs(res.Copies) do
+            if copy.Id then
+                townAuction.ownedCopies[copy.Id] = copy.OwnedCount or 1
+            end
+        end
+    end
+
+    townAuction.updateAllCards()
+end
+
+function townAuction.fetchSnapshot(isManual)
+    if townAuction.isFetching then return false end
+    townAuction.isFetching = true
+    local remote = townAuction.getRemote()
+    if not remote then
+        townAuction.isFetching = false
+        if isManual then
+            Window:Notify({ Title = "Error", Content = "CowTownAuctionRequest remote not found.", Duration = 4 })
+        end
+        return false
+    end
+
+    local success, result = pcall(function()
+        return remote:InvokeServer({ Action = "Snapshot" })
+    end)
+
+    townAuction.isFetching = false
+
+    if success and type(result) == "table" and result.Ok then
+        townAuction.handleSnapshotResult(result)
+        if isManual then
+            Window:Notify({
+                Title = "Snapshot Updated",
+                Content = string.format("Balance: %s %s | Synced %d lots.", formatNumber(townAuction.balance), townAuction.currency, #townAuction.slots),
+                Duration = 3
+            })
+        end
+        return true
+    else
+        if isManual then
+            local err = (type(result) == "table" and (result.Error or result.Message)) or tostring(result)
+            Window:Notify({ Title = "Fetch Failed", Content = tostring(err), Duration = 4 })
+        end
+        return false
+    end
+end
+
+function townAuction.executeBid(slotName, customAmount)
+    local remote = townAuction.getRemote()
+    if not remote then
+        Window:Notify({ Title = "Error", Content = "CowTownAuctionRequest remote not found.", Duration = 4 })
+        return false
+    end
+
+    local lot = townAuction.lotsBySlot[slotName]
+    local fitout = townAuction.getFitoutModel()
+    local model = fitout and fitout:FindFirstChild(slotName)
+
+    local round = (lot and lot.Round)
+        or (model and (model:GetAttribute("TownAuctionRound") or model:GetAttribute("Round")))
+    local minAmount = (lot and (lot.Minimum or lot.Price))
+        or (model and (model:GetAttribute("TownAuctionMinimum") or model:GetAttribute("TownAuctionPrice") or model:GetAttribute("Minimum") or model:GetAttribute("Price")))
+        or 1
+
+    local amount = tonumber(customAmount) or tonumber(townAuction.customBidAmounts[slotName]) or tonumber(minAmount) or 1
+
+    if not round or round == "" or round == "N/A" then
+        Window:Notify({ Title = "Error", Content = slotName .. " has no active round.", Duration = 4 })
+        return false
+    end
+
+    local success, result = pcall(function()
+        return remote:InvokeServer({
+            Slot = slotName,
+            Round = round,
+            Action = "Bid",
+            Amount = amount
+        })
+    end)
+
+    if success then
+        local isOk = (type(result) == "table" and result.Ok ~= false) or (result == true or result == nil)
+        local itemName = (lot and lot.Name)
+            or (model and (model:GetAttribute("TownAuctionName") or model:GetAttribute("TownAuctionItemID")))
+            or slotName
+
+        if isOk then
+            Window:Notify({
+                Title = "Bid Placed!",
+                Content = string.format("%s (%s)\nAmount: 🪙 %s %s", slotName, tostring(itemName), formatNumber(amount), townAuction.currency),
+                Duration = 4
+            })
+            task.delay(0.5, function()
+                townAuction.fetchSnapshot(false)
+            end)
+            return true
+        else
+            local errMsg = (type(result) == "table" and (result.Error or result.Message or result.Reason)) or tostring(result)
+            Window:Notify({
+                Title = "Bid Rejected",
+                Content = string.format("%s: %s", slotName, tostring(errMsg)),
+                Duration = 4
+            })
+            return false
+        end
+    else
+        Window:Notify({
+            Title = "Bid Failed",
+            Content = string.format("%s: %s", slotName, tostring(result)),
+            Duration = 4
+        })
+        return false
+    end
+end
+
+function townAuction.teleportToStore()
+    local fitout = townAuction.getFitoutModel()
+    if not fitout then
+        Window:Notify({ Title = "Not Found", Content = "TownStoreFitout model not streamed in yet.", Duration = 4 })
+        return
+    end
+    if root then
+        local targetPos = fitout:GetPivot().Position + Vector3.new(0, 3, 0)
+        stopCharacterVelocity()
+        root.CFrame = CFrame.new(targetPos)
+        Window:Notify({ Title = "Teleported", Content = "Teleported to Buttercup Creamery Town Store.", Duration = 3 })
+    end
+end
+
+function townAuction.startAutoRefresh()
+    townAuction.stopAutoRefresh()
+    townAuction.autoRefresh = true
+    townAuction.autoRefreshThread = task.spawn(function()
+        while townAuction.autoRefresh do
+            townAuction.fetchSnapshot(false)
+            local waited = 0
+            while townAuction.autoRefresh and waited < (townAuction.autoRefreshInterval or 5) do
+                task.wait(1)
+                waited = waited + 1
+                townAuction.updateAllCards()
+            end
+        end
+    end)
+end
+
+function townAuction.stopAutoRefresh()
+    townAuction.autoRefresh = false
+    townAuction.autoRefreshThread = nil
+end
+
+function townAuction.cleanup()
+    townAuction.stopAutoRefresh()
+    for _, conn in ipairs(townAuction.connections) do
+        if conn and conn.Disconnect then
+            pcall(function() conn:Disconnect() end)
+        end
+    end
+    table.clear(townAuction.connections)
+    table.clear(townAuction.cards)
+    table.clear(townAuction.lotsBySlot)
+    table.clear(townAuction.ownedCopies)
+end
+
+function townAuction.initWorkspaceListeners()
+    local fitout = townAuction.getFitoutModel()
+    if not fitout then return end
+    for _, slotName in ipairs(townAuction.slots) do
+        local model = fitout:FindFirstChild(slotName)
+        if model then
+            local conn = model.AttributeChanged:Connect(function()
+                townAuction.updateCard(slotName)
+            end)
+            table.insert(townAuction.connections, conn)
+        end
+    end
+end
+
+function townAuction.setupSlotUI(tab, slotName)
+    local initialTitle, initialBody = townAuction.getSlotDisplayInfo(slotName)
+    local card = nil
+    if tab.CreateText then
+        pcall(function()
+            card = tab:CreateText({
+                name = initialTitle,
+                text = initialBody
+            })
+        end)
+    end
+    if not card and tab.CreateParagraph then
+        pcall(function()
+            card = tab:CreateParagraph({
+                Title = initialTitle,
+                Content = initialBody
+            })
+        end)
+    end
+    townAuction.cards[slotName] = card
+
+    tab:CreateInput({
+        Name = "Bid Amount (" .. slotName .. ")",
+        Placeholder = "Enter custom amount or leave blank for min",
+        RemoveTextAfterFocusLost = false,
+        Flag = "Input_TownBid_" .. slotName,
+        Callback = function(Text)
+            local num = tonumber(Text:gsub(",", ""):gsub("%$", ""))
+            if num and num > 0 then
+                townAuction.customBidAmounts[slotName] = num
+            else
+                townAuction.customBidAmounts[slotName] = nil
+            end
+        end,
+    })
+
+    local isBuyNow = string.find(slotName, "BuyNow") ~= nil
+    local btnName = isBuyNow and ("Buy Now / Bid " .. slotName) or ("Bid Minimum / Next " .. slotName)
+    tab:CreateButton({
+        Name = btnName,
+        Callback = function()
+            townAuction.executeBid(slotName, nil)
+        end,
+    })
+
+    tab:CreateButton({
+        Name = "Bid Custom Amount (" .. slotName .. ")",
+        Callback = function()
+            local custom = townAuction.customBidAmounts[slotName]
+            if not custom then
+                Window:Notify({ Title = "No Amount", Content = "Please enter an amount in the input above first.", Duration = 3 })
+                return
+            end
+            townAuction.executeBid(slotName, custom)
+        end,
+    })
+end
+
+-- ==========================
+-- UI SETUP: Town Auction Tab
+-- ==========================
+local TownAuctionTab = Window:CreateTab({ Name = "Town Auction", Icon = 4483362458 })
+
+TownAuctionTab:CreateSection({ Name = "Town Store & Live Controls" })
+
+local initialInfoTitle = string.format("Town Auction Overview | 0 %s", townAuction.currency)
+local initialInfoBody = "Snapshot not loaded yet. Click 'Fetch Snapshot Now' below."
+if TownAuctionTab.CreateText then
+    pcall(function()
+        townAuction.infoCard = TownAuctionTab:CreateText({
+            name = initialInfoTitle,
+            text = initialInfoBody
+        })
+    end)
+end
+if not townAuction.infoCard and TownAuctionTab.CreateParagraph then
+    pcall(function()
+        townAuction.infoCard = TownAuctionTab:CreateParagraph({
+            Title = initialInfoTitle,
+            Content = initialInfoBody
+        })
+    end)
+end
+
+TownAuctionTab:CreateButton({
+    Name = "Fetch Snapshot Now",
+    Callback = function()
+        townAuction.fetchSnapshot(true)
+    end,
+})
+
+TownAuctionTab:CreateToggle({
+    Name = "Auto-Refresh Snapshot (5s)",
+    CurrentValue = false,
+    Flag = "Toggle_TownAutoRefresh",
+    Callback = function(Value)
+        if Value then
+            townAuction.startAutoRefresh()
+        else
+            townAuction.stopAutoRefresh()
+        end
+    end,
+})
+
+TownAuctionTab:CreateButton({
+    Name = "Teleport to Town Store (Buttercup Creamery)",
+    Callback = function()
+        townAuction.teleportToStore()
+    end,
+})
+
+TownAuctionTab:CreateSection({ Name = "Global Auction Lots" })
+townAuction.setupSlotUI(TownAuctionTab, "Global1")
+townAuction.setupSlotUI(TownAuctionTab, "Global2")
+
+TownAuctionTab:CreateSection({ Name = "Server Auction Lots" })
+townAuction.setupSlotUI(TownAuctionTab, "Server2")
+townAuction.setupSlotUI(TownAuctionTab, "Server3")
+
+TownAuctionTab:CreateSection({ Name = "Buy Now Store Lots" })
+townAuction.setupSlotUI(TownAuctionTab, "BuyNow")
+townAuction.setupSlotUI(TownAuctionTab, "BuyNow2")
+
+TownAuctionTab:CreateSection({ Name = "Player Consignment Lots" })
+townAuction.setupSlotUI(TownAuctionTab, "Player1")
+townAuction.setupSlotUI(TownAuctionTab, "Player2")
+
+townAuction.initWorkspaceListeners()
+
+task.spawn(function()
+    task.wait(1.5)
+    townAuction.fetchSnapshot(false)
+end)
+
+-- ==========================
 -- UI SETUP: Trick or Treat Tab
 -- ==========================
 local TotTab = Window:CreateTab({ Name = "Trick or Treat", Icon = 4483362458 })
@@ -7262,6 +7856,10 @@ SettingsTab:CreateButton({
         for _, conn in ipairs(auction.autoBidConnections) do conn:Disconnect() end
         table.clear(auction.autoBidConnections)
         table.clear(auction.cards)
+
+        if townAuction and townAuction.cleanup then
+            pcall(function() townAuction.cleanup() end)
+        end
 
         for _, conn in ipairs(scriptConnections) do
             if conn and conn.Disconnect then conn:Disconnect() end
