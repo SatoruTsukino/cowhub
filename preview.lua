@@ -635,14 +635,18 @@ trickOrTreat = {
 }
 
 local function stopCharacterVelocity()
-    if root then
-        root.AssemblyLinearVelocity = Vector3.zero
-        root.AssemblyAngularVelocity = Vector3.zero
-    end
+    pcall(function()
+        if root and root:IsA("BasePart") then
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+        end
+    end)
     for _, part in ipairs(charBaseParts) do
-        if part and part.Parent then
-            part.AssemblyLinearVelocity = Vector3.zero
-            part.AssemblyAngularVelocity = Vector3.zero
+        if part and part.Parent and part:IsA("BasePart") then
+            pcall(function()
+                part.AssemblyLinearVelocity = Vector3.zero
+                part.AssemblyAngularVelocity = Vector3.zero
+            end)
         end
     end
 end
@@ -697,13 +701,13 @@ function trickOrTreat.getHousesFolder()
     if cowWorld then
         local geometry = cowWorld:FindFirstChild("Geometry") or cowWorld:FindFirstChild("Geometry", true)
         if geometry then
-            local fh = geometry:FindFirstChild("FarmerHouses")
+            local fh = geometry:FindFirstChild("FarmerHouses") or geometry:FindFirstChild("Houses")
             if fh then return fh end
         end
-        local fhDirect = cowWorld:FindFirstChild("FarmerHouses", true)
+        local fhDirect = cowWorld:FindFirstChild("FarmerHouses", true) or cowWorld:FindFirstChild("Houses", true)
         if fhDirect then return fhDirect end
     end
-    return workspace:FindFirstChild("FarmerHouses", true)
+    return workspace:FindFirstChild("FarmerHouses", true) or workspace:FindFirstChild("Houses", true)
 end
 
 function trickOrTreat.getHouseList()
@@ -711,8 +715,9 @@ function trickOrTreat.getHouseList()
     local list = {}
     if folder then
         for _, child in ipairs(folder:GetChildren()) do
-            if child:IsA("Model") then
-                if string.match(child.Name, "^%w+_House%d+$") or string.find(child.Name:lower(), "house") then
+            if child:IsA("Model") or child:IsA("Folder") then
+                local n = child.Name:lower()
+                if string.match(child.Name, "^%w+_House%d+$") or string.find(n, "house") or string.find(n, "farmer") then
                     table.insert(list, child)
                 end
             end
@@ -725,11 +730,10 @@ end
 local function resolveHousePart(obj)
     if not obj then return nil end
     if obj:IsA("BasePart") then return obj end
-    if obj:IsA("Model") then
-        if obj.PrimaryPart then return obj.PrimaryPart end
-        return obj:FindFirstChildWhichIsA("BasePart", true)
+    if obj:IsA("Model") and obj.PrimaryPart and obj.PrimaryPart:IsA("BasePart") then
+        return obj.PrimaryPart
     end
-    return nil
+    return obj:FindFirstChildWhichIsA("BasePart", true)
 end
 
 function trickOrTreat.getDoorPart(houseModel)
@@ -769,14 +773,9 @@ function trickOrTreat.setHouseCollision(houseModel, canCollide)
     for _, name in ipairs({"Inside", "Interior"}) do
         local part = houseModel:FindFirstChild(name, true)
         if part and part:IsA("BasePart") then
-            pcall(function() part.CanCollide = canCollide end)
-        end
-    end
-    local inside = houseModel:FindFirstChild("Inside", true) or houseModel:FindFirstChild("Interior", true)
-    if inside then
-        for _, desc in ipairs(inside:GetDescendants()) do
-            if desc:IsA("BasePart") then
-                pcall(function() desc.CanCollide = canCollide end)
+            local n = part.Name:lower()
+            if not n:find("floor") and not n:find("ground") and not n:find("base") and not n:find("stair") and not n:find("porch") then
+                pcall(function() part.CanCollide = canCollide end)
             end
         end
     end
@@ -791,12 +790,13 @@ function trickOrTreat.fireDoorPrompt(houseModel)
             firedAny = true
             if fireproximityprompt then
                 pcall(function() fireproximityprompt(prompt) end)
+            else
+                pcall(function()
+                    prompt:InputHoldBegin()
+                    task.wait(0.04)
+                    prompt:InputHoldEnd()
+                end)
             end
-            pcall(function()
-                prompt:InputHoldBegin()
-                task.wait(0.04)
-                prompt:InputHoldEnd()
-            end)
         end
     end
 
@@ -827,7 +827,13 @@ function trickOrTreat.fireDoorPrompt(houseModel)
     -- 3. Fire server remote TrickOrTreatRequest
     local remote = trickOrTreat.getRemote()
     if remote then
-        remote:FireServer("Knock", houseModel.Name)
+        pcall(function()
+            if remote:IsA("RemoteFunction") then
+                remote:InvokeServer("Knock", houseModel.Name)
+            else
+                remote:FireServer("Knock", houseModel.Name)
+            end
+        end)
         firedAny = true
     end
 
@@ -921,9 +927,8 @@ function trickOrTreat.getTargetCFrame(houseModel)
     local knockX, knockZ, appX, appZ
 
     if isInsideApproach then
-        -- INSIDE APPROACH (Default):
-        -- Teleports farther back inside the house, walks towards the door,
-        -- and STOPS BEFORE the door inside the house so it does not exit the front door
+        -- INSIDE APPROACH:
+        -- Teleports inside the house, walks towards the door, stops before front door
         knockX = doorPos.X - (outward.X * doorDist)
         knockZ = doorPos.Z - (outward.Z * doorDist)
 
@@ -931,7 +936,7 @@ function trickOrTreat.getTargetCFrame(houseModel)
         appZ = doorPos.Z - (outward.Z * walkDist)
     else
         -- OUTSIDE APPROACH:
-        -- Spawns outside on the porch, walks towards the door
+        -- Spawns outside on porch/walkway, walks towards the door
         knockX = doorPos.X + (outward.X * doorDist)
         knockZ = doorPos.Z + (outward.Z * doorDist)
 
@@ -940,47 +945,75 @@ function trickOrTreat.getTargetCFrame(houseModel)
         appZ = doorPos.Z + (outward.Z * totalDist)
     end
 
+    -- Determine base floor height at the doorway (hip height: +2.5 studs)
+    local baseFloorY = nil
+    if thresholdPart then
+        baseFloorY = thresholdPart.Position.Y + 2.5
+    elseif doorPart then
+        baseFloorY = doorPart.Position.Y - (doorPart.Size.Y * 0.5) + 2.5
+    elseif insidePart and isInsideApproach then
+        baseFloorY = insidePart.Position.Y - (insidePart.Size.Y * 0.5) + 2.5
+    elseif insidePart then
+        baseFloorY = insidePart.Position.Y + 2.5
+    else
+        baseFloorY = doorPos.Y + 2.5
+    end
+
     local rayParams = RaycastParams.new()
     local filter = char and {char} or {}
     if insidePart then table.insert(filter, insidePart) end
+    if houseModel then
+        -- Exclude roof, ceiling, and interior zone boundaries so raycast never hits the roof!
+        for _, part in ipairs(houseModel:GetDescendants()) do
+            if part:IsA("BasePart") then
+                local pName = part.Name:lower()
+                if pName:find("roof") or pName:find("ceiling") or pName:find("chimney") or pName:find("eave") or pName == "inside" or pName == "interior" then
+                    table.insert(filter, part)
+                end
+            end
+        end
+    end
     rayParams.FilterDescendantsInstances = filter
     rayParams.FilterType = Enum.RaycastFilterType.Exclude
 
+    -- Raycast downward from chest height (baseFloorY + 1.0) so it's always underneath roof/ceiling
     local knockFloorY = nil
-    local rayResult = workspace:Raycast(Vector3.new(knockX, doorPos.Y + 4, knockZ), Vector3.new(0, -25, 0), rayParams)
+    local rayResult = workspace:Raycast(Vector3.new(knockX, baseFloorY + 1.0, knockZ), Vector3.new(0, -8, 0), rayParams)
     if rayResult then
         knockFloorY = rayResult.Position.Y + 2.5
-    elseif thresholdPart then
-        knockFloorY = thresholdPart.Position.Y + 2.5
-    elseif insidePart and isInsideApproach then
-        knockFloorY = insidePart.Position.Y - (insidePart.Size.Y * 0.5) + 2.5
-    elseif doorPart then
-        knockFloorY = doorPart.Position.Y - (doorPart.Size.Y * 0.5) + 2.5
     else
-        knockFloorY = doorPos.Y
+        knockFloorY = baseFloorY
     end
     knockFloorY = knockFloorY + (trickOrTreat.doorHeightOffset or 0.0)
 
     local knockPos = Vector3.new(knockX, knockFloorY, knockZ)
-    -- Standing inside the house, facing the front door
-    local knockCF = CFrame.lookAt(knockPos, Vector3.new(doorPos.X, knockFloorY, doorPos.Z))
+    local knockLookTarget = Vector3.new(doorPos.X, knockFloorY, doorPos.Z)
+    local knockCF
+    if (knockPos - knockLookTarget).Magnitude > 0.1 then
+        knockCF = CFrame.lookAt(knockPos, knockLookTarget)
+    else
+        knockCF = CFrame.new(knockPos)
+    end
 
     -- 2. Approach start position for walking up
     if trickOrTreat.walkUpEnabled and (trickOrTreat.walkDistance or 0) > 0 then
         local appFloorY = nil
-        local appRay = workspace:Raycast(Vector3.new(appX, doorPos.Y + 6, appZ), Vector3.new(0, -30, 0), rayParams)
+        local appRay = workspace:Raycast(Vector3.new(appX, baseFloorY + 1.0, appZ), Vector3.new(0, -8, 0), rayParams)
         if appRay then
             appFloorY = appRay.Position.Y + 2.5
-        elseif insidePart and isInsideApproach then
-            appFloorY = insidePart.Position.Y - (insidePart.Size.Y * 0.5) + 2.5
         else
             appFloorY = knockFloorY
         end
         appFloorY = appFloorY + (trickOrTreat.doorHeightOffset or 0.0)
 
         local approachPos = Vector3.new(appX, appFloorY, appZ)
-        -- Facing the door from deeper inside the house
-        local approachCF = CFrame.lookAt(approachPos, Vector3.new(doorPos.X, appFloorY, doorPos.Z))
+        local appLookTarget = Vector3.new(doorPos.X, appFloorY, doorPos.Z)
+        local approachCF
+        if (approachPos - appLookTarget).Magnitude > 0.1 then
+            approachCF = CFrame.lookAt(approachPos, appLookTarget)
+        else
+            approachCF = knockCF
+        end
         return approachCF, knockPos, knockCF
     end
 
@@ -1082,37 +1115,71 @@ end
 
 function trickOrTreat.runCycle()
     if trickOrTreat.isCycling then return end
-    if not root or not char or not humanoid or humanoid.Health <= 0 then return end
+
+    -- Re-resolve character, root part, and humanoid if missing or dead
+    if not char or not char.Parent then
+        char = resolveCharacter()
+    end
+    if not root or not root.Parent or not root:IsA("BasePart") then
+        root = resolveRoot(char)
+    end
+    if not humanoid or not humanoid.Parent then
+        humanoid = resolveHumanoid(char)
+    end
+    if not root or not char or not humanoid or humanoid.Health <= 0 then
+        trickOrTreat.isCycling = false
+        trickOrTreat.isSingleRun = false
+        return
+    end
 
     trickOrTreat.isCycling = true
     trickOrTreat.statusText = "Starting Cycle..."
     trickOrTreat.updateStatusUI()
 
     -- 1. Save original player position BEFORE teleporting to barn for map load
-    local preCycleCFrame = root.CFrame
+    local preCycleCFrame = getRootCFrame(root)
     trickOrTreat.savedPreCFrame = preCycleCFrame
+
+    local currentHouseInteracting = nil
+
+    local function cleanupCycle()
+        pcall(function()
+            if root and root:IsA("BasePart") then
+                root.Anchored = false
+            end
+        end)
+        if currentHouseInteracting and trickOrTreat.disableInsideCollision then
+            pcall(function() trickOrTreat.setHouseCollision(currentHouseInteracting, true) end)
+        end
+        if trickOrTreat.returnOnFinish and preCycleCFrame and root and char and char.Parent then
+            pcall(function()
+                char:PivotTo(preCycleCFrame)
+                setRootCFrame(preCycleCFrame)
+                stopCharacterVelocity()
+            end)
+        end
+        trickOrTreat.isCycling = false
+        trickOrTreat.isSingleRun = false
+    end
 
     -- 2. Teleport player to the barn (-537, 727, 600) so the map will load
     trickOrTreat.statusText = "Loading Map at Barn..."
     trickOrTreat.updateStatusUI()
 
+    pcall(function() root.Anchored = false end)
+    pcall(function()
+        char:PivotTo(CFrame.new(trickOrTreat.barnPosition))
+        setRootCFrame(CFrame.new(trickOrTreat.barnPosition))
+        stopCharacterVelocity()
+    end)
     pcall(function() root.Anchored = true end)
-    root.CFrame = CFrame.new(trickOrTreat.barnPosition)
-    stopCharacterVelocity()
 
     -- Wait for map to load (poll for houses)
     local barnStart = os.clock()
     local houses = {}
     while (os.clock() - barnStart < trickOrTreat.barnLoadDelay) do
         if not trickOrTreat.auto and not trickOrTreat.isSingleRun then
-            pcall(function() root.Anchored = false end)
-            if trickOrTreat.returnOnFinish and preCycleCFrame then
-                char:PivotTo(preCycleCFrame)
-                root.CFrame = preCycleCFrame
-                stopCharacterVelocity()
-            end
-            trickOrTreat.isCycling = false
-            trickOrTreat.isSingleRun = false
+            cleanupCycle()
             trickOrTreat.statusText = "Aborted"
             trickOrTreat.updateStatusUI()
             return
@@ -1132,21 +1199,16 @@ function trickOrTreat.runCycle()
 
     if #houses == 0 then
         trickOrTreat.statusText = "Error: FarmerHouses not loaded"
+        trickOrTreat.nextCycleTime = os.clock() + 20
         trickOrTreat.updateStatusUI()
         if Window and Window.Notify then
             Window:Notify({
                 Title = "Trick or Treat",
-                Content = "FarmerHouses folder not loaded yet! Check barn coordinates or network.",
+                Content = "FarmerHouses folder not loaded yet! Retrying in 20s.",
                 Duration = 4,
             })
         end
-        if trickOrTreat.returnOnFinish and preCycleCFrame then
-            char:PivotTo(preCycleCFrame)
-            root.CFrame = preCycleCFrame
-            stopCharacterVelocity()
-        end
-        trickOrTreat.isCycling = false
-        trickOrTreat.isSingleRun = false
+        cleanupCycle()
         return
     end
 
@@ -1159,6 +1221,14 @@ function trickOrTreat.runCycle()
             break
         end
 
+        -- Check health / alive state
+        if not humanoid or humanoid.Health <= 0 or not root or not root.Parent then
+            warn("[CowHub TrickOrTreat] Player died or lost character during cycle. Aborting.")
+            break
+        end
+
+        currentHouseInteracting = house
+
         local approachCF, knockPos = trickOrTreat.getTargetCFrame(house)
         if approachCF and knockPos then
             local originLabel = trickOrTreat.approachOrigin or "Inside House"
@@ -1166,31 +1236,28 @@ function trickOrTreat.runCycle()
             trickOrTreat.lastHouseName = house.Name
             trickOrTreat.updateStatusUI()
 
-            -- 1. Disable collision on Inside / Interior / Door part so player doesn't clip/fling
+            -- 1. Disable collision on Inside / Interior boundary box so player doesn't clip/fling
             if trickOrTreat.disableInsideCollision then
                 trickOrTreat.setHouseCollision(house, false)
             end
 
             -- 2. Teleport to approach start point (inside house or outside porch)
             pcall(function() root.Anchored = false end)
-            char:PivotTo(approachCF)
-            root.CFrame = approachCF
-            stopCharacterVelocity()
+            pcall(function()
+                char:PivotTo(approachCF)
+                setRootCFrame(approachCF)
+                stopCharacterVelocity()
+            end)
             task.wait(0.05)
 
-            -- Keep inside collision disabled during walk
-            if trickOrTreat.disableInsideCollision then
-                trickOrTreat.setHouseCollision(house, false)
-            end
-
-            -- 3. Walk up to the door so the game registers character movement into KnockRange
+            -- 3. Walk up towards the door so the game registers character movement into KnockRange
             if trickOrTreat.walkUpEnabled and (trickOrTreat.walkDistance or 0) > 0 then
                 trickOrTreat.statusText = string.format("Walking to Door [%d/%d]: %s", i, #houses, house.Name)
                 trickOrTreat.updateStatusUI()
 
                 pcall(function() root.Anchored = false end)
                 if humanoid then
-                    humanoid:MoveTo(knockPos)
+                    pcall(function() humanoid:MoveTo(knockPos) end)
                 end
 
                 local walkStart = os.clock()
@@ -1210,7 +1277,7 @@ function trickOrTreat.runCycle()
                 end
 
                 if humanoid then
-                    humanoid:Move(Vector3.zero, false)
+                    pcall(function() humanoid:Move(Vector3.zero, false) end)
                 end
                 stopCharacterVelocity()
             end
@@ -1227,7 +1294,7 @@ function trickOrTreat.runCycle()
             trickOrTreat.statusText = string.format("Knocking [%d/%d]: %s", i, #houses, house.Name)
             trickOrTreat.updateStatusUI()
 
-            trickOrTreat.fireDoorPrompt(house)
+            pcall(function() trickOrTreat.fireDoorPrompt(house) end)
 
             knockedCount = knockedCount + 1
 
@@ -1238,7 +1305,14 @@ function trickOrTreat.runCycle()
                 pcall(function() root.Anchored = false end)
             end
             stopCharacterVelocity()
+
+            -- Restore house collision
+            if trickOrTreat.disableInsideCollision then
+                pcall(function() trickOrTreat.setHouseCollision(house, true) end)
+            end
         end
+
+        currentHouseInteracting = nil
     end
 
     pcall(function() root.Anchored = false end)
@@ -1247,9 +1321,11 @@ function trickOrTreat.runCycle()
     if trickOrTreat.returnOnFinish and preCycleCFrame then
         trickOrTreat.statusText = "Returning to original position..."
         trickOrTreat.updateStatusUI()
-        char:PivotTo(preCycleCFrame)
-        root.CFrame = preCycleCFrame
-        stopCharacterVelocity()
+        pcall(function()
+            char:PivotTo(preCycleCFrame)
+            setRootCFrame(preCycleCFrame)
+            stopCharacterVelocity()
+        end)
         task.wait(0.2)
         stopCharacterVelocity()
     end
@@ -1280,11 +1356,19 @@ function trickOrTreat.startLoop()
     task.spawn(function()
         while trickOrTreat.loopRunning do
             task.wait(1)
-            trickOrTreat.updateStatusUI()
+            pcall(trickOrTreat.updateStatusUI)
             if trickOrTreat.auto and not trickOrTreat.isCycling then
                 local now = os.clock()
                 if now >= trickOrTreat.nextCycleTime then
-                    trickOrTreat.runCycle()
+                    local success, err = pcall(trickOrTreat.runCycle)
+                    if not success then
+                        warn("[CowHub TrickOrTreat] Error during cycle:", err)
+                        trickOrTreat.isCycling = false
+                        trickOrTreat.isSingleRun = false
+                        trickOrTreat.statusText = "Cycle Error (retrying in 20s)"
+                        trickOrTreat.nextCycleTime = os.clock() + 20
+                        pcall(trickOrTreat.updateStatusUI)
+                    end
                 end
             end
         end
@@ -1310,19 +1394,23 @@ function trickOrTreat.toggle(Value)
         trickOrTreat.detectCooldown()
         trickOrTreat.nextCycleTime = 0
         trickOrTreat.startLoop()
-        Window:Notify({
-            Title = "Trick or Treat Autofarm",
-            Content = "Autofarm enabled. Teleporting to barn to load map...",
-            Duration = 3,
-            Image = 4483362458,
-        })
+        if Window and Window.Notify then
+            Window:Notify({
+                Title = "Trick or Treat Autofarm",
+                Content = "Autofarm enabled. Teleporting to barn to load map...",
+                Duration = 3,
+                Image = 4483362458,
+            })
+        end
     else
         trickOrTreat.statusText = "Idle"
         if trickOrTreat.isCycling and trickOrTreat.returnOnFinish and trickOrTreat.savedPreCFrame and root then
             pcall(function() root.Anchored = false end)
-            char:PivotTo(trickOrTreat.savedPreCFrame)
-            root.CFrame = trickOrTreat.savedPreCFrame
-            stopCharacterVelocity()
+            pcall(function()
+                char:PivotTo(trickOrTreat.savedPreCFrame)
+                setRootCFrame(trickOrTreat.savedPreCFrame)
+                stopCharacterVelocity()
+            end)
         end
         trickOrTreat.isCycling = false
         trickOrTreat.isSingleRun = false
@@ -1502,7 +1590,7 @@ function afkRelog.triggerRejoin()
         pcall(function()
             qot([[
                 task.wait(3)
-                loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/cowhub.lua'))()
+                loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/preview.lua'))()
             ]])
         end)
     end
@@ -1660,6 +1748,10 @@ function afkRelog.checkAndResumeState()
             pcall(function() Window:Set("Toggle_MithrilFarm", true) end)
         end
         if data.TrickOrTreat then
+            if data.TrickOrTreat.CycleCooldown then
+                trickOrTreat.cycleCooldown = data.TrickOrTreat.CycleCooldown
+                pcall(function() Window:Set("Slider_ToT_CycleCooldown", data.TrickOrTreat.CycleCooldown) end)
+            end
             if data.TrickOrTreat.DisableInsideCollision ~= nil then
                 trickOrTreat.disableInsideCollision = data.TrickOrTreat.DisableInsideCollision
                 pcall(function() Window:Set("Toggle_ToT_DisableInsideCollision", data.TrickOrTreat.DisableInsideCollision) end)
@@ -7990,18 +8082,29 @@ TotTab:CreateButton({
         trickOrTreat.initClientListener()
         trickOrTreat.detectCooldown()
         trickOrTreat.isSingleRun = true
-        task.spawn(trickOrTreat.runCycle)
+        task.spawn(function()
+            local success, err = pcall(trickOrTreat.runCycle)
+            if not success then
+                warn("[CowHub TrickOrTreat] Error during single cycle:", err)
+                trickOrTreat.isCycling = false
+                trickOrTreat.isSingleRun = false
+                trickOrTreat.statusText = "Error in cycle"
+                pcall(trickOrTreat.updateStatusUI)
+            end
+        end)
     end,
 })
 
 TotTab:CreateButton({
     Name = "Return to Saved Position",
     Callback = function()
-        if trickOrTreat.savedPreCFrame and root then
+        if trickOrTreat.savedPreCFrame and root and char then
             pcall(function() root.Anchored = false end)
-            char:PivotTo(trickOrTreat.savedPreCFrame)
-            root.CFrame = trickOrTreat.savedPreCFrame
-            stopCharacterVelocity()
+            pcall(function()
+                char:PivotTo(trickOrTreat.savedPreCFrame)
+                setRootCFrame(trickOrTreat.savedPreCFrame)
+                stopCharacterVelocity()
+            end)
             Window:Notify({ Title = "Returned", Content = "Returned to original saved position.", Duration = 2 })
         else
             Window:Notify({ Title = "No Saved Position", Content = "No saved position exists yet.", Duration = 2 })
