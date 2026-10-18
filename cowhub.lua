@@ -42,6 +42,8 @@ local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualUser = game:GetService("VirtualUser")
+local Lighting = game:GetService("Lighting")
+local ContentProvider = game:GetService("ContentProvider")
 
 local successVIM, VirtualInput = pcall(function()
     return game:GetService("VirtualInputManager")
@@ -525,6 +527,142 @@ local fps = {
 }
 local HeartbeatConnection = nil
 
+-- ==========================
+-- MAP & ASSET OPTIMIZER (Anti-Lag, Potato Mode & Streaming Watcher)
+-- ==========================
+local mapOptimizer = {
+    enabled = false,
+    autoCleanStreamed = true,
+    removeTextures = true,
+    disableShadows = true,
+    disableParticles = true,
+    optimizeTerrain = true,
+    descendantConnection = nil,
+    preloaded = false,
+    lastPreloadTime = 0,
+}
+
+function mapOptimizer.optimizeInstance(inst)
+    if not inst then return end
+    pcall(function()
+        if inst:IsA("BasePart") then
+            if mapOptimizer.disableShadows then
+                inst.CastShadow = false
+            end
+            if mapOptimizer.removeTextures then
+                inst.Material = Enum.Material.SmoothPlastic
+                inst.Reflectance = 0
+            end
+        elseif inst:IsA("Decal") or inst:IsA("Texture") then
+            if mapOptimizer.removeTextures then
+                inst.Transparency = 1
+            end
+        elseif inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Smoke") or inst:IsA("Fire") or inst:IsA("Sparkles") or inst:IsA("Beam") then
+            if mapOptimizer.disableParticles then
+                inst.Enabled = false
+            end
+        elseif inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight") then
+            if mapOptimizer.disableShadows then
+                inst.Shadows = false
+            end
+        elseif inst:IsA("PostEffect") then
+            if mapOptimizer.disableParticles then
+                inst.Enabled = false
+            end
+        elseif inst:IsA("Highlight") then
+            if inst.Name ~= "ManatiteHighlight" and inst.Name ~= "MithrilHighlight" then
+                inst.Enabled = false
+            end
+        end
+    end)
+end
+
+function mapOptimizer.applyLighting()
+    pcall(function()
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = 9e9
+        for _, child in ipairs(Lighting:GetChildren()) do
+            if child:IsA("PostEffect") then
+                child.Enabled = false
+            end
+        end
+    end)
+    pcall(function()
+        if settings and settings().Rendering then
+            settings().Rendering.QualityLevel = 1
+        end
+    end)
+end
+
+function mapOptimizer.applyTerrain()
+    pcall(function()
+        local terrain = workspace:FindFirstChildOfClass("Terrain") or workspace.Terrain
+        if terrain then
+            terrain.WaterWaveSize = 0
+            terrain.WaterWaveSpeed = 0
+            terrain.WaterReflectance = 0
+            if sethiddenproperty then
+                pcall(function() sethiddenproperty(terrain, "Decoration", false) end)
+            end
+        end
+    end)
+end
+
+function mapOptimizer.applyToWorld()
+    mapOptimizer.applyLighting()
+    mapOptimizer.applyTerrain()
+
+    task.spawn(function()
+        local descendants = workspace:GetDescendants()
+        local batch = 350
+        for i, inst in ipairs(descendants) do
+            if not mapOptimizer.enabled then break end
+            mapOptimizer.optimizeInstance(inst)
+            if i % batch == 0 then
+                task.wait()
+            end
+        end
+    end)
+end
+
+function mapOptimizer.startStreamHook()
+    if not mapOptimizer.descendantConnection then
+        mapOptimizer.descendantConnection = workspace.DescendantAdded:Connect(function(inst)
+            if mapOptimizer.enabled and mapOptimizer.autoCleanStreamed then
+                mapOptimizer.optimizeInstance(inst)
+            end
+        end)
+        table.insert(scriptConnections, mapOptimizer.descendantConnection)
+    end
+end
+
+function mapOptimizer.stopStreamHook()
+    if mapOptimizer.descendantConnection then
+        pcall(function() mapOptimizer.descendantConnection:Disconnect() end)
+        mapOptimizer.descendantConnection = nil
+    end
+end
+
+function mapOptimizer.preloadAssets()
+    local now = os.clock()
+    if now - mapOptimizer.lastPreloadTime < 8 then return end
+    mapOptimizer.lastPreloadTime = now
+
+    task.spawn(function()
+        local toPreload = {}
+        local pGui = plr and plr:FindFirstChildOfClass("PlayerGui")
+        if pGui then table.insert(toPreload, pGui) end
+
+        local cowGame = ReplicatedStorage:FindFirstChild("CowGame")
+        if cowGame then table.insert(toPreload, cowGame) end
+
+        pcall(function()
+            ContentProvider:PreloadAsync(toPreload)
+        end)
+        mapOptimizer.preloaded = true
+    end)
+end
+
 manatite = {
     auto = false,
     delay = 0.1,
@@ -539,6 +677,7 @@ manatite = {
     lastChompTime = 0,
     lastTeleportTime = 0,
     lastSearchTime = 0,
+    lastFolderSearch = 0,
     startTime = 0,
     blacklist = setmetatable({}, { __mode = "k" }),
     lastBlacklistCleanup = 0,
@@ -585,6 +724,7 @@ mithril = {
     lastChompTime = 0,
     lastTeleportTime = 0,
     lastSearchTime = 0,
+    lastFolderSearch = 0,
     startTime = 0,
     blacklist = setmetatable({}, { __mode = "k" }),
     lastBlacklistCleanup = 0,
@@ -632,6 +772,8 @@ trickOrTreat = {
     clientEventConn = nil,
     statusCard = nil,
     infoCard = nil,
+    cachedHousesFolder = nil,
+    lastDeepSearch = 0,
 }
 
 local function stopCharacterVelocity()
@@ -693,21 +835,54 @@ function trickOrTreat.detectCooldown()
 end
 
 function trickOrTreat.getHousesFolder()
+    if trickOrTreat.cachedHousesFolder and trickOrTreat.cachedHousesFolder.Parent then
+        return trickOrTreat.cachedHousesFolder
+    end
+
     local cowWorld = cache.cowWorldRef
     if not cowWorld or not cowWorld.Parent then
         cowWorld = workspace:FindFirstChild("CowWorld")
         cache.cowWorldRef = cowWorld
     end
+
+    -- 1. Direct path: workspace.CowWorld.Geometry.FarmerHouses (O(1))
     if cowWorld then
-        local geometry = cowWorld:FindFirstChild("Geometry") or cowWorld:FindFirstChild("Geometry", true)
+        local geometry = cowWorld:FindFirstChild("Geometry")
         if geometry then
             local fh = geometry:FindFirstChild("FarmerHouses") or geometry:FindFirstChild("Houses")
-            if fh then return fh end
+            if fh then
+                trickOrTreat.cachedHousesFolder = fh
+                return fh
+            end
         end
-        local fhDirect = cowWorld:FindFirstChild("FarmerHouses", true) or cowWorld:FindFirstChild("Houses", true)
-        if fhDirect then return fhDirect end
+        local fhDirect = cowWorld:FindFirstChild("FarmerHouses") or cowWorld:FindFirstChild("Houses")
+        if fhDirect then
+            trickOrTreat.cachedHousesFolder = fhDirect
+            return fhDirect
+        end
     end
-    return workspace:FindFirstChild("FarmerHouses", true) or workspace:FindFirstChild("Houses", true)
+
+    -- 2. Direct top-level check (O(1))
+    local topFh = workspace:FindFirstChild("FarmerHouses") or workspace:FindFirstChild("Houses")
+    if topFh then
+        trickOrTreat.cachedHousesFolder = topFh
+        return topFh
+    end
+
+    -- 3. Throttled recursive search (at most once every 3.0s to avoid frame freezing)
+    local now = os.clock()
+    if not trickOrTreat.lastDeepSearch or (now - trickOrTreat.lastDeepSearch >= 3.0) then
+        trickOrTreat.lastDeepSearch = now
+        local fhDeep = (cowWorld and (cowWorld:FindFirstChild("FarmerHouses", true) or cowWorld:FindFirstChild("Houses", true)))
+            or workspace:FindFirstChild("FarmerHouses", true)
+            or workspace:FindFirstChild("Houses", true)
+        if fhDeep then
+            trickOrTreat.cachedHousesFolder = fhDeep
+            return fhDeep
+        end
+    end
+
+    return nil
 end
 
 function trickOrTreat.getHouseList()
@@ -1166,13 +1341,13 @@ function trickOrTreat.runCycle()
     trickOrTreat.statusText = "Loading Map at Barn..."
     trickOrTreat.updateStatusUI()
 
-    pcall(function() root.Anchored = false end)
+    stopCharacterVelocity()
     pcall(function()
+        root.Anchored = true
         char:PivotTo(CFrame.new(trickOrTreat.barnPosition))
         setRootCFrame(CFrame.new(trickOrTreat.barnPosition))
         stopCharacterVelocity()
     end)
-    pcall(function() root.Anchored = true end)
 
     -- Wait for map to load (poll for houses)
     local barnStart = os.clock()
@@ -1184,14 +1359,15 @@ function trickOrTreat.runCycle()
             trickOrTreat.updateStatusUI()
             return
         end
-        task.wait(0.25)
+        task.wait(0.4)
         houses = trickOrTreat.getHouseList()
-        if #houses > 0 and (os.clock() - barnStart >= 1.5) then
+        if #houses > 0 and (os.clock() - barnStart >= 1.0) then
             break
         end
     end
 
     pcall(function() root.Anchored = false end)
+    stopCharacterVelocity()
 
     if #houses == 0 then
         houses = trickOrTreat.getHouseList()
@@ -2456,21 +2632,18 @@ function manatite.getFolder()
         return manatite.cachedFolder
     end
 
-    -- Primary: workspace.FjordDelta.ManatiteFjordCave.ManatiteMaze.ManatiteClusters
+    -- 1. Direct path: workspace.FjordDelta.ManatiteFjordCave.ManatiteMaze.ManatiteClusters (O(1))
     local fjord = workspace:FindFirstChild("FjordDelta")
     if not fjord and cache.cowWorldRef and cache.cowWorldRef.Parent then
         fjord = cache.cowWorldRef:FindFirstChild("FjordDelta")
     end
-    if not fjord then
-        fjord = workspace:FindFirstChild("FjordDelta", true)
-    end
 
     if fjord then
-        local cave = fjord:FindFirstChild("ManatiteFjordCave") or fjord:FindFirstChild("ManatiteFjordCave", true)
+        local cave = fjord:FindFirstChild("ManatiteFjordCave")
         if cave then
-            local maze = cave:FindFirstChild("ManatiteMaze") or cave:FindFirstChild("ManatiteMaze", true)
+            local maze = cave:FindFirstChild("ManatiteMaze")
             if maze then
-                local clusters = maze:FindFirstChild("ManatiteClusters") or maze:FindFirstChild("ManatiteClusters", true)
+                local clusters = maze:FindFirstChild("ManatiteClusters")
                 if clusters then
                     manatite.cachedFolder = clusters
                     return clusters
@@ -2479,11 +2652,37 @@ function manatite.getFolder()
         end
     end
 
-    -- Fallback: Search workspace for "ManatiteClusters"
-    local clusters = workspace:FindFirstChild("ManatiteClusters", true)
-    if clusters then
-        manatite.cachedFolder = clusters
-        return clusters
+    local directClusters = workspace:FindFirstChild("ManatiteClusters")
+    if directClusters then
+        manatite.cachedFolder = directClusters
+        return directClusters
+    end
+
+    -- 2. Throttled deep search (at most once every 2.0s to avoid frame freezing)
+    local now = os.clock()
+    if not manatite.lastFolderSearch or (now - manatite.lastFolderSearch >= 2.0) then
+        manatite.lastFolderSearch = now
+        if not fjord then
+            fjord = workspace:FindFirstChild("FjordDelta", true)
+        end
+        if fjord then
+            local cave = fjord:FindFirstChild("ManatiteFjordCave") or fjord:FindFirstChild("ManatiteFjordCave", true)
+            if cave then
+                local maze = cave:FindFirstChild("ManatiteMaze") or cave:FindFirstChild("ManatiteMaze", true)
+                if maze then
+                    local clusters = maze:FindFirstChild("ManatiteClusters") or maze:FindFirstChild("ManatiteClusters", true)
+                    if clusters then
+                        manatite.cachedFolder = clusters
+                        return clusters
+                    end
+                end
+            end
+        end
+        local clusters = workspace:FindFirstChild("ManatiteClusters", true)
+        if clusters then
+            manatite.cachedFolder = clusters
+            return clusters
+        end
     end
 
     return nil
@@ -2828,8 +3027,10 @@ function manatite.teleport(grazeTarget, model)
         targetCFrame = CFrame.new(targetPos)
     end
 
+    stopCharacterVelocity()
     char:PivotTo(targetCFrame)
     root.CFrame = targetCFrame
+    stopCharacterVelocity()
 
     for _, part in ipairs(charBaseParts) do
         part.AssemblyLinearVelocity = Vector3.zero
@@ -2851,42 +3052,75 @@ function mithril.getFolder()
         return mithril.cachedFolder
     end
 
-    -- 1. Primary: workspace.CowWorld.FjordRafting.Resources.CrystalGeodeOres
+    -- 1. Direct path: resources.CrystalGeodeOres (O(1))
     local res = getResourcesFolder()
     if res then
-        local geode = res:FindFirstChild("CrystalGeodeOres") or res:FindFirstChild("CrystalGeodeOres", true)
+        local geode = res:FindFirstChild("CrystalGeodeOres")
         if geode then
             mithril.cachedFolder = geode
             return geode
         end
     end
 
-    -- 2. Direct path via CowWorld
+    -- 2. Direct path via CowWorld (O(1))
     local cowWorld = cache.cowWorldRef
     if not cowWorld or not cowWorld.Parent then
         cowWorld = workspace:FindFirstChild("CowWorld")
+        cache.cowWorldRef = cowWorld
     end
     if cowWorld then
-        local rafting = cowWorld:FindFirstChild("FjordRafting") or cowWorld:FindFirstChild("FjordRafting", true)
+        local rafting = cowWorld:FindFirstChild("FjordRafting")
         if rafting then
-            local geode = rafting:FindFirstChild("CrystalGeodeOres") or rafting:FindFirstChild("CrystalGeodeOres", true)
+            local geode = rafting:FindFirstChild("CrystalGeodeOres")
             if geode then
                 mithril.cachedFolder = geode
                 return geode
             end
         end
-        local directGeode = cowWorld:FindFirstChild("CrystalGeodeOres", true)
+        local directGeode = cowWorld:FindFirstChild("CrystalGeodeOres")
         if directGeode then
             mithril.cachedFolder = directGeode
             return directGeode
         end
     end
 
-    -- 3. Fallback: Search anywhere in workspace
-    local geode = workspace:FindFirstChild("CrystalGeodeOres", true)
-    if geode then
-        mithril.cachedFolder = geode
-        return geode
+    local topGeode = workspace:FindFirstChild("CrystalGeodeOres")
+    if topGeode then
+        mithril.cachedFolder = topGeode
+        return topGeode
+    end
+
+    -- 3. Throttled deep search (at most once every 2.0s to avoid frame freezing)
+    local now = os.clock()
+    if not mithril.lastFolderSearch or (now - mithril.lastFolderSearch >= 2.0) then
+        mithril.lastFolderSearch = now
+        if res then
+            local geode = res:FindFirstChild("CrystalGeodeOres", true)
+            if geode then
+                mithril.cachedFolder = geode
+                return geode
+            end
+        end
+        if cowWorld then
+            local rafting = cowWorld:FindFirstChild("FjordRafting", true)
+            if rafting then
+                local geode = rafting:FindFirstChild("CrystalGeodeOres", true)
+                if geode then
+                    mithril.cachedFolder = geode
+                    return geode
+                end
+            end
+            local directGeode = cowWorld:FindFirstChild("CrystalGeodeOres", true)
+            if directGeode then
+                mithril.cachedFolder = directGeode
+                return directGeode
+            end
+        end
+        local geode = workspace:FindFirstChild("CrystalGeodeOres", true)
+        if geode then
+            mithril.cachedFolder = geode
+            return geode
+        end
     end
 
     return nil
@@ -3101,8 +3335,10 @@ function mithril.teleport(orePart, model)
         targetCFrame = CFrame.new(targetPos)
     end
 
+    stopCharacterVelocity()
     char:PivotTo(targetCFrame)
     root.CFrame = targetCFrame
+    stopCharacterVelocity()
 
     for _, part in ipairs(charBaseParts) do
         part.AssemblyLinearVelocity = Vector3.zero
@@ -3719,17 +3955,35 @@ function cache.getMithrilCaveSpidersFolder()
             return folder
         end
     end
-    if cache.cowWorldRef and cache.cowWorldRef.Parent then
-        local folder = cache.cowWorldRef:FindFirstChild("MithrilCaveSpiders", true)
+    local cowWorld = cache.cowWorldRef and cache.cowWorldRef.Parent and cache.cowWorldRef or workspace:FindFirstChild("CowWorld")
+    if cowWorld then
+        local folder = cowWorld:FindFirstChild("MithrilCaveSpiders")
         if folder then
             cache.cachedMithrilCaveFolder = folder
             return folder
         end
     end
-    local folder = workspace:FindFirstChild("MithrilCaveSpiders", true)
-    if folder then
-        cache.cachedMithrilCaveFolder = folder
-        return folder
+    local topFolder = workspace:FindFirstChild("MithrilCaveSpiders")
+    if topFolder then
+        cache.cachedMithrilCaveFolder = topFolder
+        return topFolder
+    end
+
+    local now = os.clock()
+    if not cache.lastSpiderFolderSearch or (now - cache.lastSpiderFolderSearch >= 3.0) then
+        cache.lastSpiderFolderSearch = now
+        if cowWorld then
+            local folder = cowWorld:FindFirstChild("MithrilCaveSpiders", true)
+            if folder then
+                cache.cachedMithrilCaveFolder = folder
+                return folder
+            end
+        end
+        local folder = workspace:FindFirstChild("MithrilCaveSpiders", true)
+        if folder then
+            cache.cachedMithrilCaveFolder = folder
+            return folder
+        end
     end
     return nil
 end
@@ -7287,7 +7541,11 @@ function townAuction.getFitoutModel()
     local creamery = village and village:FindFirstChild("ButtercupCreamery")
     local fitout = creamery and creamery:FindFirstChild("TownStoreFitout")
     if not fitout then
-        fitout = workspace:FindFirstChild("TownStoreFitout", true)
+        local now = os.clock()
+        if not townAuction.lastFitoutSearch or (now - townAuction.lastFitoutSearch >= 3.0) then
+            townAuction.lastFitoutSearch = now
+            fitout = workspace:FindFirstChild("TownStoreFitout", true)
+        end
     end
     townAuction.fitoutModel = fitout
     return fitout
@@ -8351,7 +8609,53 @@ TotTab:CreateToggle({
 -- ==========================
 local SettingsTab = Window:CreateTab({ Name = "Settings", Icon = 4483362458 })
 
-SettingsTab:CreateSection({ Name = "Performance" })
+SettingsTab:CreateSection({ Name = "Performance & Anti-Lag" })
+
+SettingsTab:CreateToggle({
+    Name = "Map & Asset Optimizer (Anti-Lag)",
+    CurrentValue = false,
+    Flag = "Toggle_MapOptimizer",
+    Callback = function(Value)
+        mapOptimizer.enabled = Value
+        if Value then
+            mapOptimizer.applyToWorld()
+            mapOptimizer.startStreamHook()
+            mapOptimizer.preloadAssets()
+            if Window and Window.Notify then
+                Window:Notify({
+                    Title = "Anti-Lag Optimizer Enabled",
+                    Content = "Simplified map materials, disabled heavy shadows/particles, and hooked chunk streaming.",
+                    Duration = 3.5,
+                })
+            end
+        else
+            mapOptimizer.stopStreamHook()
+        end
+    end,
+})
+
+SettingsTab:CreateToggle({
+    Name = "Auto-Clean Streamed Chunks",
+    CurrentValue = true,
+    Flag = "Toggle_StreamCleaner",
+    Callback = function(Value)
+        mapOptimizer.autoCleanStreamed = Value
+    end,
+})
+
+SettingsTab:CreateButton({
+    Name = "Preload Game Audio & Assets",
+    Callback = function()
+        mapOptimizer.preloadAssets()
+        if Window and Window.Notify then
+            Window:Notify({
+                Title = "Asset Preloader",
+                Content = "Preloaded game audio and interface assets into memory cache.",
+                Duration = 2.5,
+            })
+        end
+    end,
+})
 
 SettingsTab:CreateToggle({
     Name = "Disable 3D Rendering",
@@ -8646,6 +8950,9 @@ SettingsTab:CreateButton({
                     pcall(function() conn:Disconnect() end)
                 end
             end
+            if mapOptimizer and mapOptimizer.stopStreamHook then
+                pcall(function() mapOptimizer.stopStreamHook() end)
+            end
             table.clear(scriptConnections)
 
             pcall(function() RunService:Set3dRenderingEnabled(true) end)
@@ -8669,7 +8976,13 @@ SettingsTab:CreateButton({
 })
 
 -- ==========================
--- BOOT: Initialize 6-Hour AFK Timer & State Resume
+-- BOOT: Initialize 6-Hour AFK Timer, State Resume & Preloading
 -- ==========================
 afkRelog.startTimer()
 afkRelog.checkAndResumeState()
+task.spawn(function()
+    task.wait(1.5)
+    if mapOptimizer and mapOptimizer.preloadAssets then
+        mapOptimizer.preloadAssets()
+    end
+end)
