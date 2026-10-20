@@ -8348,6 +8348,8 @@ local rafting = {
     route = "Fast Sea Run (Center/Direct)", -- "Fast Sea Run (Center/Direct)", "North Channels (Caves & Drops)", "South Channels (Scenic & Clearings)", "Clearing & Chest Explorer"
     autoBoost = true,
     minBoostStamina = 40,
+    isBoosting = false,
+    nextBoostAt = 0,
     autoRepair = true,
     emergencyReturnHp = 25,
     remote = nil,
@@ -8359,10 +8361,7 @@ local rafting = {
     deckPart = nil,
     status = "Idle",
     statusText = "Idle at Raft Yard",
-    currentDeckX = 0,
-    standingDeckZ = nil,
     teleportAttempts = 0,
-    lastBoostTime = 0,
     lastRepairTime = 0,
     isSailing = false,
     dockMaxWaitSeconds = 5,
@@ -8393,10 +8392,19 @@ function rafting.getRaftDeck()
     if rafting.deckPart and rafting.deckPart.Parent and rafting.raftModel and rafting.raftModel.Parent then
         return rafting.deckPart, rafting.raftModel
     end
+    if char then
+        local cowDeck = char:FindFirstChild("CowRaftingDeck")
+        if cowDeck and cowDeck:IsA("ObjectValue") and cowDeck.Value and cowDeck.Value:IsA("BasePart") then
+            rafting.deckPart = cowDeck.Value
+            rafting.raftModel = cowDeck.Value.Parent
+            return cowDeck.Value, cowDeck.Value.Parent
+        end
+    end
     local sessionId = rafting.sessionId or (rafting.currentSnapshot and rafting.currentSnapshot.Id)
     if sessionId then
         local raftName = "TeamRaft_" .. tostring(sessionId)
-        local model = workspace:FindFirstChild(raftName, true)
+        local fjordFolder = workspace:FindFirstChild("FjordRafting") or (workspace:FindFirstChild("CowWorld") and workspace.CowWorld:FindFirstChild("FjordRafting"))
+        local model = (fjordFolder and fjordFolder:FindFirstChild(raftName)) or workspace:FindFirstChild(raftName)
         if model then
             local deck = model:FindFirstChild("Deck")
             if deck and deck:IsA("BasePart") then
@@ -8406,34 +8414,23 @@ function rafting.getRaftDeck()
             end
         end
     end
-    if char then
-        local cowDeck = char:FindFirstChild("CowRaftingDeck")
-        if cowDeck and cowDeck:IsA("ObjectValue") and cowDeck.Value and cowDeck.Value:IsA("BasePart") then
-            rafting.deckPart = cowDeck.Value
-            rafting.raftModel = cowDeck.Value.Parent
-            return cowDeck.Value, cowDeck.Value.Parent
-        end
-    end
     return nil, nil
 end
 
 local harbourRibbon = {
-    { -600, -35.0 },
-    { -500, -36.0 },
-    { -400, -38.0 },
-    { -300, -40.5 },
-    { -200, -39.0 },
-    { -100, -37.0 },
-    { 0,    -36.5 },
-    { 100,  -39.0 },
-    { 200,  -41.0 },
-    { 300,  -39.0 },
-    { 400,  -37.0 },
-    { 500,  -35.0 },
-    { 600,  -36.0 },
-    { 675,  -36.0 },
-    { 700,  -36.5 },
-    { 760,  -37.81 },
+    { -241.77, -29.41 },
+    { -141.77, -37.84 },
+    {  -41.77, -36.71 },
+    {   58.23, -37.96 },
+    {  158.23, -40.16 },
+    {  258.23, -39.84 },
+    {  358.23, -37.84 },
+    {  458.23, -35.84 },
+    {  558.23, -35.58 },
+    {  658.23, -36.00 },
+    {  758.23, -37.74 },
+    {  858.23, -37.81 },
+    {  958.23, -37.81 },
     { 1094.58, -37.81 },
 }
 
@@ -8639,8 +8636,6 @@ end
 function rafting.handleBoarding(payload)
     rafting.status = "Boarding"
     rafting.statusText = "Boarding raft (walking aboard)..."
-    rafting.standingDeckZ = nil
-    rafting.currentDeckX = 0
     rafting.updateCards()
 end
 
@@ -8666,8 +8661,8 @@ function rafting.stepSteering()
         return
     end
 
-    -- Look ahead 40 studs downriver to steer smoothly into upcoming curves
-    local lookAheadX = posX + 40
+    -- Look ahead 35 studs downriver to steer smoothly into upcoming curves
+    local lookAheadX = posX + 35
     local targetZ = rafting.getTargetZ(lookAheadX, posZ)
 
     -- In Reach 1 (posX <= 1844.58), ensure targetZ stays within main river channel
@@ -8680,70 +8675,69 @@ function rafting.stepSteering()
     -- Determine target X on deck (-5.5 = Left / North, +5.5 = Right / South)
     -- Proportional steering with deadzone
     local targetDeckX = 0
-    if math.abs(errorZ) <= 2.0 then
+    if math.abs(errorZ) <= 1.5 then
         targetDeckX = 0 -- In channel center: run straight
-    elseif errorZ < -2.0 then
+    elseif errorZ < -1.5 then
         -- Raft is too far South (posZ > targetZ), steer North (Left, -X on deck)
-        targetDeckX = math.clamp(errorZ * 0.5, -5.5, -2.0)
+        targetDeckX = math.clamp(errorZ * 0.8, -5.5, -2.0)
     else
         -- Raft is too far North (posZ < targetZ), steer South (Right, +X on deck)
-        targetDeckX = math.clamp(errorZ * 0.5, 2.0, 5.5)
+        targetDeckX = math.clamp(errorZ * 0.8, 2.0, 5.5)
     end
 
-    -- Update character position on raft deck:
-    -- We derive root.CFrame directly from deck.CFrame to match the raft's pitch, roll, and yaw.
-    -- This guarantees hooves stay 100% flush on the deck surface with zero sinking or clipping!
+    -- Steer by walking the cow across the deck using native Humanoid physics
+    -- This keeps the cow standing fully on top of the deck with hooves grounded,
+    -- allowing Roblox humanoid platform replication and the game's _stepDeckMotion to work seamlessly!
     if root and char and humanoid and humanoid.Health > 0 then
-        local deckSize = deck.Size
-        local deckTopY = deckSize.Y * 0.5
+        local cowPos = root.Position
+        local cowRel = deck.CFrame:PointToObjectSpace(cowPos)
 
-        -- Compute exact vertical offset from hooves to root part
-        local hoofRelY = -2.85
-        local hoofCollider = char:FindFirstChild("HoofCollider")
-        if hoofCollider and hoofCollider:IsA("BasePart") then
-            local hoofRel = root.CFrame:PointToObjectSpace(hoofCollider.Position - Vector3.new(0, hoofCollider.Size.Y * 0.5, 0))
-            if hoofRel and hoofRel.Y and hoofRel.Y < -0.5 then
-                hoofRelY = hoofRel.Y
+        -- Overboard / fall-through recovery safeguard: only teleport if thrown off the raft into water
+        if math.abs(cowRel.X) > 8.5 or math.abs(cowRel.Z) > 17.5 or cowRel.Y < -1.5 or cowRel.Y > 7.0 then
+            root.CFrame = deck.CFrame * CFrame.new(targetDeckX, 3.45, 0)
+            stopCharacterVelocity()
+        else
+            -- Calculate local movement offset on deck towards targetDeckX and center lengthwise (Z = 0)
+            local diffX = targetDeckX - cowRel.X
+            local diffZ = 0 - cowRel.Z
+
+            -- Transform deck-relative offset to world-space direction vector
+            local localMove = Vector3.new(diffX, 0, diffZ)
+            local worldMove = deck.CFrame:VectorToWorldSpace(localMove)
+            local moveDir = Vector3.new(worldMove.X, 0, worldMove.Z)
+
+            if moveDir.Magnitude > 0.35 then
+                if humanoid.WalkSpeed < 16 then
+                    humanoid.WalkSpeed = 16
+                end
+                humanoid:Move(moveDir.Unit, false)
+            else
+                humanoid:Move(Vector3.zero, false)
             end
-        elseif humanoid and humanoid.HipHeight then
-            local rootHalfY = (root.Size and root.Size.Y or 2) * 0.5
-            hoofRelY = -(humanoid.HipHeight + rootHalfY)
         end
-        local targetLocalY = deckTopY - hoofRelY
-
-        -- Lengthwise position (Z): lock to assigned crew slot, no forward/backward drift!
-        if not rafting.standingDeckZ then
-            local curRel = deck.CFrame:PointToObjectSpace(root.Position)
-            rafting.standingDeckZ = math.clamp(curRel.Z, -6, 6)
-        end
-
-        -- Smoothly glide lateral position (X) across deck at natural walking speed (16 studs/sec)
-        if not rafting.currentDeckX then
-            local curRel = deck.CFrame:PointToObjectSpace(root.Position)
-            rafting.currentDeckX = math.clamp(curRel.X, -5.5, 5.5)
-        end
-
-        local dt = 1 / 60
-        local maxMoveSpeed = 16
-        local maxDelta = maxMoveSpeed * dt
-        local diffX = targetDeckX - rafting.currentDeckX
-        rafting.currentDeckX = rafting.currentDeckX + math.clamp(diffX, -maxDelta, maxDelta)
-
-        -- Position cow matching deck orientation
-        root.CFrame = deck.CFrame * CFrame.new(rafting.currentDeckX, targetLocalY, rafting.standingDeckZ)
-        stopCharacterVelocity()
-        root.AssemblyLinearVelocity = Vector3.zero
     end
 
-    -- Auto-Boost on straightaways
-    if rafting.autoBoost and (os.clock() - rafting.lastBoostTime >= 0.5) then
+    -- Auto-Boost on straightaways using official BoostHeld / BoostRelease heartbeat
+    local rem = rafting.getRemote()
+    if rafting.autoBoost and rem then
         local energy = snap.Energy or 0
         local maxEnergy = snap.MaxEnergy or 100
         local energyPct = (energy / math.max(maxEnergy, 1)) * 100
-        if energyPct >= rafting.minBoostStamina and math.abs(errorZ) <= 8 and not snap.Boosting then
-            rafting.lastBoostTime = os.clock()
-            local rem = rafting.getRemote()
-            if rem then rem:FireServer("Boost") end
+        local isStraight = math.abs(errorZ) <= 8 and not snap.LowEnergy and (snap.Speed or 0) > 5
+        local shouldBoost = energyPct >= rafting.minBoostStamina and isStraight
+
+        if shouldBoost then
+            if not rafting.isBoosting or os.clock() >= (rafting.nextBoostAt or 0) then
+                rafting.isBoosting = true
+                rafting.nextBoostAt = os.clock() + 0.2 -- RaftingConfig.BoostHeartbeatSeconds
+                rem:FireServer("BoostHeld")
+            end
+        else
+            if rafting.isBoosting then
+                rafting.isBoosting = false
+                rafting.nextBoostAt = 0
+                rem:FireServer("BoostRelease")
+            end
         end
     end
 
@@ -8770,14 +8764,14 @@ function rafting.stepSteering()
 end
 
 function rafting.startVoyage()
-    rafting.standingDeckZ = nil
-    rafting.currentDeckX = nil
     local rem = rafting.getRemote()
     if not rem then
         Window:Notify({ Title = "Error", Content = "RaftingRequest remote not found.", Duration = 4 })
         return
     end
+    rafting.enabled = true
     rafting.initClientListener()
+    rafting.startSteeringLoop()
     rafting.statusText = "Starting session at Raft Yard..."
     rafting.isSailing = false
     rafting.updateCards()
@@ -8786,8 +8780,12 @@ function rafting.startVoyage()
 end
 
 function rafting.endVoyage()
-    rafting.standingDeckZ = nil
-    rafting.currentDeckX = nil
+    if rafting.isBoosting then
+        rafting.isBoosting = false
+        rafting.nextBoostAt = 0
+        local rem = rafting.getRemote()
+        if rem then pcall(function() rem:FireServer("BoostRelease") end) end
+    end
     if humanoid then
         pcall(function() humanoid:Move(Vector3.zero, false) end)
     end
@@ -8853,6 +8851,12 @@ function rafting.startSteeringLoop()
 end
 
 function rafting.stopSteeringLoop()
+    if rafting.isBoosting then
+        rafting.isBoosting = false
+        rafting.nextBoostAt = 0
+        local rem = rafting.getRemote()
+        if rem then pcall(function() rem:FireServer("BoostRelease") end) end
+    end
     if rafting.heartbeatConn then
         pcall(function() rafting.heartbeatConn:Disconnect() end)
         rafting.heartbeatConn = nil
@@ -8866,8 +8870,6 @@ function rafting.cleanup()
     rafting.enabled = false
     rafting.autoLoop = false
     rafting.stopSteeringLoop()
-    rafting.standingDeckZ = nil
-    rafting.currentDeckX = nil
     if humanoid then
         pcall(function() humanoid:Move(Vector3.zero, false) end)
     end
