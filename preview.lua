@@ -7283,8 +7283,12 @@ end
 
 function townAuction.getSlotDisplayInfo(slotName)
     local lot = townAuction.lotsBySlot[slotName]
+        or (slotName == "BuyNow" and townAuction.lotsBySlot["BuyNow1"])
+        or (slotName == "BuyNow1" and townAuction.lotsBySlot["BuyNow"])
     local fitout = townAuction.getFitoutModel()
-    local model = fitout and fitout:FindFirstChild(slotName)
+    local model = fitout and (fitout:FindFirstChild(slotName)
+        or (slotName == "BuyNow" and fitout:FindFirstChild("BuyNow1"))
+        or (slotName == "BuyNow1" and fitout:FindFirstChild("BuyNow")))
 
     local category = townAuction.slotCategories[slotName] or "Auction"
 
@@ -7440,9 +7444,24 @@ function townAuction.handleSnapshotResult(res)
 
     table.clear(townAuction.lotsBySlot)
     if type(res.Lots) == "table" then
+        local buyNowIndex = 1
         for _, lot in ipairs(res.Lots) do
             if lot.Slot then
-                townAuction.lotsBySlot[lot.Slot] = lot
+                if lot.Slot == "BuyNow" then
+                    if buyNowIndex == 1 then
+                        townAuction.lotsBySlot["BuyNow"] = lot
+                        townAuction.lotsBySlot["BuyNow1"] = lot
+                        buyNowIndex = 2
+                    else
+                        townAuction.lotsBySlot["BuyNow2"] = lot
+                        buyNowIndex = buyNowIndex + 1
+                    end
+                else
+                    townAuction.lotsBySlot[lot.Slot] = lot
+                    if lot.Slot == "BuyNow1" then
+                        townAuction.lotsBySlot["BuyNow"] = lot
+                    end
+                end
             end
         end
     end
@@ -7607,8 +7626,12 @@ function townAuction.checkAndAutoBidSlot(slotName)
     if not remote then return end
 
     local lot = townAuction.lotsBySlot[slotName]
+        or (slotName == "BuyNow" and townAuction.lotsBySlot["BuyNow1"])
+        or (slotName == "BuyNow1" and townAuction.lotsBySlot["BuyNow"])
     local fitout = townAuction.getFitoutModel()
-    local model = fitout and (fitout:FindFirstChild(slotName) or (slotName == "BuyNow" and fitout:FindFirstChild("BuyNow1")))
+    local model = fitout and (fitout:FindFirstChild(slotName)
+        or (slotName == "BuyNow" and fitout:FindFirstChild("BuyNow1"))
+        or (slotName == "BuyNow1" and fitout:FindFirstChild("BuyNow")))
 
     local isEmpty = (lot and lot.Empty == true)
         or (model and model:GetAttribute("TownAuctionEmpty") == true)
@@ -7658,12 +7681,20 @@ function townAuction.checkAndAutoBidSlot(slotName)
 
     task.spawn(function()
         local success, result = pcall(function()
-            return remote:InvokeServer({
-                Slot = slotName,
-                Round = round,
-                Action = "Bid",
-                Amount = amount
-            })
+            if isBuyNow then
+                return remote:InvokeServer({
+                    Round = round,
+                    Action = "Buy",
+                    Slot = "BuyNow"
+                })
+            else
+                return remote:InvokeServer({
+                    Slot = slotName,
+                    Round = round,
+                    Action = "Bid",
+                    Amount = amount
+                })
+            end
         end)
 
         townAuction.isAutoBiddingSlot[slotName] = false
@@ -7700,8 +7731,12 @@ function townAuction.executeBid(slotName, customAmount, forcePrice)
     end
 
     local lot = townAuction.lotsBySlot[slotName]
+        or (slotName == "BuyNow" and townAuction.lotsBySlot["BuyNow1"])
+        or (slotName == "BuyNow1" and townAuction.lotsBySlot["BuyNow"])
     local fitout = townAuction.getFitoutModel()
-    local model = fitout and (fitout:FindFirstChild(slotName) or (slotName == "BuyNow" and fitout:FindFirstChild("BuyNow1")))
+    local model = fitout and (fitout:FindFirstChild(slotName)
+        or (slotName == "BuyNow" and fitout:FindFirstChild("BuyNow1"))
+        or (slotName == "BuyNow1" and fitout:FindFirstChild("BuyNow")))
 
     local round = (lot and lot.Round)
         or (model and (model:GetAttribute("TownAuctionRound") or model:GetAttribute("Round")))
@@ -7728,12 +7763,20 @@ function townAuction.executeBid(slotName, customAmount, forcePrice)
     end
 
     local success, result = pcall(function()
-        return remote:InvokeServer({
-            Slot = slotName,
-            Round = round,
-            Action = "Bid",
-            Amount = amount
-        })
+        if isBuyNow then
+            return remote:InvokeServer({
+                Round = round,
+                Action = "Buy",
+                Slot = "BuyNow"
+            })
+        else
+            return remote:InvokeServer({
+                Slot = slotName,
+                Round = round,
+                Action = "Bid",
+                Amount = amount
+            })
+        end
     end)
 
     if success then
@@ -7834,7 +7877,9 @@ function townAuction.initWorkspaceListeners()
     local fitout = townAuction.getFitoutModel()
     if not fitout then return end
     for _, slotName in ipairs(townAuction.slots) do
-        local model = fitout:FindFirstChild(slotName) or (slotName == "BuyNow" and fitout:FindFirstChild("BuyNow1"))
+        local model = fitout:FindFirstChild(slotName)
+            or (slotName == "BuyNow" and fitout:FindFirstChild("BuyNow1"))
+            or (slotName == "BuyNow1" and fitout:FindFirstChild("BuyNow"))
         if model then
             local conn = model.AttributeChanged:Connect(function()
                 townAuction.updateCard(slotName)
@@ -8295,6 +8340,580 @@ TotTab:CreateToggle({
 })
 
 -- ==========================
+-- FJORD RAFTING AUTOMATION SYSTEM
+-- ==========================
+local rafting = {
+    enabled = false,
+    autoLoop = false,
+    route = "Fast Sea Run (Center/Direct)", -- "Fast Sea Run (Center/Direct)", "North Channels (Caves & Drops)", "South Channels (Scenic & Clearings)", "Clearing & Chest Explorer"
+    autoBoost = true,
+    minBoostStamina = 40,
+    autoRepair = true,
+    emergencyReturnHp = 25,
+    remote = nil,
+    clientEventConn = nil,
+    heartbeatConn = nil,
+    currentSnapshot = nil,
+    sessionId = nil,
+    raftModel = nil,
+    deckPart = nil,
+    status = "Idle",
+    statusText = "Idle at Raft Yard",
+    teleportAttempts = 0,
+    lastBoostTime = 0,
+    lastRepairTime = 0,
+    isSailing = false,
+    dockMaxWaitSeconds = 5,
+    connections = {},
+    statusCard = nil,
+    telemetryCard = nil,
+    infoCard = nil,
+}
+
+function rafting.getRemote()
+    if rafting.remote and rafting.remote.Parent then
+        return rafting.remote
+    end
+    if cowRemotes then
+        rafting.remote = cowRemotes:FindFirstChild("RaftingRequest")
+    end
+    if not rafting.remote then
+        pcall(function()
+            local cg = game:GetService("ReplicatedStorage"):WaitForChild("CowGame", 2)
+            local rem = cg and cg:WaitForChild("Remotes", 2)
+            rafting.remote = rem and rem:FindFirstChild("RaftingRequest")
+        end)
+    end
+    return rafting.remote
+end
+
+function rafting.getRaftDeck()
+    if rafting.deckPart and rafting.deckPart.Parent and rafting.raftModel and rafting.raftModel.Parent then
+        return rafting.deckPart, rafting.raftModel
+    end
+    local sessionId = rafting.sessionId or (rafting.currentSnapshot and rafting.currentSnapshot.Id)
+    if sessionId then
+        local raftName = "TeamRaft_" .. tostring(sessionId)
+        local model = workspace:FindFirstChild(raftName, true)
+        if model then
+            local deck = model:FindFirstChild("Deck")
+            if deck and deck:IsA("BasePart") then
+                rafting.raftModel = model
+                rafting.deckPart = deck
+                return deck, model
+            end
+        end
+    end
+    if char then
+        local cowDeck = char:FindFirstChild("CowRaftingDeck")
+        if cowDeck and cowDeck:IsA("ObjectValue") and cowDeck.Value and cowDeck.Value:IsA("BasePart") then
+            rafting.deckPart = cowDeck.Value
+            rafting.raftModel = cowDeck.Value.Parent
+            return cowDeck.Value, cowDeck.Value.Parent
+        end
+    end
+    return nil, nil
+end
+
+function rafting.getTargetZ(posX)
+    local r = rafting.route
+    if r == "North Channels (Caves & Drops)" then
+        if posX <= 1095 then return -37.81
+        elseif posX <= 2345 then return -262.81
+        elseif posX <= 3070 then return -487.81
+        elseif posX <= 3795 then return -712.81
+        elseif posX <= 4520 then return -937.81
+        elseif posX <= 5295 then return -1162.81
+        else return -1387.81
+        end
+    elseif r == "South Channels (Scenic & Clearings)" then
+        if posX <= 1095 then return -37.81
+        elseif posX <= 2345 then return 187.19
+        elseif posX <= 3070 then return 412.19
+        elseif posX <= 3795 then return 637.19
+        elseif posX <= 4520 then return 862.19
+        elseif posX <= 5295 then return 1087.19
+        else return 1312.19
+        end
+    elseif r == "Clearing & Chest Explorer" then
+        if posX <= 1334 then return -175.96
+        elseif posX <= 1622 then return 113.34
+        elseif posX <= 2985 then return -635.96
+        elseif posX <= 3144 then return 578.34
+        elseif posX <= 4448 then return 712.04
+        elseif posX <= 4604 then return 1013.34
+        elseif posX <= 6014 then return -772.66
+        else return -190.96
+        end
+    else
+        return -37.81
+    end
+end
+
+function rafting.updateCards()
+    local snap = rafting.currentSnapshot
+    local statusTitle = "Fjord Rafting: " .. tostring(rafting.statusText)
+    local statusContent = string.format("Session State: %s | Auto-Pilot: %s\nRoute: %s | Auto-Loop: %s",
+        tostring(rafting.status),
+        rafting.enabled and "Active" or "Disabled",
+        tostring(rafting.route),
+        rafting.autoLoop and "ON" or "OFF"
+    )
+
+    if rafting.statusCard then
+        pcall(function()
+            if rafting.statusCard.SetTitle then
+                rafting.statusCard:SetTitle(statusTitle)
+                rafting.statusCard:Set(statusContent)
+            elseif rafting.statusCard.Set then
+                rafting.statusCard:Set({ Title = statusTitle, Content = statusContent })
+            end
+        end)
+    end
+
+    if rafting.telemetryCard then
+        local hp = snap and snap.Health or 0
+        local maxHp = snap and snap.MaxHealth or 120
+        local nrg = snap and snap.Energy or 0
+        local maxNrg = snap and snap.MaxEnergy or 326
+        local spd = snap and snap.Speed or 0
+        local steer = snap and snap.Steering or 0
+        local posStr = "N/A"
+        if snap and snap.Frame and typeof(snap.Frame) == "CFrame" then
+            posStr = string.format("X: %d | Z: %d", math.floor(snap.Frame.Position.X), math.floor(snap.Frame.Position.Z))
+        end
+
+        local telemTitle = string.format("Raft Telemetry | HP: %d/%d | Energy: %d/%d", hp, maxHp, nrg, maxNrg)
+        local telemBody = string.format("Speed: %.1f kts | Steering: %+.2f | Pos: %s\nReach: %s | Boosting: %s | Adrift: %s",
+            spd,
+            steer,
+            posStr,
+            tostring(snap and snap.Reach or "Harbour"),
+            tostring(snap and snap.Boosting == true),
+            tostring(snap and snap.Adrift == true)
+        )
+        pcall(function()
+            if rafting.telemetryCard.SetTitle then
+                rafting.telemetryCard:SetTitle(telemTitle)
+                rafting.telemetryCard:Set(telemBody)
+            elseif rafting.telemetryCard.Set then
+                rafting.telemetryCard:Set({ Title = telemTitle, Content = telemBody })
+            end
+        end)
+    end
+end
+
+function rafting.handleSnapshot(payload)
+    if not payload or type(payload) ~= "table" then return end
+    rafting.currentSnapshot = payload
+    rafting.sessionId = payload.Id
+    rafting.status = payload.Status or "Travelling"
+
+    -- Auto-castoff when Ready
+    if rafting.status == "Ready" and rafting.enabled and not rafting.isSailing then
+        rafting.isSailing = true
+        rafting.statusText = "Raft Ready! Casting off..."
+        task.delay(0.6, function()
+            local rem = rafting.getRemote()
+            if rem then
+                rem:FireServer("Sail", nil)
+            end
+        end)
+    elseif rafting.status == "Travelling" then
+        rafting.isSailing = true
+        rafting.statusText = "Travelling down river..."
+    elseif rafting.status == "Departing" then
+        rafting.isSailing = true
+        rafting.statusText = "Departing dock..."
+    elseif rafting.status == "Docked" and rafting.enabled then
+        rafting.statusText = string.format("Docked at clearing. Resuming in %ds...", rafting.dockMaxWaitSeconds)
+        task.delay(rafting.dockMaxWaitSeconds, function()
+            if rafting.enabled and rafting.status == "Docked" then
+                local rem = rafting.getRemote()
+                if rem then rem:FireServer("Sail", nil) end
+            end
+        end)
+    end
+
+    rafting.updateCards()
+end
+
+function rafting.handleBoarding(payload)
+    rafting.status = "Boarding"
+    rafting.statusText = "Boarding raft..."
+    rafting.updateCards()
+    task.spawn(function()
+        task.wait(0.5)
+        local deck = nil
+        for _ = 1, 15 do
+            deck = rafting.getRaftDeck()
+            if deck then break end
+            task.wait(0.3)
+        end
+        if deck and root and char then
+            char:PivotTo(deck.CFrame * CFrame.new(0, 2, 0))
+            stopCharacterVelocity()
+        elseif payload and payload.SlotCFrame and root and char then
+            char:PivotTo(payload.SlotCFrame * CFrame.new(0, 2, 0))
+            stopCharacterVelocity()
+        end
+    end)
+end
+
+function rafting.stepSteering()
+    if not rafting.enabled or not rafting.currentSnapshot then return end
+    local snap = rafting.currentSnapshot
+    if snap.Status ~= "Travelling" and snap.Status ~= "Departing" then return end
+
+    local frame = snap.Frame
+    if not frame or typeof(frame) ~= "CFrame" then return end
+
+    local deck = rafting.getRaftDeck()
+    if not deck then return end
+
+    local posX = frame.Position.X
+    local posZ = frame.Position.Z
+    local targetZ = rafting.getTargetZ(posX)
+    local errorZ = targetZ - posZ
+
+    -- Reached the Sea?
+    if posX >= 6590 then
+        rafting.statusText = "Reached The Sea! Ending voyage..."
+        Window:Notify({ Title = "Voyage Finished", Content = "Reached The Sea! Returning to shore.", Duration = 4 })
+        rafting.endVoyage()
+        return
+    end
+
+    -- Determine target X on deck (-5.5 = Left / North, +5.5 = Right / South)
+    local targetDeckX = 0
+    if errorZ < -6.0 then
+        targetDeckX = -5.5
+    elseif errorZ > 6.0 then
+        targetDeckX = 5.5
+    else
+        targetDeckX = 0
+    end
+
+    -- Position character on deck to apply steering weight
+    if root and char and humanoid and humanoid.Health > 0 then
+        local targetWorldPos = deck.CFrame:PointToWorldSpace(Vector3.new(targetDeckX, 1.2, 0))
+        humanoid:MoveTo(targetWorldPos)
+    end
+
+    -- Auto-Boost on straightaways
+    if rafting.autoBoost and (os.clock() - rafting.lastBoostTime >= 0.5) then
+        local energy = snap.Energy or 0
+        local maxEnergy = snap.MaxEnergy or 100
+        local energyPct = (energy / math.max(maxEnergy, 1)) * 100
+        if energyPct >= rafting.minBoostStamina and math.abs(errorZ) <= 12 and not snap.Boosting then
+            rafting.lastBoostTime = os.clock()
+            local rem = rafting.getRemote()
+            if rem then rem:FireServer("Boost") end
+        end
+    end
+
+    -- Auto-Repair split beams
+    if rafting.autoRepair and (os.clock() - rafting.lastRepairTime >= 1.0) and snap.RepairStations then
+        for _, station in ipairs(snap.RepairStations) do
+            if station.Damaged then
+                rafting.lastRepairTime = os.clock()
+                local rem = rafting.getRemote()
+                if rem and station.Id then
+                    pcall(function() rem:FireServer("RepairRelease", station.Id) end)
+                end
+                break
+            end
+        end
+    end
+
+    -- Emergency Health Return
+    local hp = snap.Health or 100
+    if (hp <= rafting.emergencyReturnHp and hp > 0) or snap.Adrift then
+        Window:Notify({ Title = "Rafting Emergency", Content = "Low health or adrift! Returning to shore...", Duration = 4 })
+        rafting.endVoyage()
+    end
+end
+
+function rafting.startVoyage()
+    local rem = rafting.getRemote()
+    if not rem then
+        Window:Notify({ Title = "Error", Content = "RaftingRequest remote not found.", Duration = 4 })
+        return
+    end
+    rafting.initClientListener()
+    rafting.statusText = "Starting session at Raft Yard..."
+    rafting.isSailing = false
+    rafting.updateCards()
+    rem:FireServer("Start")
+    Window:Notify({ Title = "Rafting Started", Content = "Session requested. Boarding raft...", Duration = 3 })
+end
+
+function rafting.endVoyage()
+    local rem = rafting.getRemote()
+    if rem then
+        rem:FireServer("Return", nil)
+    end
+    rafting.isSailing = false
+    rafting.currentSnapshot = nil
+    rafting.status = "Idle"
+    rafting.statusText = "Voyage ended. Returned to shore."
+    rafting.updateCards()
+
+    if rafting.autoLoop and rafting.enabled then
+        task.delay(4, function()
+            if rafting.autoLoop and rafting.enabled then
+                rafting.teleportToRaftYard()
+                task.wait(2)
+                rafting.startVoyage()
+            end
+        end)
+    end
+end
+
+function rafting.teleportToRaftYard()
+    if root and char then
+        stopCharacterVelocity()
+        root.CFrame = CFrame.new(-259.38, 705.5, 14.01)
+        Window:Notify({ Title = "Teleported", Content = "Teleported to Fjord Raft Yard.", Duration = 3 })
+    end
+end
+
+function rafting.initClientListener()
+    if rafting.clientEventConn then return end
+    local clientEvent = cowRemotes and cowRemotes:FindFirstChild("ClientEvent")
+    if not clientEvent then
+        pcall(function()
+            local cg = game:GetService("ReplicatedStorage"):WaitForChild("CowGame", 2)
+            local rem = cg and cg:WaitForChild("Remotes", 2)
+            clientEvent = rem and rem:FindFirstChild("ClientEvent")
+        end)
+    end
+    if clientEvent then
+        rafting.clientEventConn = clientEvent.OnClientEvent:Connect(function(eventName, payload)
+            if eventName == "RaftingSnapshot" then
+                rafting.handleSnapshot(payload)
+            elseif eventName == "RaftingBoard" then
+                rafting.handleBoarding(payload)
+            end
+        end)
+        table.insert(rafting.connections, rafting.clientEventConn)
+    end
+end
+
+function rafting.startSteeringLoop()
+    if rafting.heartbeatConn then return end
+    rafting.heartbeatConn = RunService.Heartbeat:Connect(function()
+        if rafting.enabled then
+            pcall(rafting.stepSteering)
+        end
+    end)
+    table.insert(rafting.connections, rafting.heartbeatConn)
+end
+
+function rafting.stopSteeringLoop()
+    if rafting.heartbeatConn then
+        pcall(function() rafting.heartbeatConn:Disconnect() end)
+        rafting.heartbeatConn = nil
+    end
+end
+
+function rafting.cleanup()
+    rafting.enabled = false
+    rafting.autoLoop = false
+    rafting.stopSteeringLoop()
+    for _, conn in ipairs(rafting.connections) do
+        if conn and conn.Disconnect then
+            pcall(function() conn:Disconnect() end)
+        end
+    end
+    table.clear(rafting.connections)
+    rafting.clientEventConn = nil
+    rafting.currentSnapshot = nil
+    rafting.deckPart = nil
+    rafting.raftModel = nil
+end
+
+-- ==========================
+-- UI SETUP: Fjord Rafting Tab
+-- ==========================
+local RaftingTab = Window:CreateTab({ Name = "Fjord Rafting", Icon = 4483362458 })
+
+RaftingTab:CreateSection({ Name = "Live Voyage Telemetry" })
+
+local initialRaftStatusTitle = "Fjord Rafting: Idle at Raft Yard"
+local initialRaftStatusBody = "Rafting inactive. Click 'Start Rafting Voyage' to begin."
+if RaftingTab.CreateText then
+    pcall(function()
+        rafting.statusCard = RaftingTab:CreateText({
+            name = initialRaftStatusTitle,
+            text = initialRaftStatusBody
+        })
+    end)
+end
+if not rafting.statusCard and RaftingTab.CreateParagraph then
+    pcall(function()
+        rafting.statusCard = RaftingTab:CreateParagraph({
+            Title = initialRaftStatusTitle,
+            Content = initialRaftStatusBody
+        })
+    end)
+end
+
+local initialTelemTitle = "Raft Telemetry | HP: --/-- | Energy: --/--"
+local initialTelemBody = "Speed: 0.0 kts | Steering: 0.00 | Pos: N/A\nReach: Harbour | Boosting: false | Adrift: false"
+if RaftingTab.CreateText then
+    pcall(function()
+        rafting.telemetryCard = RaftingTab:CreateText({
+            name = initialTelemTitle,
+            text = initialTelemBody
+        })
+    end)
+end
+if not rafting.telemetryCard and RaftingTab.CreateParagraph then
+    pcall(function()
+        rafting.telemetryCard = RaftingTab:CreateParagraph({
+            Title = initialTelemTitle,
+            Content = initialTelemBody
+        })
+    end)
+end
+
+RaftingTab:CreateSection({ Name = "Session Controls" })
+
+RaftingTab:CreateToggle({
+    Name = "Enable Automated Rafting",
+    CurrentValue = false,
+    Flag = "Toggle_Rafting_Enabled",
+    Callback = function(Value)
+        rafting.enabled = Value
+        if Value then
+            rafting.initClientListener()
+            rafting.startSteeringLoop()
+            Window:Notify({ Title = "Rafting Auto-Pilot", Content = "Auto-Pilot enabled. Raft will steer along the selected route.", Duration = 3 })
+        else
+            rafting.stopSteeringLoop()
+        end
+        rafting.updateCards()
+    end,
+})
+
+RaftingTab:CreateToggle({
+    Name = "Auto-Loop Voyages (Repeat Runs)",
+    CurrentValue = false,
+    Flag = "Toggle_Rafting_AutoLoop",
+    Callback = function(Value)
+        rafting.autoLoop = Value
+    end,
+})
+
+RaftingTab:CreateButton({
+    Name = "Start Rafting Voyage",
+    Callback = function()
+        rafting.startVoyage()
+    end,
+})
+
+RaftingTab:CreateButton({
+    Name = "Sail Now / Cast Off",
+    Callback = function()
+        local rem = rafting.getRemote()
+        if rem then
+            rem:FireServer("Sail", nil)
+            Window:Notify({ Title = "Sailing", Content = "Cast off signal sent!", Duration = 3 })
+        end
+    end,
+})
+
+RaftingTab:CreateButton({
+    Name = "Return to Shore / Dock",
+    Callback = function()
+        rafting.endVoyage()
+    end,
+})
+
+RaftingTab:CreateButton({
+    Name = "Teleport to Raft Yard Dock",
+    Callback = function()
+        rafting.teleportToRaftYard()
+    end,
+})
+
+RaftingTab:CreateSection({ Name = "Route Navigation Settings" })
+
+RaftingTab:CreateDropdown({
+    Name = "Rafting Route Profile",
+    Options = {
+        "Fast Sea Run (Center/Direct)",
+        "North Channels (Caves & Drops)",
+        "South Channels (Scenic & Clearings)",
+        "Clearing & Chest Explorer"
+    },
+    CurrentOption = {"Fast Sea Run (Center/Direct)"},
+    Flag = "Dropdown_Rafting_Route",
+    Callback = function(Option)
+        local chosen = type(Option) == "table" and Option[1] or Option
+        rafting.route = chosen or "Fast Sea Run (Center/Direct)"
+        rafting.updateCards()
+    end,
+})
+
+RaftingTab:CreateSection({ Name = "Automation & Safety" })
+
+RaftingTab:CreateToggle({
+    Name = "Auto-Boost (Sprint on Straights)",
+    CurrentValue = true,
+    Flag = "Toggle_Rafting_AutoBoost",
+    Callback = function(Value)
+        rafting.autoBoost = Value
+    end,
+})
+
+RaftingTab:CreateSlider({
+    Name = "Min Stamina to Boost (%)",
+    Range = {10, 90},
+    Increment = 5,
+    Suffix = "%",
+    CurrentValue = rafting.minBoostStamina,
+    Flag = "Slider_Rafting_MinBoostStamina",
+    Callback = function(Value)
+        rafting.minBoostStamina = Value
+    end,
+})
+
+RaftingTab:CreateToggle({
+    Name = "Auto-Repair Split Beams",
+    CurrentValue = true,
+    Flag = "Toggle_Rafting_AutoRepair",
+    Callback = function(Value)
+        rafting.autoRepair = Value
+    end,
+})
+
+RaftingTab:CreateSlider({
+    Name = "Emergency Return Health",
+    Range = {10, 80},
+    Increment = 5,
+    Suffix = " HP",
+    CurrentValue = rafting.emergencyReturnHp,
+    Flag = "Slider_Rafting_EmergencyReturnHp",
+    Callback = function(Value)
+        rafting.emergencyReturnHp = Value
+    end,
+})
+
+RaftingTab:CreateSlider({
+    Name = "Dock Stop Delay (Seconds)",
+    Range = {2, 30},
+    Increment = 1,
+    Suffix = "s",
+    CurrentValue = rafting.dockMaxWaitSeconds,
+    Flag = "Slider_Rafting_DockWait",
+    Callback = function(Value)
+        rafting.dockMaxWaitSeconds = Value
+    end,
+})
+
+-- ==========================
 -- UI SETUP: Settings Tab
 -- ==========================
 local SettingsTab = Window:CreateTab({ Name = "Settings", Icon = 4483362458 })
@@ -8587,6 +9206,10 @@ SettingsTab:CreateButton({
 
             if townAuction and townAuction.cleanup then
                 pcall(function() townAuction.cleanup() end)
+            end
+
+            if rafting and rafting.cleanup then
+                pcall(function() rafting.cleanup() end)
             end
 
             for _, conn in ipairs(scriptConnections) do
