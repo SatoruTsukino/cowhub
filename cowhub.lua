@@ -8669,6 +8669,8 @@ local rafting = {
     deckPart = nil,
     status = "Idle",
     statusText = "Idle at Raft Yard",
+    currentDeckX = 0,
+    standingDeckZ = nil,
     teleportAttempts = 0,
     lastBoostTime = 0,
     lastRepairTime = 0,
@@ -8765,60 +8767,77 @@ local function getHarbourZ(posX)
     return -37.81
 end
 
-function rafting.getTargetZ(posX)
-    -- In Harbour (Dock at -241 to Delta Entrance at 1094.58), all paths follow the official canal ribbon!
+function rafting.getTargetZ(posX, currentZ)
+    -- In Harbour (Dock at -241 to Delta Entrance at 1094.58), follow official canal ribbon
     if posX <= 1094.58 then
         return getHarbourZ(posX)
     end
 
-    -- Reach 1 (1094.58 to 1844.58): Main river channel is a single corridor centered at Z = -37.81
+    -- Reach 1 (1094.58 to 1844.58): Single river channel centered at Z = -37.81
     if posX <= 1844.58 then
         return -37.81
     end
 
     local r = rafting.route
+
+    -- North Channels (Caves & Drops):
     if r == "North Channels (Caves & Drops)" then
         if posX <= 2844.58 then
-            -- Branch North from -37.81 to -262.81
+            -- Diagonal channel from (1844.58, -37.81) to (2844.58, -487.81)
             local t = math.clamp((posX - 1844.58) / 1000, 0, 1)
-            return -37.81 + t * (-262.81 - (-37.81))
-        elseif posX <= 3569.58 then
-            local t = math.clamp((posX - 2844.58) / 725, 0, 1)
-            return -262.81 + t * (-487.81 - (-262.81))
+            return -37.81 + t * (-487.81 - (-37.81))
+        elseif posX <= 3294.58 then
+            -- Reach 3 North Channel
+            return -487.81
         elseif posX <= 4294.58 then
-            local t = math.clamp((posX - 3569.58) / 725, 0, 1)
-            return -487.81 + t * (-712.81 - (-487.81))
-        elseif posX <= 5019.58 then
-            local t = math.clamp((posX - 4294.58) / 725, 0, 1)
-            return -712.81 + t * (-937.81 - (-712.81))
-        elseif posX <= 5794.58 then
-            local t = math.clamp((posX - 5019.58) / 775, 0, 1)
-            return -937.81 + t * (-1162.81 - (-937.81))
+            -- Reach 4: branch to Far North (-937.81)
+            local t = math.clamp((posX - 3294.58) / 1000, 0, 1)
+            return -487.81 + t * (-937.81 - (-487.81))
+        elseif posX <= 4744.58 then
+            -- Reach 5 Far North
+            return -937.81
+        elseif posX <= 5844.58 then
+            -- Reach 6 Ch1 to Extreme North (-1387.81)
+            local t = math.clamp((posX - 4744.58) / 1100, 0, 1)
+            return -937.81 + t * (-1387.81 - (-937.81))
         else
-            local t = math.clamp((posX - 5794.58) / 800, 0, 1)
-            return -1162.81 + t * (-1387.81 - (-1162.81))
+            -- Reach 7 to Sea
+            return -1387.81
         end
+
+    -- South Channels & Clearing Explorer:
     elseif r == "South Channels (Scenic & Clearings)" or r == "Clearing & Chest Explorer" then
-        if posX <= 2844.58 then
-            -- Branch South from -37.81 to 187.19
+        -- Channel Awareness: If raft is in Reach 3/4 and currently in Center channel (Z near -37.81),
+        -- do not steer into the center channel's island wall! Stay centered until Reach 5 crossover at 4300!
+        if currentZ and posX > 2200 and posX < 4300 and math.abs(currentZ - (-37.81)) < 60 then
+            return -37.81
+        elseif currentZ and posX >= 4300 and posX <= 4744.58 and math.abs(currentZ - (-37.81)) < 60 then
+            -- Take MiddleToSouth crossover chute (R5_M2S) from Center (-37.81) to South (412.19)
+            local t = math.clamp((posX - 4300) / 444.58, 0, 1)
+            return -37.81 + t * (412.19 - (-37.81))
+        elseif posX <= 2844.58 then
+            -- Reach 2: Diagonal channel from (1844.58, -37.81) to (2844.58, 412.19)
             local t = math.clamp((posX - 1844.58) / 1000, 0, 1)
-            return -37.81 + t * (187.19 - (-37.81))
-        elseif posX <= 3569.58 then
-            local t = math.clamp((posX - 2844.58) / 725, 0, 1)
-            return 187.19 + t * (412.19 - 187.19)
+            return -37.81 + t * (412.19 - (-37.81))
+        elseif posX <= 3294.58 then
+            -- Reach 3 South Channel (passing Clearing 04)
+            return 412.19
         elseif posX <= 4294.58 then
-            local t = math.clamp((posX - 3569.58) / 725, 0, 1)
-            return 412.19 + t * (637.19 - 412.19)
-        elseif posX <= 5019.58 then
-            local t = math.clamp((posX - 4294.58) / 725, 0, 1)
-            return 637.19 + t * (862.19 - 637.19)
-        elseif posX <= 5794.58 then
-            local t = math.clamp((posX - 5019.58) / 775, 0, 1)
-            return 862.19 + t * (1087.19 - 862.19)
+            -- Reach 4: diagonal to Far South (862.19)
+            local t = math.clamp((posX - 3294.58) / 1000, 0, 1)
+            return 412.19 + t * (862.19 - 412.19)
+        elseif posX <= 4744.58 then
+            -- Reach 5 Far South (passing Clearing 07 & 08)
+            return 862.19
+        elseif posX <= 5844.58 then
+            -- Reach 6 Ch7 to Extreme South (1312.19)
+            local t = math.clamp((posX - 4744.58) / 1100, 0, 1)
+            return 862.19 + t * (1312.19 - 862.19)
         else
-            local t = math.clamp((posX - 5794.58) / 800, 0, 1)
-            return 1087.19 + t * (1312.19 - 1087.19)
+            -- Reach 7 to Sea
+            return 1312.19
         end
+
     else
         -- "Fast Sea Run (Center/Direct)"
         -- Center channel from Harbour all the way to the Sea!
@@ -8930,6 +8949,8 @@ end
 function rafting.handleBoarding(payload)
     rafting.status = "Boarding"
     rafting.statusText = "Boarding raft (walking aboard)..."
+    rafting.standingDeckZ = nil
+    rafting.currentDeckX = 0
     rafting.updateCards()
 end
 
@@ -8955,11 +8976,11 @@ function rafting.stepSteering()
         return
     end
 
-    -- Look ahead 35 studs downriver to steer smoothly into upcoming curves
-    local lookAheadX = posX + 35
-    local targetZ = rafting.getTargetZ(lookAheadX)
+    -- Look ahead 40 studs downriver to steer smoothly into upcoming curves
+    local lookAheadX = posX + 40
+    local targetZ = rafting.getTargetZ(lookAheadX, posZ)
 
-    -- Safety corridor clamp for Reach 1 / Harbour
+    -- In Reach 1 (posX <= 1844.58), ensure targetZ stays within main river channel
     if lookAheadX <= 1844.58 then
         targetZ = math.clamp(targetZ, -55, -20)
     end
@@ -8967,50 +8988,61 @@ function rafting.stepSteering()
     local errorZ = targetZ - posZ
 
     -- Determine target X on deck (-5.5 = Left / North, +5.5 = Right / South)
-    -- Proportional steering with deadzone to eliminate wild zig-zagging
+    -- Proportional steering with deadzone
     local targetDeckX = 0
     if math.abs(errorZ) <= 2.0 then
         targetDeckX = 0 -- In channel center: run straight
     elseif errorZ < -2.0 then
-        -- Raft is too far South, steer North (Left, -X on deck)
-        targetDeckX = math.clamp(errorZ * 0.6, -5.5, -1.8)
+        -- Raft is too far South (posZ > targetZ), steer North (Left, -X on deck)
+        targetDeckX = math.clamp(errorZ * 0.5, -5.5, -2.0)
     else
-        -- Raft is too far North, steer South (Right, +X on deck)
-        targetDeckX = math.clamp(errorZ * 0.6, 1.8, 5.5)
+        -- Raft is too far North (posZ < targetZ), steer South (Right, +X on deck)
+        targetDeckX = math.clamp(errorZ * 0.5, 2.0, 5.5)
     end
 
-    -- Steer by walking the cow across the deck using native Humanoid physics
-    -- This keeps the cow standing fully on top of the deck with hooves grounded,
-    -- preserving Roblox's Inverse Kinematics (IK) and platform-standing physics!
+    -- Update character position on raft deck:
+    -- We derive root.CFrame directly from deck.CFrame to match the raft's pitch, roll, and yaw.
+    -- This guarantees hooves stay 100% flush on the deck surface with zero sinking or clipping!
     if root and char and humanoid and humanoid.Health > 0 then
-        local cowPos = root.Position
-        local cowRel = deck.CFrame:PointToObjectSpace(cowPos)
+        local deckSize = deck.Size
+        local deckTopY = deckSize.Y * 0.5
 
-        -- Overboard recovery safeguard: only teleport if thrown off the raft into water
-        if math.abs(cowRel.X) > 9 or math.abs(cowRel.Z) > 18 or cowRel.Y < -4 then
-            root.CFrame = deck.CFrame * CFrame.new(0, 3.5, 0)
-            stopCharacterVelocity()
-            root.AssemblyLinearVelocity = deck.AssemblyLinearVelocity
-        else
-            local diffX = targetDeckX - cowRel.X
-            local diffZ = 0 - cowRel.Z -- keep near center lengthwise
-
-            local moveDir = Vector3.zero
-            if math.abs(diffX) > 0.6 then
-                -- Walk laterally (RightVector is along +X of deck)
-                moveDir = moveDir + (deck.CFrame.RightVector * math.sign(diffX))
+        -- Compute exact vertical offset from hooves to root part
+        local hoofRelY = -2.85
+        local hoofCollider = char:FindFirstChild("HoofCollider")
+        if hoofCollider and hoofCollider:IsA("BasePart") then
+            local hoofRel = root.CFrame:PointToObjectSpace(hoofCollider.Position - Vector3.new(0, hoofCollider.Size.Y * 0.5, 0))
+            if hoofRel and hoofRel.Y and hoofRel.Y < -0.5 then
+                hoofRelY = hoofRel.Y
             end
-            if math.abs(diffZ) > 3.0 then
-                -- Nudge back towards center lengthwise if drifting
-                moveDir = moveDir - (deck.CFrame.LookVector * math.sign(cowRel.Z))
-            end
-
-            if moveDir.Magnitude > 0.1 then
-                humanoid:Move(moveDir.Unit, false)
-            else
-                humanoid:Move(Vector3.zero, false)
-            end
+        elseif humanoid and humanoid.HipHeight then
+            local rootHalfY = (root.Size and root.Size.Y or 2) * 0.5
+            hoofRelY = -(humanoid.HipHeight + rootHalfY)
         end
+        local targetLocalY = deckTopY - hoofRelY
+
+        -- Lengthwise position (Z): lock to assigned crew slot, no forward/backward drift!
+        if not rafting.standingDeckZ then
+            local curRel = deck.CFrame:PointToObjectSpace(root.Position)
+            rafting.standingDeckZ = math.clamp(curRel.Z, -6, 6)
+        end
+
+        -- Smoothly glide lateral position (X) across deck at natural walking speed (16 studs/sec)
+        if not rafting.currentDeckX then
+            local curRel = deck.CFrame:PointToObjectSpace(root.Position)
+            rafting.currentDeckX = math.clamp(curRel.X, -5.5, 5.5)
+        end
+
+        local dt = 1 / 60
+        local maxMoveSpeed = 16
+        local maxDelta = maxMoveSpeed * dt
+        local diffX = targetDeckX - rafting.currentDeckX
+        rafting.currentDeckX = rafting.currentDeckX + math.clamp(diffX, -maxDelta, maxDelta)
+
+        -- Position cow matching deck orientation
+        root.CFrame = deck.CFrame * CFrame.new(rafting.currentDeckX, targetLocalY, rafting.standingDeckZ)
+        stopCharacterVelocity()
+        root.AssemblyLinearVelocity = Vector3.zero
     end
 
     -- Auto-Boost on straightaways
@@ -9048,6 +9080,8 @@ function rafting.stepSteering()
 end
 
 function rafting.startVoyage()
+    rafting.standingDeckZ = nil
+    rafting.currentDeckX = nil
     local rem = rafting.getRemote()
     if not rem then
         Window:Notify({ Title = "Error", Content = "RaftingRequest remote not found.", Duration = 4 })
@@ -9062,6 +9096,8 @@ function rafting.startVoyage()
 end
 
 function rafting.endVoyage()
+    rafting.standingDeckZ = nil
+    rafting.currentDeckX = nil
     if humanoid then
         pcall(function() humanoid:Move(Vector3.zero, false) end)
     end
@@ -9140,6 +9176,8 @@ function rafting.cleanup()
     rafting.enabled = false
     rafting.autoLoop = false
     rafting.stopSteeringLoop()
+    rafting.standingDeckZ = nil
+    rafting.currentDeckX = nil
     if humanoid then
         pcall(function() humanoid:Move(Vector3.zero, false) end)
     end
