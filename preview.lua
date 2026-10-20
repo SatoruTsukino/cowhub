@@ -8461,12 +8461,14 @@ function rafting.getTargetZ(posX)
         return getHarbourZ(posX)
     end
 
-    -- Reach 1 (1094.58 to 1844.58): Main river channel is straight at Z = -37.81
+    -- Reach 1 (1094.58 to 1844.58): Main river channel is a single corridor centered at Z = -37.81
+    if posX <= 1844.58 then
+        return -37.81
+    end
+
     local r = rafting.route
     if r == "North Channels (Caves & Drops)" then
-        if posX <= 1844.58 then
-            return -37.81
-        elseif posX <= 2844.58 then
+        if posX <= 2844.58 then
             -- Branch North from -37.81 to -262.81
             local t = math.clamp((posX - 1844.58) / 1000, 0, 1)
             return -37.81 + t * (-262.81 - (-37.81))
@@ -8486,10 +8488,8 @@ function rafting.getTargetZ(posX)
             local t = math.clamp((posX - 5794.58) / 800, 0, 1)
             return -1162.81 + t * (-1387.81 - (-1162.81))
         end
-    elseif r == "South Channels (Scenic & Clearings)" then
-        if posX <= 1844.58 then
-            return -37.81
-        elseif posX <= 2844.58 then
+    elseif r == "South Channels (Scenic & Clearings)" or r == "Clearing & Chest Explorer" then
+        if posX <= 2844.58 then
             -- Branch South from -37.81 to 187.19
             local t = math.clamp((posX - 1844.58) / 1000, 0, 1)
             return -37.81 + t * (187.19 - (-37.81))
@@ -8509,47 +8509,25 @@ function rafting.getTargetZ(posX)
             local t = math.clamp((posX - 5794.58) / 800, 0, 1)
             return 1087.19 + t * (1312.19 - 1087.19)
         end
-    elseif r == "Clearing & Chest Explorer" then
-        -- Navigates along channel centerlines and only enters clearing coves at the actual opening
-        if posX <= 1240 then
-            return -37.81 -- Main Reach 1 Channel
-        elseif posX <= 1360 then
-            -- Clearing 01 Entrance Cove (X = 1334.58, Z = -175.96)
-            local t = math.clamp((posX - 1240) / 94.58, 0, 1)
-            return -37.81 + t * (-175.96 - (-37.81))
-        elseif posX <= 1480 then
-            -- Returning from Clearing 01 to Main Channel
-            local t = math.clamp((posX - 1360) / 120, 0, 1)
-            return -175.96 + t * (-37.81 - (-175.96))
-        elseif posX <= 1560 then
-            return -37.81
-        elseif posX <= 1650 then
-            -- Clearing 02 Entrance Cove (X = 1622.58, Z = 113.34)
-            local t = math.clamp((posX - 1560) / 62.58, 0, 1)
-            return -37.81 + t * (113.34 - (-37.81))
-        elseif posX <= 1780 then
-            -- Returning to Main Channel
-            local t = math.clamp((posX - 1650) / 130, 0, 1)
-            return 113.34 + t * (-37.81 - 113.34)
-        elseif posX <= 2880 then
-            -- Navigating through Reach 2 North towards Clearing 03
-            local t = math.clamp((posX - 1780) / 1064.58, 0, 1)
-            return -37.81 + t * (-262.81 - (-37.81))
-        elseif posX <= 3020 then
-            -- Clearing 03 Cove (X = 2985.08, Z = -635.96)
-            local t = math.clamp((posX - 2880) / 105.08, 0, 1)
-            return -262.81 + t * (-635.96 - (-262.81))
-        elseif posX <= 3180 then
-            -- Returning to North Channel
-            local t = math.clamp((posX - 3020) / 160, 0, 1)
-            return -635.96 + t * (-487.81 - (-635.96))
-        else
-            return -487.81
-        end
     else
         -- "Fast Sea Run (Center/Direct)"
         -- Center channel from Harbour all the way to the Sea!
         return -37.81
+    end
+end
+
+function rafting.castOff()
+    local rem = rafting.getRemote()
+    if not rem then return end
+    local snap = rafting.currentSnapshot
+    local status = snap and snap.Status or rafting.status
+    if status == "Docked" then
+        rem:FireServer("Continue")
+        rem:FireServer("Sail", nil)
+        rem:FireServer("Vote", true)
+    else
+        rem:FireServer("Sail", nil)
+        rem:FireServer("Vote", true)
     end
 end
 
@@ -8617,9 +8595,8 @@ function rafting.handleSnapshot(payload)
         rafting.isSailing = true
         rafting.statusText = "Raft Ready! Casting off..."
         task.delay(0.6, function()
-            local rem = rafting.getRemote()
-            if rem then
-                rem:FireServer("Sail", nil)
+            if rafting.enabled and rafting.status == "Ready" then
+                rafting.castOff()
             end
         end)
     elseif rafting.status == "Travelling" then
@@ -8632,8 +8609,7 @@ function rafting.handleSnapshot(payload)
         rafting.statusText = string.format("Docked at clearing. Resuming in %ds...", rafting.dockMaxWaitSeconds)
         task.delay(rafting.dockMaxWaitSeconds, function()
             if rafting.enabled and rafting.status == "Docked" then
-                local rem = rafting.getRemote()
-                if rem then rem:FireServer("Sail", nil) end
+                rafting.castOff()
             end
         end)
     end
@@ -8643,24 +8619,8 @@ end
 
 function rafting.handleBoarding(payload)
     rafting.status = "Boarding"
-    rafting.statusText = "Boarding raft..."
+    rafting.statusText = "Boarding raft (walking aboard)..."
     rafting.updateCards()
-    task.spawn(function()
-        task.wait(0.4)
-        local deck = nil
-        for _ = 1, 20 do
-            deck = rafting.getRaftDeck()
-            if deck then break end
-            task.wait(0.25)
-        end
-        if deck and root and char then
-            -- Stand securely on top of the deck surface (Y = 3.8 studs above deck origin)
-            -- This ensures the cow hooves never clip through the deck slab into water!
-            root.CFrame = deck.CFrame * CFrame.new(0, 3.8, 0)
-            stopCharacterVelocity()
-            root.AssemblyLinearVelocity = deck.AssemblyLinearVelocity
-        end
-    end)
 end
 
 function rafting.stepSteering()
@@ -8688,28 +8648,59 @@ function rafting.stepSteering()
     -- Look ahead 35 studs downriver to steer smoothly into upcoming curves
     local lookAheadX = posX + 35
     local targetZ = rafting.getTargetZ(lookAheadX)
+
+    -- Safety corridor clamp for Reach 1 / Harbour
+    if lookAheadX <= 1844.58 then
+        targetZ = math.clamp(targetZ, -55, -20)
+    end
+
     local errorZ = targetZ - posZ
 
     -- Determine target X on deck (-5.5 = Left / North, +5.5 = Right / South)
     -- Proportional steering with deadzone to eliminate wild zig-zagging
     local targetDeckX = 0
-    if math.abs(errorZ) <= 2.5 then
+    if math.abs(errorZ) <= 2.0 then
         targetDeckX = 0 -- In channel center: run straight
-    elseif errorZ < -2.5 then
+    elseif errorZ < -2.0 then
         -- Raft is too far South, steer North (Left, -X on deck)
-        targetDeckX = math.clamp(errorZ * 0.7, -5.5, -2.0)
+        targetDeckX = math.clamp(errorZ * 0.6, -5.5, -1.8)
     else
         -- Raft is too far North, steer South (Right, +X on deck)
-        targetDeckX = math.clamp(errorZ * 0.7, 2.0, 5.5)
+        targetDeckX = math.clamp(errorZ * 0.6, 1.8, 5.5)
     end
 
-    -- Position character securely on top of the deck (+3.8 studs on local Y)
-    -- Keeping the cow anchored relative to the deck prevents falling off or slipping into river water!
+    -- Steer by walking the cow across the deck using native Humanoid physics
+    -- This keeps the cow standing fully on top of the deck with hooves grounded,
+    -- preserving Roblox's Inverse Kinematics (IK) and platform-standing physics!
     if root and char and humanoid and humanoid.Health > 0 then
-        local deckCF = deck.CFrame
-        local targetCF = deckCF * CFrame.new(targetDeckX, 3.8, 0)
-        root.CFrame = CFrame.lookAt(targetCF.Position, targetCF.Position + deckCF.LookVector)
-        root.AssemblyLinearVelocity = deck.AssemblyLinearVelocity
+        local cowPos = root.Position
+        local cowRel = deck.CFrame:PointToObjectSpace(cowPos)
+
+        -- Overboard recovery safeguard: only teleport if thrown off the raft into water
+        if math.abs(cowRel.X) > 9 or math.abs(cowRel.Z) > 18 or cowRel.Y < -4 then
+            root.CFrame = deck.CFrame * CFrame.new(0, 3.5, 0)
+            stopCharacterVelocity()
+            root.AssemblyLinearVelocity = deck.AssemblyLinearVelocity
+        else
+            local diffX = targetDeckX - cowRel.X
+            local diffZ = 0 - cowRel.Z -- keep near center lengthwise
+
+            local moveDir = Vector3.zero
+            if math.abs(diffX) > 0.6 then
+                -- Walk laterally (RightVector is along +X of deck)
+                moveDir = moveDir + (deck.CFrame.RightVector * math.sign(diffX))
+            end
+            if math.abs(diffZ) > 3.0 then
+                -- Nudge back towards center lengthwise if drifting
+                moveDir = moveDir - (deck.CFrame.LookVector * math.sign(cowRel.Z))
+            end
+
+            if moveDir.Magnitude > 0.1 then
+                humanoid:Move(moveDir.Unit, false)
+            else
+                humanoid:Move(Vector3.zero, false)
+            end
+        end
     end
 
     -- Auto-Boost on straightaways
@@ -8761,6 +8752,9 @@ function rafting.startVoyage()
 end
 
 function rafting.endVoyage()
+    if humanoid then
+        pcall(function() humanoid:Move(Vector3.zero, false) end)
+    end
     local rem = rafting.getRemote()
     if rem then
         rem:FireServer("Return", nil)
@@ -8827,12 +8821,18 @@ function rafting.stopSteeringLoop()
         pcall(function() rafting.heartbeatConn:Disconnect() end)
         rafting.heartbeatConn = nil
     end
+    if humanoid then
+        pcall(function() humanoid:Move(Vector3.zero, false) end)
+    end
 end
 
 function rafting.cleanup()
     rafting.enabled = false
     rafting.autoLoop = false
     rafting.stopSteeringLoop()
+    if humanoid then
+        pcall(function() humanoid:Move(Vector3.zero, false) end)
+    end
     for _, conn in ipairs(rafting.connections) do
         if conn and conn.Disconnect then
             pcall(function() conn:Disconnect() end)
@@ -8928,11 +8928,8 @@ RaftingTab:CreateButton({
 RaftingTab:CreateButton({
     Name = "Sail Now / Cast Off",
     Callback = function()
-        local rem = rafting.getRemote()
-        if rem then
-            rem:FireServer("Sail", nil)
-            Window:Notify({ Title = "Sailing", Content = "Cast off signal sent!", Duration = 3 })
-        end
+        rafting.castOff()
+        Window:Notify({ Title = "Sailing", Content = "Cast off signal sent!", Duration = 3 })
     end,
 })
 
