@@ -8415,37 +8415,140 @@ function rafting.getRaftDeck()
     return nil, nil
 end
 
+local harbourRibbon = {
+    { -600, -35.0 },
+    { -500, -36.0 },
+    { -400, -38.0 },
+    { -300, -40.5 },
+    { -200, -39.0 },
+    { -100, -37.0 },
+    { 0,    -36.5 },
+    { 100,  -39.0 },
+    { 200,  -41.0 },
+    { 300,  -39.0 },
+    { 400,  -37.0 },
+    { 500,  -35.0 },
+    { 600,  -36.0 },
+    { 675,  -36.0 },
+    { 700,  -36.5 },
+    { 760,  -37.81 },
+    { 1094.58, -37.81 },
+}
+
+local function getHarbourZ(posX)
+    if posX <= harbourRibbon[1][1] then
+        return harbourRibbon[1][2]
+    end
+    if posX >= harbourRibbon[#harbourRibbon][1] then
+        return harbourRibbon[#harbourRibbon][2]
+    end
+    for i = 1, #harbourRibbon - 1 do
+        local p0 = harbourRibbon[i]
+        local p1 = harbourRibbon[i + 1]
+        if posX >= p0[1] and posX <= p1[1] then
+            local span = p1[1] - p0[1]
+            if span <= 0 then return p0[2] end
+            local alpha = (posX - p0[1]) / span
+            return p0[2] + alpha * (p1[2] - p0[2])
+        end
+    end
+    return -37.81
+end
+
 function rafting.getTargetZ(posX)
+    -- In Harbour (Dock at -241 to Delta Entrance at 1094.58), all paths follow the official canal ribbon!
+    if posX <= 1094.58 then
+        return getHarbourZ(posX)
+    end
+
+    -- Reach 1 (1094.58 to 1844.58): Main river channel is straight at Z = -37.81
     local r = rafting.route
     if r == "North Channels (Caves & Drops)" then
-        if posX <= 1095 then return -37.81
-        elseif posX <= 2345 then return -262.81
-        elseif posX <= 3070 then return -487.81
-        elseif posX <= 3795 then return -712.81
-        elseif posX <= 4520 then return -937.81
-        elseif posX <= 5295 then return -1162.81
-        else return -1387.81
+        if posX <= 1844.58 then
+            return -37.81
+        elseif posX <= 2844.58 then
+            -- Branch North from -37.81 to -262.81
+            local t = math.clamp((posX - 1844.58) / 1000, 0, 1)
+            return -37.81 + t * (-262.81 - (-37.81))
+        elseif posX <= 3569.58 then
+            local t = math.clamp((posX - 2844.58) / 725, 0, 1)
+            return -262.81 + t * (-487.81 - (-262.81))
+        elseif posX <= 4294.58 then
+            local t = math.clamp((posX - 3569.58) / 725, 0, 1)
+            return -487.81 + t * (-712.81 - (-487.81))
+        elseif posX <= 5019.58 then
+            local t = math.clamp((posX - 4294.58) / 725, 0, 1)
+            return -712.81 + t * (-937.81 - (-712.81))
+        elseif posX <= 5794.58 then
+            local t = math.clamp((posX - 5019.58) / 775, 0, 1)
+            return -937.81 + t * (-1162.81 - (-937.81))
+        else
+            local t = math.clamp((posX - 5794.58) / 800, 0, 1)
+            return -1162.81 + t * (-1387.81 - (-1162.81))
         end
     elseif r == "South Channels (Scenic & Clearings)" then
-        if posX <= 1095 then return -37.81
-        elseif posX <= 2345 then return 187.19
-        elseif posX <= 3070 then return 412.19
-        elseif posX <= 3795 then return 637.19
-        elseif posX <= 4520 then return 862.19
-        elseif posX <= 5295 then return 1087.19
-        else return 1312.19
+        if posX <= 1844.58 then
+            return -37.81
+        elseif posX <= 2844.58 then
+            -- Branch South from -37.81 to 187.19
+            local t = math.clamp((posX - 1844.58) / 1000, 0, 1)
+            return -37.81 + t * (187.19 - (-37.81))
+        elseif posX <= 3569.58 then
+            local t = math.clamp((posX - 2844.58) / 725, 0, 1)
+            return 187.19 + t * (412.19 - 187.19)
+        elseif posX <= 4294.58 then
+            local t = math.clamp((posX - 3569.58) / 725, 0, 1)
+            return 412.19 + t * (637.19 - 412.19)
+        elseif posX <= 5019.58 then
+            local t = math.clamp((posX - 4294.58) / 725, 0, 1)
+            return 637.19 + t * (862.19 - 637.19)
+        elseif posX <= 5794.58 then
+            local t = math.clamp((posX - 5019.58) / 775, 0, 1)
+            return 862.19 + t * (1087.19 - 862.19)
+        else
+            local t = math.clamp((posX - 5794.58) / 800, 0, 1)
+            return 1087.19 + t * (1312.19 - 1087.19)
         end
     elseif r == "Clearing & Chest Explorer" then
-        if posX <= 1334 then return -175.96
-        elseif posX <= 1622 then return 113.34
-        elseif posX <= 2985 then return -635.96
-        elseif posX <= 3144 then return 578.34
-        elseif posX <= 4448 then return 712.04
-        elseif posX <= 4604 then return 1013.34
-        elseif posX <= 6014 then return -772.66
-        else return -190.96
+        -- Navigates along channel centerlines and only enters clearing coves at the actual opening
+        if posX <= 1240 then
+            return -37.81 -- Main Reach 1 Channel
+        elseif posX <= 1360 then
+            -- Clearing 01 Entrance Cove (X = 1334.58, Z = -175.96)
+            local t = math.clamp((posX - 1240) / 94.58, 0, 1)
+            return -37.81 + t * (-175.96 - (-37.81))
+        elseif posX <= 1480 then
+            -- Returning from Clearing 01 to Main Channel
+            local t = math.clamp((posX - 1360) / 120, 0, 1)
+            return -175.96 + t * (-37.81 - (-175.96))
+        elseif posX <= 1560 then
+            return -37.81
+        elseif posX <= 1650 then
+            -- Clearing 02 Entrance Cove (X = 1622.58, Z = 113.34)
+            local t = math.clamp((posX - 1560) / 62.58, 0, 1)
+            return -37.81 + t * (113.34 - (-37.81))
+        elseif posX <= 1780 then
+            -- Returning to Main Channel
+            local t = math.clamp((posX - 1650) / 130, 0, 1)
+            return 113.34 + t * (-37.81 - 113.34)
+        elseif posX <= 2880 then
+            -- Navigating through Reach 2 North towards Clearing 03
+            local t = math.clamp((posX - 1780) / 1064.58, 0, 1)
+            return -37.81 + t * (-262.81 - (-37.81))
+        elseif posX <= 3020 then
+            -- Clearing 03 Cove (X = 2985.08, Z = -635.96)
+            local t = math.clamp((posX - 2880) / 105.08, 0, 1)
+            return -262.81 + t * (-635.96 - (-262.81))
+        elseif posX <= 3180 then
+            -- Returning to North Channel
+            local t = math.clamp((posX - 3020) / 160, 0, 1)
+            return -635.96 + t * (-487.81 - (-635.96))
+        else
+            return -487.81
         end
     else
+        -- "Fast Sea Run (Center/Direct)"
+        -- Center channel from Harbour all the way to the Sea!
         return -37.81
     end
 end
@@ -8543,19 +8646,19 @@ function rafting.handleBoarding(payload)
     rafting.statusText = "Boarding raft..."
     rafting.updateCards()
     task.spawn(function()
-        task.wait(0.5)
+        task.wait(0.4)
         local deck = nil
-        for _ = 1, 15 do
+        for _ = 1, 20 do
             deck = rafting.getRaftDeck()
             if deck then break end
-            task.wait(0.3)
+            task.wait(0.25)
         end
         if deck and root and char then
-            char:PivotTo(deck.CFrame * CFrame.new(0, 2, 0))
+            -- Stand securely on top of the deck surface (Y = 3.8 studs above deck origin)
+            -- This ensures the cow hooves never clip through the deck slab into water!
+            root.CFrame = deck.CFrame * CFrame.new(0, 3.8, 0)
             stopCharacterVelocity()
-        elseif payload and payload.SlotCFrame and root and char then
-            char:PivotTo(payload.SlotCFrame * CFrame.new(0, 2, 0))
-            stopCharacterVelocity()
+            root.AssemblyLinearVelocity = deck.AssemblyLinearVelocity
         end
     end)
 end
@@ -8573,10 +8676,8 @@ function rafting.stepSteering()
 
     local posX = frame.Position.X
     local posZ = frame.Position.Z
-    local targetZ = rafting.getTargetZ(posX)
-    local errorZ = targetZ - posZ
 
-    -- Reached the Sea?
+    -- Reached the Sea? (SeaStartX = 6594.58)
     if posX >= 6590 then
         rafting.statusText = "Reached The Sea! Ending voyage..."
         Window:Notify({ Title = "Voyage Finished", Content = "Reached The Sea! Returning to shore.", Duration = 4 })
@@ -8584,20 +8685,31 @@ function rafting.stepSteering()
         return
     end
 
+    -- Look ahead 35 studs downriver to steer smoothly into upcoming curves
+    local lookAheadX = posX + 35
+    local targetZ = rafting.getTargetZ(lookAheadX)
+    local errorZ = targetZ - posZ
+
     -- Determine target X on deck (-5.5 = Left / North, +5.5 = Right / South)
+    -- Proportional steering with deadzone to eliminate wild zig-zagging
     local targetDeckX = 0
-    if errorZ < -6.0 then
-        targetDeckX = -5.5
-    elseif errorZ > 6.0 then
-        targetDeckX = 5.5
+    if math.abs(errorZ) <= 2.5 then
+        targetDeckX = 0 -- In channel center: run straight
+    elseif errorZ < -2.5 then
+        -- Raft is too far South, steer North (Left, -X on deck)
+        targetDeckX = math.clamp(errorZ * 0.7, -5.5, -2.0)
     else
-        targetDeckX = 0
+        -- Raft is too far North, steer South (Right, +X on deck)
+        targetDeckX = math.clamp(errorZ * 0.7, 2.0, 5.5)
     end
 
-    -- Position character on deck to apply steering weight
+    -- Position character securely on top of the deck (+3.8 studs on local Y)
+    -- Keeping the cow anchored relative to the deck prevents falling off or slipping into river water!
     if root and char and humanoid and humanoid.Health > 0 then
-        local targetWorldPos = deck.CFrame:PointToWorldSpace(Vector3.new(targetDeckX, 1.2, 0))
-        humanoid:MoveTo(targetWorldPos)
+        local deckCF = deck.CFrame
+        local targetCF = deckCF * CFrame.new(targetDeckX, 3.8, 0)
+        root.CFrame = CFrame.lookAt(targetCF.Position, targetCF.Position + deckCF.LookVector)
+        root.AssemblyLinearVelocity = deck.AssemblyLinearVelocity
     end
 
     -- Auto-Boost on straightaways
@@ -8605,7 +8717,7 @@ function rafting.stepSteering()
         local energy = snap.Energy or 0
         local maxEnergy = snap.MaxEnergy or 100
         local energyPct = (energy / math.max(maxEnergy, 1)) * 100
-        if energyPct >= rafting.minBoostStamina and math.abs(errorZ) <= 12 and not snap.Boosting then
+        if energyPct >= rafting.minBoostStamina and math.abs(errorZ) <= 8 and not snap.Boosting then
             rafting.lastBoostTime = os.clock()
             local rem = rafting.getRemote()
             if rem then rem:FireServer("Boost") end
