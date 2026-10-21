@@ -8721,6 +8721,7 @@ local rafting = {
     autoRepair = true,
     emergencyReturnHp = 25,
     autoEvadeHobgoblins = true,
+    autoRecoverOverboard = true,
     incomingRocks = {},
     isEvadingRock = false,
     currentDockSite = nil,
@@ -9098,7 +9099,7 @@ function rafting.castOff()
             -- Ensure character lands cleanly on deck by placing above deck and allowing physics contact
             local rel = deck.CFrame:PointToObjectSpace(root.Position)
             if math.abs(rel.X) > 5.5 or math.abs(rel.Z) > 14.0 or rel.Y < -0.5 then
-                root.CFrame = deck.CFrame * CFrame.new(0, 4.0, 0)
+                root.CFrame = deck.CFrame * CFrame.new(0, 6.5, 0)
                 stopCharacterVelocity()
                 task.wait(0.25)
             end
@@ -9675,10 +9676,19 @@ function rafting.stepSteering(dt)
         local cowRel = deck.CFrame:PointToObjectSpace(cowPos)
         local distFromDeck = (cowPos - deck.Position).Magnitude
 
-        -- If character is separated from the raft (died, respawned, or lost downriver), terminate session immediately!
+        -- If character is separated from the raft (jumped off, thrown, or fell in water)
         if distFromDeck > 30.0 then
-            rafting.onSessionEnded("Character separated from raft. Automated rafting stopped.")
-            return
+            if rafting.autoRecoverOverboard then
+                -- Auto-recover character back onto raft deck ~3 studs above deck!
+                root.CFrame = deck.CFrame * CFrame.new(0, 6.5, 0)
+                stopCharacterVelocity()
+                local rem = rafting.getRemote()
+                if rem then pcall(function() rem:FireServer("Boarded") end) end
+                return
+            else
+                rafting.onSessionEnded("Character separated from raft. Automated rafting stopped.")
+                return
+            end
         end
 
         -- Oriented Bounding Box Deck Check: Longboat is 14 wide (X: -7 to +7), 32 long (Z: -16 to +16).
@@ -9690,8 +9700,7 @@ function rafting.stepSteering(dt)
             if not rafting.overboardStartTime then
                 rafting.overboardStartTime = os.clock()
             elseif os.clock() - rafting.overboardStartTime > 0.35 then
-                local recPos = deck.CFrame:PointToWorldSpace(Vector3.new(0, 3.45, 0))
-                root.CFrame = CFrame.new(recPos) * (root.CFrame - root.CFrame.Position)
+                root.CFrame = deck.CFrame * CFrame.new(0, 6.5, 0)
                 stopCharacterVelocity()
                 rafting.overboardStartTime = nil
                 local rem = rafting.getRemote()
@@ -9703,7 +9712,7 @@ function rafting.stepSteering(dt)
             -- Deck Railing Clamp: Never allow character center beyond +/- 6.2 on the deck (deck boundary is +/- 7.0)
             if math.abs(cowRel.X) > 6.2 then
                 local clampedX = math.clamp(cowRel.X, -5.8, 5.8)
-                root.CFrame = deck.CFrame * CFrame.new(clampedX, math.max(cowRel.Y, 1.5), cowRel.Z)
+                root.CFrame = deck.CFrame * CFrame.new(clampedX, math.max(cowRel.Y, 3.45), cowRel.Z)
                 stopCharacterVelocity()
             end
 
@@ -9957,6 +9966,21 @@ function rafting.teleportToRaftYard()
     end
 end
 
+function rafting.teleportToDeck()
+    local deck = rafting.getRaftDeck()
+    if root and deck then
+        stopCharacterVelocity()
+        root.CFrame = deck.CFrame * CFrame.new(0, 6.5, 0)
+        local rem = rafting.getRemote()
+        if rem then
+            pcall(function() rem:FireServer("Boarded") end)
+        end
+        Window:Notify({ Title = "Teleported", Content = "Placed safely ~3 studs above raft deck.", Duration = 3 })
+    else
+        Window:Notify({ Title = "Teleport Failed", Content = "Raft deck not found.", Duration = 3 })
+    end
+end
+
 function rafting.initClientListener()
     if rafting.clientEventConn then return end
     local clientEvent = cowRemotes and cowRemotes:FindFirstChild("ClientEvent")
@@ -10198,6 +10222,13 @@ RaftingTab:CreateButton({
     end,
 })
 
+RaftingTab:CreateButton({
+    Name = "Teleport Above Raft Deck",
+    Callback = function()
+        rafting.teleportToDeck()
+    end,
+})
+
 RaftingTab:CreateSection({ Name = "Route Navigation Settings" })
 
 RaftingTab:CreateDropdown({
@@ -10252,6 +10283,15 @@ RaftingTab:CreateToggle({
 })
 
 RaftingTab:CreateSection({ Name = "Automation & Safety" })
+
+RaftingTab:CreateToggle({
+    Name = "Auto-Recover Overboard / Separated",
+    CurrentValue = true,
+    Flag = "Toggle_Rafting_AutoRecoverOverboard",
+    Callback = function(Value)
+        rafting.autoRecoverOverboard = Value
+    end,
+})
 
 RaftingTab:CreateToggle({
     Name = "Auto-Boost (Sprint on Straights)",
