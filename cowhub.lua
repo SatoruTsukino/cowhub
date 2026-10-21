@@ -8821,7 +8821,7 @@ local clearingLandCoords = {
 }
 
 local clearingSites = {
-    { Id = "Clearing_01", Name = "Clearing 01 (North)", BankSide = "North", Mouth = Vector3.new(1250.0, 700.5, -87.36), MinX = 1174.58, MaxX = 1494.58, MinZ = -261.46, MaxZ = -87.36, LandPos = Vector3.new(1344.0, 702.5, -180.0) },
+    { Id = "Clearing_01", Name = "Clearing 01 (North)", BankSide = "North", Mouth = Vector3.new(1334.58, 700.5, -87.36), MinX = 1174.58, MaxX = 1494.58, MinZ = -261.46, MaxZ = -87.36, LandPos = Vector3.new(1344.0, 702.5, -180.0) },
     { Id = "Clearing_02", Name = "Clearing 02 (South)", BankSide = "South", Mouth = Vector3.new(1622.58, 700.5, 11.74),  MinX = 1447.58, MaxX = 1797.58, MinZ = 11.74,   MaxZ = 211.84,  LandPos = Vector3.new(1622.58, 702.5, 113.34) },
     { Id = "Clearing_03", Name = "Clearing 03 (North)", BankSide = "North", Mouth = Vector3.new(2985.08, 700.5, -537.36), MinX = 2854.58, MaxX = 3115.58, MinZ = -731.46, MaxZ = -537.36, LandPos = Vector3.new(2985.08, 702.5, -635.96) },
     { Id = "Clearing_04", Name = "Clearing 04 (South)", BankSide = "South", Mouth = Vector3.new(3144.58, 700.5, 463.74),  MinX = 2997.58, MaxX = 3291.58, MinZ = 463.74,  MaxZ = 691.84,  LandPos = Vector3.new(3144.58, 702.5, 578.34) },
@@ -8861,39 +8861,53 @@ function rafting.getTargetZ(posX, currentZ)
 
     -- "Clearing & Chest Explorer" (Docks at clearings along the river)
     if r == "Clearing & Chest Explorer" then
-        if posX <= 1380 then
+        if posX <= 1420 then
             if rafting.visitedSites["Clearing_01"] then
-                -- Depart Clearing 01: steer directly forward towards river center (-37.81)
-                local t = math.clamp((posX - 1300) / 80, 0, 1)
-                return -105.0 + t * (-37.81 - (-105.0))
-            elseif posX <= 1260 then
-                -- Approach Clearing 01 (North cove shoreline at -105.0, avoids -261 back cliff)
-                local t = math.clamp((posX - 1094.58) / 165.42, 0, 1)
-                return -37.81 + t * (-105.0 - (-37.81))
+                -- Depart Clearing 01: smoothly steer out of cove back to river center (-37.81)
+                if posX <= 1320 then
+                    return -100.0
+                else
+                    local t = math.clamp((posX - 1320) / 80, 0, 1)
+                    return -100.0 + t * (-37.81 - (-100.0))
+                end
+            elseif posX <= 1250 then
+                -- Reach 1 Channel: stay safely centered in main river (-37.81), avoiding solid North wall at -92.46
+                return -37.81
+            elseif posX <= 1320 then
+                -- Enter Clearing 01 cove mouth (mouth extends X=1250 to 1380) towards shoreline (-100.0)
+                local t = math.clamp((posX - 1250) / 70, 0, 1)
+                return -37.81 + t * (-100.0 - (-37.81))
             else
-                -- Dock at Clearing 01
-                return -105.0
+                -- Dock shoreline at Clearing 01
+                return -100.0
             end
-        elseif posX <= 1500 then
-            -- Depart Clearing 01: cross from river center towards Clearing 02 approach
-            local t = math.clamp((posX - 1380) / 120, 0, 1)
-            return -37.81 + t * (65.0 - (-37.81))
-        elseif posX <= 1700 then
+        elseif posX <= 1520 then
+            -- Depart Clearing 01: stay centered in river channel (-37.81)
+            return -37.81
+        elseif posX <= 1750 then
             if rafting.visitedSites["Clearing_02"] then
-                -- Depart Clearing 02: head forward towards South Channel (412.19)
-                local t = math.clamp((posX - 1620) / 80, 0, 1)
-                return 65.0 + t * (412.19 - 65.0)
+                -- Depart Clearing 02: head forward and transition towards South Channel (412.19)
+                if posX <= 1620 then
+                    return 60.0
+                else
+                    local t = math.clamp((posX - 1620) / 130, 0, 1)
+                    return 60.0 + t * (412.19 - 60.0)
+                end
+            elseif posX <= 1540 then
+                -- Approach Reach 1 end: stay centered in river channel (-37.81)
+                return -37.81
             elseif posX <= 1620 then
-                -- Approach Clearing 02 (South cove shoreline at 65.0)
-                return 65.0
+                -- Enter Clearing 02 cove mouth (mouth extends X=1540 to 1700) towards shoreline (60.0)
+                local t = math.clamp((posX - 1540) / 80, 0, 1)
+                return -37.81 + t * (60.0 - (-37.81))
             else
-                -- Dock at Clearing 02
-                return 65.0
+                -- Dock shoreline at Clearing 02
+                return 60.0
             end
         elseif posX <= 1844.58 then
-            -- Depart Clearing 02 and merge into South Channel before Reach 2 River Split
-            local t = math.clamp((posX - 1700) / 144.58, 0, 1)
-            return 65.0 + t * (412.19 - 65.0)
+            -- Merge into South Channel before Reach 2 River Split
+            local t = math.clamp((posX - 1750) / 94.58, 0, 1)
+            return 60.0 + t * (412.19 - 60.0)
         elseif posX <= 2844.58 then
             -- Reach 2 South Diagonal Channel (FjordZones.lua Channel 2 South: X=1844.58 to 2844.58)
             -- Follows natural river diagonal from -37.81 to 412.19
@@ -9012,6 +9026,7 @@ function rafting.castOff()
     if root and deck and humanoid then
         humanoid.WalkSpeed = 24
         humanoid.AutoRotate = true
+        if root then pcall(function() root.Anchored = false end) end
         local deckTarget = deck.CFrame:PointToWorldSpace(Vector3.new(0, 3.45, 0))
         humanoid:MoveTo(deckTarget)
 
@@ -9224,8 +9239,9 @@ function rafting.handleSnapshot(payload)
         rafting.status = "Departing"
         rafting.isSailing = true
         rafting.statusText = "Departing dock..."
-    elseif payload.Status == "Travelling" and rafting.status ~= "Docked" then
+    elseif payload.Status == "Travelling" and (rafting.status ~= "Docked" or (payload.Speed and payload.Speed > 8.0)) then
         rafting.status = "Travelling"
+        rafting.isDockedState = false
         rafting.isSailing = true
         if not rafting.isEvadingRock then
             rafting.statusText = "Travelling down river..."
@@ -9254,13 +9270,14 @@ function rafting.handleSnapshot(payload)
         end
 
         -- Check if landing at an unvisited clearing or server reported Docked
-        local isServerDocked = (payload.Status == "Docked")
+        local isServerDocked = (payload.Status == "Docked") and (not payload.SiteId or payload.SiteId == site.Id or payload.SiteKind == "Clearing")
         if (rafting.route == "Clearing & Chest Explorer" or isServerDocked) and rafting.status ~= "Docked" then
             local site = payload.SiteId and rafting.getClearingById(payload.SiteId) or rafting.getNearbyClearing(posX, posZ)
             if site and (not rafting.visitedSites[site.Id] or isServerDocked) then
-                local distToMouth = (Vector3.new(posX, 700.5, posZ) - site.Mouth).Magnitude
-                local inCove = math.abs(posZ - (-37.81)) > 25
-                local reachedShore = isServerDocked or distToMouth < 40 or (inCove and speed < 8.0)
+                -- Must be legitimately inside the cove past river bank (North cove Z < -85, South cove Z > 45)
+                local inCove = (site.BankSide == "North" and posZ < -85.0) or (site.BankSide == "South" and posZ > 45.0)
+                -- Reached shore only if server confirmed dock OR raft is deep in cove and brought to a standstill
+                local reachedShore = isServerDocked or (inCove and posX >= site.MinX + 80 and speed < 3.0)
 
                 if reachedShore then
                     -- 1. Mark visited immediately so getTargetZ will NEVER target this clearing shore again
@@ -9278,7 +9295,7 @@ function rafting.handleSnapshot(payload)
                         if rem then pcall(function() rem:FireServer("BoostRelease") end) end
                     end
 
-                    -- Stop any active steering & release all keys
+                    -- Stop any active steering & release all keys once
                     if VirtualInput and VirtualInput.SendKeyEvent then
                         pcall(function()
                             VirtualInput:SendKeyEvent(false, Enum.KeyCode.A, false, game)
@@ -9291,6 +9308,9 @@ function rafting.handleSnapshot(payload)
                             humanoid:Move(Vector3.zero, false)
                             humanoid.AutoRotate = true
                         end)
+                    end
+                    if root then
+                        pcall(function() root.Anchored = false end)
                     end
                     stopCharacterVelocity()
 
@@ -9305,6 +9325,9 @@ function rafting.handleSnapshot(payload)
                                 if humanoid then
                                     humanoid.AutoRotate = true
                                     humanoid:Move(Vector3.zero, false)
+                                end
+                                if root then
+                                    pcall(function() root.Anchored = false end)
                                 end
                             end
                         end
@@ -9369,32 +9392,10 @@ function rafting.handleBoarding(payload)
 end
 
 function rafting.stepSteering(dt)
-    if not rafting.enabled or not rafting.currentSnapshot then return end
+    if not rafting.enabled or not rafting.isSailing then return end
     local snap = rafting.currentSnapshot
-    if rafting.status == "Docked" or snap.Status == "Docked" then
-        if rafting.isBoosting then
-            rafting.isBoosting = false
-            rafting.nextBoostAt = 0
-            local rem = rafting.getRemote()
-            if rem then pcall(function() rem:FireServer("BoostRelease") end) end
-        end
-        if rafting.lastSteerKey and VirtualInput and VirtualInput.SendKeyEvent then
-            pcall(function()
-                VirtualInput:SendKeyEvent(false, Enum.KeyCode.A, false, game)
-                VirtualInput:SendKeyEvent(false, Enum.KeyCode.D, false, game)
-            end)
-            rafting.lastSteerKey = nil
-        end
-        if humanoid then
-            pcall(function()
-                humanoid:Move(Vector3.zero, false)
-                humanoid.AutoRotate = true
-            end)
-        end
-        return
-    end
-
-    if snap.Status ~= "Travelling" and snap.Status ~= "Departing" then return end
+    if not snap or (snap.Status ~= "Travelling" and snap.Status ~= "Departing") then return end
+    if rafting.status == "Docked" or snap.Status == "Docked" then return end
 
     local frame = snap.Frame
     if not frame or typeof(frame) ~= "CFrame" then return end
@@ -9413,8 +9414,17 @@ function rafting.stepSteering(dt)
         return
     end
 
-    -- Look ahead 60 studs downriver to steer early into upcoming curves and clearings
-    local lookAheadX = posX + 60
+    -- Adaptive lookahead: use 50 studs in channels, but short 25 studs when approaching an unvisited cove opening
+    -- so the raft does not turn towards the bank before the opening arrives
+    local lookAhead = 50
+    if rafting.route == "Clearing & Chest Explorer" then
+        if not rafting.visitedSites["Clearing_01"] and posX >= 1150 and posX < 1250 then
+            lookAhead = 25
+        elseif not rafting.visitedSites["Clearing_02"] and posX >= 1450 and posX < 1540 then
+            lookAhead = 25
+        end
+    end
+    local lookAheadX = posX + lookAhead
     local targetZ = rafting.getTargetZ(lookAheadX, posZ)
 
     local errorZ = targetZ - posZ
@@ -9463,8 +9473,7 @@ function rafting.stepSteering(dt)
     end
     rafting.targetDeckX = targetDeckX
 
-    -- Active Steering via Humanoid:MoveTo
-    -- Walks the cow smoothly to targetDeckX without CFrame teleportation, maintaining solid FloorMaterial and deck carriage
+    -- Overboard safety check while travelling
     if root and char and humanoid and humanoid.Health > 0 then
         if shouldEvadeJump then
             humanoid.Jump = true
@@ -9481,11 +9490,6 @@ function rafting.stepSteering(dt)
             stopCharacterVelocity()
             local rem = rafting.getRemote()
             if rem then pcall(function() rem:FireServer("Boarded") end) end
-        else
-            humanoid.WalkSpeed = 24
-            humanoid.AutoRotate = true
-            local targetWorldPos = deck.CFrame:PointToWorldSpace(Vector3.new(targetDeckX, 3.45, 0))
-            humanoid:MoveTo(targetWorldPos)
         end
     end
 
@@ -9548,26 +9552,10 @@ function rafting.stepSteering(dt)
 end
 
 function rafting.stepSteeringAnimation(dt)
-    if not rafting.enabled or not rafting.currentSnapshot then return end
+    if not rafting.enabled or not rafting.isSailing then return end
     local snap = rafting.currentSnapshot
-    if rafting.status == "Docked" or snap.Status == "Docked" then
-        if rafting.lastSteerKey and VirtualInput and VirtualInput.SendKeyEvent then
-            pcall(function()
-                VirtualInput:SendKeyEvent(false, Enum.KeyCode.A, false, game)
-                VirtualInput:SendKeyEvent(false, Enum.KeyCode.D, false, game)
-            end)
-            rafting.lastSteerKey = nil
-        end
-        if humanoid then
-            pcall(function()
-                humanoid:Move(Vector3.zero, false)
-                humanoid.AutoRotate = true
-            end)
-        end
-        return
-    end
-
-    if snap.Status ~= "Travelling" and snap.Status ~= "Departing" then return end
+    if not snap or (snap.Status ~= "Travelling" and snap.Status ~= "Departing") then return end
+    if rafting.status == "Docked" or snap.Status == "Docked" then return end
 
     local deck = rafting.getRaftDeck()
     if not deck then return end
@@ -9576,17 +9564,24 @@ function rafting.stepSteeringAnimation(dt)
 
     -- 1. Humanoid Walk Direction: focus purely on lateral displacement (X on deck) to railing
     if root and char and humanoid and humanoid.Health > 0 then
-        local cowRel = deck.CFrame:PointToObjectSpace(root.Position)
-        local deltaX = targetDeckX - cowRel.X
-        if math.abs(deltaX) > 0.3 then
-            if humanoid.WalkSpeed < 24 then
-                humanoid.WalkSpeed = 24
+        local distFromDeck = (root.Position - deck.Position).Magnitude
+        if distFromDeck <= 25 then
+            local cowRel = deck.CFrame:PointToObjectSpace(root.Position)
+            local deltaX = targetDeckX - cowRel.X
+            if math.abs(deltaX) > 0.4 then
+                rafting.isWalkingDeck = true
+                if humanoid.WalkSpeed < 24 then
+                    humanoid.WalkSpeed = 24
+                end
+                local localMove = Vector3.new(deltaX, 0, 0)
+                local worldMove = deck.CFrame:VectorToWorldSpace(localMove)
+                humanoid:Move(Vector3.new(worldMove.X, 0, worldMove.Z).Unit, false)
+            else
+                if rafting.isWalkingDeck then
+                    rafting.isWalkingDeck = false
+                    humanoid:Move(Vector3.zero, false)
+                end
             end
-            local localMove = Vector3.new(deltaX, 0, 0)
-            local worldMove = deck.CFrame:VectorToWorldSpace(localMove)
-            humanoid:Move(Vector3.new(worldMove.X, 0, worldMove.Z).Unit, false)
-        else
-            humanoid:Move(Vector3.zero, false)
         end
     end
 
@@ -9673,6 +9668,7 @@ function rafting.startVoyage()
     rafting.startSteeringLoop()
     rafting.statusText = "Starting session at Raft Yard..."
     rafting.isSailing = false
+    if root then pcall(function() root.Anchored = false end) end
     rafting.updateCards()
 
     rem:FireServer("Start")
@@ -9803,6 +9799,7 @@ function rafting.stopSteeringLoop()
         pcall(function() rafting.renderSteppedConn:Disconnect() end)
         rafting.renderSteppedConn = nil
     end
+    if root then pcall(function() root.Anchored = false end) end
     if humanoid then
         pcall(function()
             humanoid:Move(Vector3.zero, false)
@@ -9820,6 +9817,7 @@ function rafting.cleanup()
     rafting.incomingRocks = {}
     rafting.isEvadingRock = false
     rafting.stopSteeringLoop()
+    if root then pcall(function() root.Anchored = false end) end
     if humanoid then
         pcall(function()
             humanoid:Move(Vector3.zero, false)
