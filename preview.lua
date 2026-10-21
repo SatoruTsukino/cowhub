@@ -9197,64 +9197,40 @@ function rafting.stepSteering(dt)
         return
     end
 
-    -- Look ahead 35 studs downriver to steer smoothly into upcoming curves
-    local lookAheadX = posX + 35
+    -- Look ahead 60 studs downriver to steer early into upcoming curves and clearings
+    local lookAheadX = posX + 60
     local targetZ = rafting.getTargetZ(lookAheadX, posZ)
 
     local errorZ = targetZ - posZ
     rafting.errorZ = errorZ
 
-    -- Determine target X on deck (-5.5 = Left / North, +5.5 = Right / South)
-    -- Continuous proportional steering with narrow deadzone (0.8)
+    -- Maximize Steering Logic:
+    -- Raft deck width is 14 studs (from -7.0 to +7.0).
+    -- When steering is required, move fully to the outer edge (+/- 6.0 studs)
+    -- to maximize lateral leverage and turning torque on the longboat.
     local targetDeckX = 0
-    if math.abs(errorZ) <= 0.8 then
+    if math.abs(errorZ) <= 1.0 then
         targetDeckX = 0 -- In channel center: run straight
-    elseif errorZ < -0.8 then
-        -- Raft is too far South (posZ > targetZ), steer North (Left, -X on deck)
-        targetDeckX = math.clamp(errorZ * 0.5, -5.5, -2.0)
+    elseif errorZ < -1.0 then
+        -- Raft is too far South (posZ > targetZ), steer maximum North (Left, -6.0 on deck)
+        targetDeckX = -6.0
     else
-        -- Raft is too far North (posZ < targetZ), steer South (Right, +X on deck)
-        targetDeckX = math.clamp(errorZ * 0.5, 2.0, 5.5)
+        -- Raft is too far North (posZ < targetZ), steer maximum South (Right, +6.0 on deck)
+        targetDeckX = 6.0
     end
     rafting.targetDeckX = targetDeckX
 
-    -- Calculate delta time safely
-    local dtVal = dt or 0.016
-    if dtVal <= 0 or dtVal > 0.1 then dtVal = 0.016 end
-
-    -- Steer the cow across the deck using Kinematic Relative Positioning
-    -- This keeps the cow standing fully on top of the deck with hooves grounded,
-    -- allowing Roblox humanoid platform replication and the game's _stepDeckMotion to work seamlessly!
+    -- Overboard recovery safeguard: ONLY teleport if character has genuinely fallen off the raft into the river
+    -- (No per-frame CFrame override during normal sailing, preserving solid FloorMaterial and preventing deck clipping!)
     if root and char and humanoid and humanoid.Health > 0 then
         local cowPos = root.Position
         local cowRel = deck.CFrame:PointToObjectSpace(cowPos)
-        local currentX = cowRel.X
-        local currentZ = cowRel.Z
-        local currentY = cowRel.Y
-
-        -- Overboard / fall-through recovery safeguard: only teleport if thrown off the raft into water
-        if math.abs(currentX) > 8.5 or math.abs(currentZ) > 17.5 or currentY < -1.5 or currentY > 7.0 then
-            local recPos = deck.CFrame:PointToWorldSpace(Vector3.new(targetDeckX, 3.45, 0))
+        local distFromDeck = (cowPos - deck.Position).Magnitude
+        local isOverboard = cowPos.Y < 698 or distFromDeck > 32 or cowRel.Y < -3.0 or math.abs(cowRel.X) > 12 or math.abs(cowRel.Z) > 22
+        if isOverboard then
+            local recPos = deck.CFrame:PointToWorldSpace(Vector3.new(0, 3.45, 0))
             root.CFrame = CFrame.new(recPos) * (root.CFrame - root.CFrame.Position)
             stopCharacterVelocity()
-        else
-            -- Preserve valid deck elevation (normal standing height is ~3.45)
-            if currentY < 1.0 or currentY > 5.5 then
-                currentY = 3.45
-            end
-
-            -- Smoothly step laterally across the deck at 16 studs/sec
-            local maxStep = 16.0 * dtVal
-            local deltaX = targetDeckX - currentX
-            local stepX = math.clamp(deltaX, -maxStep, maxStep)
-            local deltaZ = 0 - currentZ
-            local stepZ = math.clamp(deltaZ, -maxStep, maxStep)
-
-            local nextX = currentX + stepX
-            local nextZ = currentZ + stepZ
-            -- Move position across deck without compounding rotation (preserves cow world rotation, eliminating spin!)
-            local targetWorldPos = deck.CFrame:PointToWorldSpace(Vector3.new(nextX, currentY, nextZ))
-            root.CFrame = CFrame.new(targetWorldPos) * (root.CFrame - root.CFrame.Position)
         end
     end
 
@@ -9322,8 +9298,8 @@ function rafting.stepSteeringAnimation(dt)
         local localMove = Vector3.new(deltaX, 0, deltaZ)
 
         if localMove.Magnitude > 0.15 then
-            if humanoid.WalkSpeed < 16 then
-                humanoid.WalkSpeed = 16
+            if humanoid.WalkSpeed < 22 then
+                humanoid.WalkSpeed = 22
             end
             local worldMove = deck.CFrame:VectorToWorldSpace(localMove)
             humanoid:Move(Vector3.new(worldMove.X, 0, worldMove.Z).Unit, false)
@@ -9332,10 +9308,10 @@ function rafting.stepSteeringAnimation(dt)
         end
     end
 
-    -- 2. VirtualInput Key Simulation: Press A/D keys for native engine integration
+    -- 2. VirtualInput Key Simulation: Hold A/D keys for maximum engine turning torque
     if VirtualInput and VirtualInput.SendKeyEvent then
         pcall(function()
-            if targetDeckX < -1.5 then
+            if targetDeckX < -1.0 then
                 if rafting.lastSteerKey ~= "A" then
                     if rafting.lastSteerKey == "D" then
                         VirtualInput:SendKeyEvent(false, Enum.KeyCode.D, false, game)
@@ -9343,7 +9319,7 @@ function rafting.stepSteeringAnimation(dt)
                     VirtualInput:SendKeyEvent(true, Enum.KeyCode.A, false, game)
                     rafting.lastSteerKey = "A"
                 end
-            elseif targetDeckX > 1.5 then
+            elseif targetDeckX > 1.0 then
                 if rafting.lastSteerKey ~= "D" then
                     if rafting.lastSteerKey == "A" then
                         VirtualInput:SendKeyEvent(false, Enum.KeyCode.A, false, game)
@@ -9406,6 +9382,8 @@ function rafting.startVoyage()
     rafting.visitedSites = {}
     rafting.isDockedState = false
     rafting.lastLootedSite = nil
+    rafting.currentSnapshot = nil
+    rafting.targetDeckX = 0
     rafting.initClientListener()
     rafting.startSteeringLoop()
     rafting.statusText = "Starting session at Raft Yard..."
