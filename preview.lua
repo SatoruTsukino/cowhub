@@ -9073,6 +9073,7 @@ end
 function rafting.castOff()
     local rem = rafting.getRemote()
     if not rem then return end
+    rafting.lastCastOffTime = os.clock()
     local wasDocked = (rafting.status == "Docked")
 
     -- Set Travelling immediately so steering and recovery resume cleanly
@@ -9222,6 +9223,7 @@ function rafting.getHobgoblinEvasionOffset(deck, frame)
     local shouldJump = false
     local threatFound = false
 
+    local speed = (rafting.currentSnapshot and rafting.currentSnapshot.Speed) or 25
     local threats = {}
     for rockId, rock in pairs(rafting.incomingRocks) do
         local flight = rock.Flight or 1.8
@@ -9230,7 +9232,7 @@ function rafting.getHobgoblinEvasionOffset(deck, frame)
 
         if timeLeft < -0.5 or elapsed > 5.0 then
             rafting.incomingRocks[rockId] = nil
-        elseif timeLeft > 0 and timeLeft < 2.8 then
+        elseif timeLeft > 0 and timeLeft < 2.5 then
             table.insert(threats, { rock = rock, timeLeft = timeLeft })
         end
     end
@@ -9241,27 +9243,32 @@ function rafting.getHobgoblinEvasionOffset(deck, frame)
             local rock = entry.rock
             local timeLeft = entry.timeLeft
             local landingWorld = rock.Landing
-            local relLanding = deck.CFrame:PointToObjectSpace(landingWorld)
+
+            -- Project raft forward displacement at rock impact time
+            local forwardVec = deck.CFrame.LookVector
+            local predictedPos = deck.Position + forwardVec * (speed * timeLeft)
+            local predictedFrame = CFrame.new(predictedPos) * (deck.CFrame - deck.Position)
+            local relLanding = predictedFrame:PointToObjectSpace(landingWorld)
 
             -- Deck bounds: Longboat is 14 wide (X: -7 to +7), 32 long (Z: -16 to +16).
-            -- Threat window is within 14 studs laterally and 22 studs longitudinally.
-            if math.abs(relLanding.X) <= 14.0 and math.abs(relLanding.Z) <= 22.0 then
+            -- Threat window: within 11 studs laterally and 18 studs longitudinally.
+            if math.abs(relLanding.X) <= 11.0 and math.abs(relLanding.Z) <= 18.0 then
                 threatFound = true
-                -- 1. Steer HARD away from the landing side (safely at railing +/- 4.5, not past edge)
+                -- Steer away from impact side
                 if relLanding.X <= 0 then
-                    -- Rock landing on Left/Port side: steer Maximum Right (+4.5)
+                    -- Rock landing on Left/Port side: steer Right (+4.5)
                     bestEvadeDeckX = 4.5
                 else
-                    -- Rock landing on Right/Starboard side: steer Maximum Left (-4.5)
+                    -- Rock landing on Right/Starboard side: steer Left (-4.5)
                     bestEvadeDeckX = -4.5
                 end
 
-                -- 2. Longitudinal boost: if landing towards mid/stern, boost away
+                -- Longitudinal boost: if landing towards mid/stern, boost away
                 if relLanding.Z >= -4 then
                     shouldBoost = true
                 end
 
-                -- 3. Cow on-deck jump timing when about to strike
+                -- Cow on-deck jump timing when about to strike
                 if timeLeft <= 0.35 and root then
                     local cowDistToLanding = (root.Position - landingWorld).Magnitude
                     if cowDistToLanding <= 12 then
@@ -9314,14 +9321,6 @@ function rafting.handleSnapshot(payload)
         if not rafting.isEvadingRock then
             rafting.statusText = "Travelling down river..."
         end
-    elseif payload.Status == "Docked" and rafting.status ~= "Docked" then
-        rafting.status = "Docked"
-        rafting.isDockedState = true
-        rafting.isSailing = false
-        if payload.SiteId then
-            rafting.visitedSites[payload.SiteId] = true
-            rafting.currentDockSite = payload.SiteId
-        end
     end
 
     -- Check for Clearing Arrival / Docking when on "Clearing & Chest Explorer" or server docked
@@ -9338,22 +9337,27 @@ function rafting.handleSnapshot(payload)
         end
 
         -- Check if landing at an unvisited clearing or server reported Docked
-        local isServerDocked = (payload.Status == "Docked") and (not payload.SiteId or payload.SiteId == site.Id or payload.SiteKind == "Clearing")
-        if (rafting.route == "Hybrid Dynamic Explorer" or rafting.route == "Clearing & Chest Explorer" or isServerDocked) and rafting.status ~= "Docked" then
-            local site = payload.SiteId and rafting.getClearingById(payload.SiteId) or rafting.getNearbyClearing(posX, posZ)
-            local isSelectedSite = site and (not rafting.selectedClearings or rafting.selectedClearings[site.Id] == true or isServerDocked)
-            if site and isSelectedSite and (not rafting.visitedSites[site.Id] or isServerDocked) then
+        local isServerDocked = (payload.Status == "Docked")
+        if isServerDocked and rafting.lastCastOffTime and (os.clock() - rafting.lastCastOffTime < 6.0) then
+            isServerDocked = false
+        end
+
+        if rafting.status ~= "Docked" then
+            local site = (payload.SiteId and rafting.getClearingById(payload.SiteId)) or rafting.getNearbyClearing(posX, posZ)
+            local isSelectedSite = (not site) or (not rafting.selectedClearings) or (rafting.selectedClearings[site.Id] == true) or isServerDocked
+            if (site or isServerDocked) and isSelectedSite and ((site and not rafting.visitedSites[site.Id]) or isServerDocked) then
                 -- Must be legitimately inside the cove past river bank (North cove Z < -85, South cove Z > 45)
-                local inCove = (site.BankSide == "North" and posZ < -85.0) or (site.BankSide == "South" and posZ > 45.0)
+                local inCove = site and ((site.BankSide == "North" and posZ < -85.0) or (site.BankSide == "South" and posZ > 45.0))
                 -- Reached shore only if server confirmed dock OR raft is deep in cove and brought to a standstill
-                local reachedShore = isServerDocked or (inCove and posX >= site.MinX + 80 and speed < 3.0)
+                local reachedShore = isServerDocked or (site and inCove and posX >= site.MinX + 80 and speed < 3.0)
 
                 if reachedShore then
+                    local siteId = (site and site.Id) or payload.SiteId or "Clearing_Dock"
                     -- 1. Mark visited immediately so getTargetZ will NEVER target this clearing shore again
-                    rafting.visitedSites[site.Id] = true
+                    rafting.visitedSites[siteId] = true
                     rafting.status = "Docked"
                     rafting.isDockedState = true
-                    rafting.currentDockSite = site.Id
+                    rafting.currentDockSite = siteId
                     rafting.isSailing = false
 
                     -- Stop any active boost immediately
@@ -9384,34 +9388,36 @@ function rafting.handleSnapshot(payload)
                     stopCharacterVelocity()
 
                     -- Safe dry-land placement so character doesn't fall into river
-                    task.spawn(function()
-                        task.wait(0.2)
-                        if rafting.status == "Docked" and root then
-                            local landPos = site.LandPos
-                            if landPos then
-                                stopCharacterVelocity()
-                                root.CFrame = CFrame.new(landPos)
-                                if humanoid then
-                                    humanoid.AutoRotate = true
-                                    humanoid:Move(Vector3.zero, false)
-                                end
-                                if root then
-                                    pcall(function() root.Anchored = false end)
+                    if site and site.LandPos then
+                        task.spawn(function()
+                            task.wait(0.2)
+                            if rafting.status == "Docked" and root then
+                                local landPos = site.LandPos
+                                if landPos then
+                                    stopCharacterVelocity()
+                                    root.CFrame = CFrame.new(landPos)
+                                    if humanoid then
+                                        humanoid.AutoRotate = true
+                                        humanoid:Move(Vector3.zero, false)
+                                    end
+                                    if root then
+                                        pcall(function() root.Anchored = false end)
+                                    end
                                 end
                             end
-                        end
-                    end)
+                        end)
+                    end
 
                     -- Loot TeamChest if present
-                    if site.Id ~= rafting.lastLootedSite then
-                        rafting.lastLootedSite = site.Id
+                    if siteId ~= rafting.lastLootedSite then
+                        rafting.lastLootedSite = siteId
                         task.spawn(function()
                             task.wait(0.8)
                             pcall(function()
                                 local remotes = cowRemotes or (game:GetService("ReplicatedStorage"):FindFirstChild("CowGame") and game.ReplicatedStorage.CowGame:FindFirstChild("Remotes"))
                                 local teamChestReq = remotes and remotes:FindFirstChild("TeamChestRequest")
                                 if teamChestReq then
-                                    teamChestReq:FireServer(site.Id)
+                                    teamChestReq:FireServer(siteId)
                                 end
                             end)
                         end)
@@ -9419,14 +9425,15 @@ function rafting.handleSnapshot(payload)
 
                     -- Auto-departure delay or manual
                     if rafting.autoContinueFromDock or rafting.autoLoop then
-                        rafting.statusText = string.format("Docked at %s. Resuming in %ds...", site.Id, rafting.dockMaxWaitSeconds)
-                        task.delay(rafting.dockMaxWaitSeconds, function()
+                        local waitSecs = rafting.dockMaxWaitSeconds or 8
+                        rafting.statusText = string.format("Docked at %s. Resuming in %ds...", siteId, waitSecs)
+                        task.delay(waitSecs, function()
                             if rafting.enabled and rafting.status == "Docked" then
                                 rafting.castOff()
                             end
                         end)
                     else
-                        rafting.statusText = string.format("Docked at %s. Looted chest! Click 'Sail Now' to resume.", site.Id)
+                        rafting.statusText = string.format("Docked at %s. Looted chest! Click 'Sail Now' to resume.", siteId)
                     end
                 end
             end
@@ -9564,11 +9571,31 @@ function rafting.stepSteering(dt)
         targetDeckX = flowBias
     end
 
-    -- 6. Check Hobgoblin Rock Threat (Overrides targetDeckX if evasion is needed)
+    -- 6. Check Hobgoblin Rock Threat (Harmonized with Raycast Whisker Clearance)
+    local nearbySite = rafting.getNearbyClearing(posX, posZ)
+    local inCoveZone = math.abs(posZ - (-37.81)) > 15
+    local approachingCove = (rafting.route == "Clearing & Chest Explorer" or rafting.route == "Hybrid Dynamic Explorer") and nearbySite and not rafting.visitedSites[nearbySite.Id]
+
     local evadeDeckX, shouldEvadeBoost, shouldEvadeJump = rafting.getHobgoblinEvasionOffset(deck, frame)
     if evadeDeckX ~= nil then
-        targetDeckX = evadeDeckX
-        rafting.statusText = "DODGING HOBGOBLIN ROCK! Steering clear of impact..."
+        local safeToEvade = true
+        if forwardDist < 28.0 then
+            safeToEvade = false
+        elseif evadeDeckX < 0 and leftMinDist < 18.0 then
+            safeToEvade = false
+        elseif evadeDeckX > 0 and rightMinDist < 18.0 then
+            safeToEvade = false
+        elseif approachingCove or inCoveZone then
+            safeToEvade = false
+        end
+
+        if safeToEvade then
+            targetDeckX = evadeDeckX
+            rafting.statusText = "DODGING HOBGOBLIN ROCK! Steering clear of impact..."
+        else
+            shouldEvadeBoost = true
+            rafting.statusText = "HOBGOBLIN THREAT! Wall near: boosting ahead to dodge..."
+        end
     end
 
     rafting.targetDeckX = math.clamp(targetDeckX, -4.5, 4.5)
@@ -9625,10 +9652,7 @@ function rafting.stepSteering(dt)
     -- Auto-Boost on straightaways OR when evading incoming rocks!
     -- CRITICAL: Suppress boost when in or approaching any clearing cove to prevent wall ramming!
     local rem = rafting.getRemote()
-    local nearbySite = rafting.getNearbyClearing(posX, posZ)
-    local inCoveZone = math.abs(posZ - (-37.81)) > 15
-    local approachingCove = (rafting.route == "Clearing & Chest Explorer" or rafting.route == "Hybrid Dynamic Explorer") and nearbySite and not rafting.visitedSites[nearbySite.Id]
-    local suppressBoostForCove = (inCoveZone or approachingCove) and not shouldEvadeBoost
+    local suppressBoostForCove = inCoveZone or (approachingCove and posX >= (nearbySite.MinX - 30))
 
     if (rafting.autoBoost or shouldEvadeBoost) and rem and not suppressBoostForCove then
         local energy = snap.Energy or 0
