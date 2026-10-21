@@ -8808,7 +8808,7 @@ local function getHarbourZ(posX)
 end
 
 local clearingLandCoords = {
-    ["Clearing_01"] = Vector3.new(1334.58, 702.5, -175.96),
+    ["Clearing_01"] = Vector3.new(1344.0, 702.5, -180.0),
     ["Clearing_02"] = Vector3.new(1622.58, 702.5, 113.34),
     ["Clearing_03"] = Vector3.new(2985.08, 702.5, -635.96),
     ["Clearing_04"] = Vector3.new(3144.58, 702.5, 578.34),
@@ -8821,16 +8821,16 @@ local clearingLandCoords = {
 }
 
 local clearingSites = {
-    { Id = "Clearing_01", Name = "Clearing 01 (North)", Mouth = Vector3.new(1334.58, 700.5, -175.96), MinX = 1174.58, MaxX = 1494.58, MinZ = -261.46, MaxZ = -87.36, LandPos = Vector3.new(1334.58, 702.5, -175.96) },
-    { Id = "Clearing_02", Name = "Clearing 02 (South)", Mouth = Vector3.new(1622.58, 700.5, 113.34),  MinX = 1447.58, MaxX = 1797.58, MinZ = 11.74,   MaxZ = 211.84,  LandPos = Vector3.new(1622.58, 702.5, 113.34) },
-    { Id = "Clearing_03", Name = "Clearing 03 (North)", Mouth = Vector3.new(2985.08, 700.5, -635.96), MinX = 2854.58, MaxX = 3115.58, MinZ = -731.46, MaxZ = -537.36, LandPos = Vector3.new(2985.08, 702.5, -635.96) },
-    { Id = "Clearing_04", Name = "Clearing 04 (South)", Mouth = Vector3.new(3144.58, 700.5, 578.34),  MinX = 2997.58, MaxX = 3291.58, MinZ = 463.74,  MaxZ = 691.84,  LandPos = Vector3.new(3144.58, 702.5, 578.34) },
-    { Id = "Clearing_05", Name = "Clearing 05 (North)", Mouth = Vector3.new(4424.58, 700.5, -1108.46),MinX = 4297.58, MaxX = 4551.58, MinZ = -1226.46,MaxZ = -987.36, LandPos = Vector3.new(4424.58, 702.5, -1108.46) },
-    { Id = "Clearing_06", Name = "Clearing 06 (South)", Mouth = Vector3.new(4564.58, 700.5, -347.66), MinX = 4408.58, MaxX = 4720.58, MinZ = -435.26, MaxZ = -260.16, LandPos = Vector3.new(4564.58, 702.5, -347.66) },
-    { Id = "Clearing_07", Name = "Clearing 07 (North)", Mouth = Vector3.new(4448.08, 700.5, 712.04),  MinX = 4299.58, MaxX = 4596.58, MinZ = 614.54,  MaxZ = 812.64,  LandPos = Vector3.new(4448.08, 702.5, 712.04) },
-    { Id = "Clearing_08", Name = "Clearing 08 (South)", Mouth = Vector3.new(4604.08, 700.5, 1013.34), MinX = 4470.58, MaxX = 4737.58, MinZ = 911.74,  MaxZ = 1111.84, LandPos = Vector3.new(4604.08, 702.5, 1013.34) },
-    { Id = "Clearing_09", Name = "Clearing 09 (South)", Mouth = Vector3.new(6014.58, 700.5, -772.66), MinX = 5847.58, MaxX = 6181.58, MinZ = -885.26, MaxZ = -660.16, LandPos = Vector3.new(6014.58, 702.5, -772.66) },
-    { Id = "Clearing_10", Name = "Clearing 10 (North)", Mouth = Vector3.new(6274.58, 700.5, -190.96), MinX = 6089.58, MaxX = 6459.58, MinZ = -291.46, MaxZ = -89.36,  LandPos = Vector3.new(6274.58, 702.5, -190.96) },
+    { Id = "Clearing_01", Name = "Clearing 01 (North)", BankSide = "North", Mouth = Vector3.new(1250.0, 700.5, -87.36), MinX = 1174.58, MaxX = 1494.58, MinZ = -261.46, MaxZ = -87.36, LandPos = Vector3.new(1344.0, 702.5, -180.0) },
+    { Id = "Clearing_02", Name = "Clearing 02 (South)", BankSide = "South", Mouth = Vector3.new(1622.58, 700.5, 11.74),  MinX = 1447.58, MaxX = 1797.58, MinZ = 11.74,   MaxZ = 211.84,  LandPos = Vector3.new(1622.58, 702.5, 113.34) },
+    { Id = "Clearing_03", Name = "Clearing 03 (North)", BankSide = "North", Mouth = Vector3.new(2985.08, 700.5, -537.36), MinX = 2854.58, MaxX = 3115.58, MinZ = -731.46, MaxZ = -537.36, LandPos = Vector3.new(2985.08, 702.5, -635.96) },
+    { Id = "Clearing_04", Name = "Clearing 04 (South)", BankSide = "South", Mouth = Vector3.new(3144.58, 700.5, 463.74),  MinX = 2997.58, MaxX = 3291.58, MinZ = 463.74,  MaxZ = 691.84,  LandPos = Vector3.new(3144.58, 702.5, 578.34) },
+    { Id = "Clearing_05", Name = "Clearing 05 (North)", BankSide = "North", Mouth = Vector3.new(4424.58, 700.5, -987.36), MinX = 4297.58, MaxX = 4551.58, MinZ = -1226.46,MaxZ = -987.36, LandPos = Vector3.new(4424.58, 702.5, -1108.46) },
+    { Id = "Clearing_06", Name = "Clearing 06 (South)", BankSide = "South", Mouth = Vector3.new(4564.58, 700.5, -260.16), MinX = 4408.58, MaxX = 4720.58, MinZ = -435.26, MaxZ = -260.16, LandPos = Vector3.new(4564.58, 702.5, -347.66) },
+    { Id = "Clearing_07", Name = "Clearing 07 (North)", BankSide = "North", Mouth = Vector3.new(4448.08, 700.5, 614.54),  MinX = 4299.58, MaxX = 4596.58, MinZ = 614.54,  MaxZ = 812.64,  LandPos = Vector3.new(4448.08, 702.5, 712.04) },
+    { Id = "Clearing_08", Name = "Clearing 08 (South)", BankSide = "South", Mouth = Vector3.new(4604.08, 700.5, 911.74),  MinX = 4470.58, MaxX = 4737.58, MinZ = 911.74,  MaxZ = 1111.84, LandPos = Vector3.new(4604.08, 702.5, 1013.34) },
+    { Id = "Clearing_09", Name = "Clearing 09 (South)", BankSide = "South", Mouth = Vector3.new(6014.58, 700.5, -660.16), MinX = 5847.58, MaxX = 6181.58, MinZ = -885.26, MaxZ = -660.16, LandPos = Vector3.new(6014.58, 702.5, -772.66) },
+    { Id = "Clearing_10", Name = "Clearing 10 (North)", BankSide = "North", Mouth = Vector3.new(6274.58, 700.5, -89.36),  MinX = 6089.58, MaxX = 6459.58, MinZ = -291.46, MaxZ = -89.36,  LandPos = Vector3.new(6274.58, 702.5, -190.96) },
 }
 
 function rafting.getClearingById(siteId)
@@ -8865,35 +8865,35 @@ function rafting.getTargetZ(posX, currentZ)
             if rafting.visitedSites["Clearing_01"] then
                 -- Depart Clearing 01: steer directly forward towards river center (-37.81)
                 local t = math.clamp((posX - 1300) / 80, 0, 1)
-                return -140.0 + t * (-37.81 - (-140.0))
+                return -105.0 + t * (-37.81 - (-105.0))
             elseif posX <= 1260 then
-                -- Approach Clearing 01 (North cove, mouth X=1334.58, Z=-175.96)
+                -- Approach Clearing 01 (North cove shoreline at -105.0, avoids -261 back cliff)
                 local t = math.clamp((posX - 1094.58) / 165.42, 0, 1)
-                return -37.81 + t * (-140.0 - (-37.81))
+                return -37.81 + t * (-105.0 - (-37.81))
             else
                 -- Dock at Clearing 01
-                return -140.0
+                return -105.0
             end
         elseif posX <= 1500 then
             -- Depart Clearing 01: cross from river center towards Clearing 02 approach
             local t = math.clamp((posX - 1380) / 120, 0, 1)
-            return -37.81 + t * (90.0 - (-37.81))
+            return -37.81 + t * (65.0 - (-37.81))
         elseif posX <= 1700 then
             if rafting.visitedSites["Clearing_02"] then
                 -- Depart Clearing 02: head forward towards South Channel (412.19)
                 local t = math.clamp((posX - 1620) / 80, 0, 1)
-                return 90.0 + t * (412.19 - 90.0)
+                return 65.0 + t * (412.19 - 65.0)
             elseif posX <= 1620 then
-                -- Approach Clearing 02 (South cove, mouth X=1622.58, Z=113.34)
-                return 90.0
+                -- Approach Clearing 02 (South cove shoreline at 65.0)
+                return 65.0
             else
                 -- Dock at Clearing 02
-                return 90.0
+                return 65.0
             end
         elseif posX <= 1844.58 then
             -- Depart Clearing 02 and merge into South Channel before Reach 2 River Split
             local t = math.clamp((posX - 1700) / 144.58, 0, 1)
-            return 90.0 + t * (412.19 - 90.0)
+            return 65.0 + t * (412.19 - 65.0)
         elseif posX <= 2844.58 then
             -- Reach 2 South Diagonal Channel (FjordZones.lua Channel 2 South: X=1844.58 to 2844.58)
             -- Follows natural river diagonal from -37.81 to 412.19
@@ -9026,7 +9026,14 @@ function rafting.castOff()
             task.wait(0.1)
         end
         humanoid:Move(Vector3.zero, false)
-        task.wait(0.2)
+        task.wait(0.1)
+        if root and deck then
+            local rel = deck.CFrame:PointToObjectSpace(root.Position)
+            if math.abs(rel.X) > 6.0 or math.abs(rel.Z) > 14.0 or root.Position.Y < 698 then
+                root.CFrame = deck.CFrame * CFrame.new(0, 3.45, 0)
+                stopCharacterVelocity()
+            end
+        end
     end
 
     if rem then
@@ -9223,9 +9230,17 @@ function rafting.handleSnapshot(payload)
         if not rafting.isEvadingRock then
             rafting.statusText = "Travelling down river..."
         end
+    elseif payload.Status == "Docked" and rafting.status ~= "Docked" then
+        rafting.status = "Docked"
+        rafting.isDockedState = true
+        rafting.isSailing = false
+        if payload.SiteId then
+            rafting.visitedSites[payload.SiteId] = true
+            rafting.currentDockSite = payload.SiteId
+        end
     end
 
-    -- Check for Clearing Arrival / Docking when on "Clearing & Chest Explorer"
+    -- Check for Clearing Arrival / Docking when on "Clearing & Chest Explorer" or server docked
     if rafting.enabled and payload.Frame and typeof(payload.Frame) == "CFrame" then
         local posX = payload.Frame.Position.X
         local posZ = payload.Frame.Position.Z
@@ -9238,13 +9253,14 @@ function rafting.handleSnapshot(payload)
             end
         end
 
-        -- Check if landing at an unvisited clearing
-        if rafting.route == "Clearing & Chest Explorer" and rafting.status ~= "Docked" then
-            local site = rafting.getNearbyClearing(posX, posZ)
-            if site and not rafting.visitedSites[site.Id] then
+        -- Check if landing at an unvisited clearing or server reported Docked
+        local isServerDocked = (payload.Status == "Docked")
+        if (rafting.route == "Clearing & Chest Explorer" or isServerDocked) and rafting.status ~= "Docked" then
+            local site = payload.SiteId and rafting.getClearingById(payload.SiteId) or rafting.getNearbyClearing(posX, posZ)
+            if site and (not rafting.visitedSites[site.Id] or isServerDocked) then
                 local distToMouth = (Vector3.new(posX, 700.5, posZ) - site.Mouth).Magnitude
-                local inCove = math.abs(posZ - (-37.81)) > 35
-                local reachedShore = distToMouth < 50 or (inCove and speed < 6.0)
+                local inCove = math.abs(posZ - (-37.81)) > 25
+                local reachedShore = isServerDocked or distToMouth < 40 or (inCove and speed < 8.0)
 
                 if reachedShore then
                     -- 1. Mark visited immediately so getTargetZ will NEVER target this clearing shore again
@@ -9254,31 +9270,42 @@ function rafting.handleSnapshot(payload)
                     rafting.currentDockSite = site.Id
                     rafting.isSailing = false
 
-                    -- Stop any active steering
-                    if humanoid then
-                        pcall(function()
-                            humanoid:Move(Vector3.zero, false)
-                            humanoid.AutoRotate = true
-                        end)
+                    -- Stop any active boost immediately
+                    if rafting.isBoosting then
+                        rafting.isBoosting = false
+                        rafting.nextBoostAt = 0
+                        local rem = rafting.getRemote()
+                        if rem then pcall(function() rem:FireServer("BoostRelease") end) end
                     end
-                    if VirtualInput and VirtualInput.SendKeyEvent and rafting.lastSteerKey then
+
+                    -- Stop any active steering & release all keys
+                    if VirtualInput and VirtualInput.SendKeyEvent then
                         pcall(function()
                             VirtualInput:SendKeyEvent(false, Enum.KeyCode.A, false, game)
                             VirtualInput:SendKeyEvent(false, Enum.KeyCode.D, false, game)
                         end)
                         rafting.lastSteerKey = nil
                     end
+                    if humanoid then
+                        pcall(function()
+                            humanoid:Move(Vector3.zero, false)
+                            humanoid.AutoRotate = true
+                        end)
+                    end
+                    stopCharacterVelocity()
 
                     -- Safe dry-land placement so character doesn't fall into river
                     task.spawn(function()
                         task.wait(0.2)
-                        local landPos = site.LandPos
-                        if landPos and root then
-                            stopCharacterVelocity()
-                            root.CFrame = CFrame.new(landPos)
-                            if humanoid then
-                                humanoid.AutoRotate = true
-                                humanoid:Move(Vector3.zero, false)
+                        if rafting.status == "Docked" and root then
+                            local landPos = site.LandPos
+                            if landPos then
+                                stopCharacterVelocity()
+                                root.CFrame = CFrame.new(landPos)
+                                if humanoid then
+                                    humanoid.AutoRotate = true
+                                    humanoid:Move(Vector3.zero, false)
+                                end
                             end
                         end
                     end)
@@ -9323,6 +9350,10 @@ function rafting.handleSnapshot(payload)
                 if landPos then
                     stopCharacterVelocity()
                     root.CFrame = CFrame.new(landPos)
+                    if humanoid then
+                        humanoid.AutoRotate = true
+                        humanoid:Move(Vector3.zero, false)
+                    end
                 end
             end
         end
@@ -9339,8 +9370,30 @@ end
 
 function rafting.stepSteering(dt)
     if not rafting.enabled or not rafting.currentSnapshot then return end
-    if rafting.status == "Docked" then return end
     local snap = rafting.currentSnapshot
+    if rafting.status == "Docked" or snap.Status == "Docked" then
+        if rafting.isBoosting then
+            rafting.isBoosting = false
+            rafting.nextBoostAt = 0
+            local rem = rafting.getRemote()
+            if rem then pcall(function() rem:FireServer("BoostRelease") end) end
+        end
+        if rafting.lastSteerKey and VirtualInput and VirtualInput.SendKeyEvent then
+            pcall(function()
+                VirtualInput:SendKeyEvent(false, Enum.KeyCode.A, false, game)
+                VirtualInput:SendKeyEvent(false, Enum.KeyCode.D, false, game)
+            end)
+            rafting.lastSteerKey = nil
+        end
+        if humanoid then
+            pcall(function()
+                humanoid:Move(Vector3.zero, false)
+                humanoid.AutoRotate = true
+            end)
+        end
+        return
+    end
+
     if snap.Status ~= "Travelling" and snap.Status ~= "Departing" then return end
 
     local frame = snap.Frame
@@ -9375,17 +9428,37 @@ function rafting.stepSteering(dt)
         targetDeckX = evadeDeckX
         rafting.statusText = "DODGING HOBGOBLIN ROCK! Steering clear of impact..."
     else
-        -- Maximize Steering Logic:
-        -- Raft deck width is 14 studs (from -7.0 to +7.0).
-        -- When steering is required, move fully to the outer edge (+/- 6.0 studs)
-        if math.abs(errorZ) <= 1.0 then
-            targetDeckX = 0 -- In channel center: run straight
-        elseif errorZ < -1.0 then
-            -- Raft is too far South (posZ > targetZ), steer maximum North (Left, -6.0 on deck)
-            targetDeckX = -6.0
+        -- Active Cliff Wall Collision Avoidance Buffer:
+        -- Detect if entering or inside a clearing cove and getting too close to the back cliff wall
+        local nearbySite = rafting.getNearbyClearing(posX, posZ)
+        local cliffOverride = nil
+        if nearbySite then
+            if nearbySite.BankSide == "North" and posZ < (nearbySite.MinZ + 45) then
+                -- Within 45 studs of North cliff wall: force hard steer South (+6.0 on deck)
+                cliffOverride = 6.0
+                rafting.statusText = "WALL WARNING! Steering away from cliff..."
+            elseif nearbySite.BankSide == "South" and posZ > (nearbySite.MaxZ - 45) then
+                -- Within 45 studs of South cliff wall: force hard steer North (-6.0 on deck)
+                cliffOverride = -6.0
+                rafting.statusText = "WALL WARNING! Steering away from cliff..."
+            end
+        end
+
+        if cliffOverride ~= nil then
+            targetDeckX = cliffOverride
         else
-            -- Raft is too far North (posZ < targetZ), steer maximum South (Right, +6.0 on deck)
-            targetDeckX = 6.0
+            -- Maximize Steering Logic:
+            -- Raft deck width is 14 studs (from -7.0 to +7.0).
+            -- When steering is required, move fully to the outer edge (+/- 6.0 studs)
+            if math.abs(errorZ) <= 1.0 then
+                targetDeckX = 0 -- In channel center: run straight
+            elseif errorZ < -1.0 then
+                -- Raft is too far South (posZ > targetZ), steer maximum North (Left, -6.0 on deck)
+                targetDeckX = -6.0
+            else
+                -- Raft is too far North (posZ < targetZ), steer maximum South (Right, +6.0 on deck)
+                targetDeckX = 6.0
+            end
         end
     end
     rafting.targetDeckX = targetDeckX
@@ -9417,8 +9490,14 @@ function rafting.stepSteering(dt)
     end
 
     -- Auto-Boost on straightaways OR when evading incoming rocks!
+    -- CRITICAL: Suppress boost when in or approaching any clearing cove to prevent wall ramming!
     local rem = rafting.getRemote()
-    if (rafting.autoBoost or shouldEvadeBoost) and rem then
+    local nearbySite = rafting.getNearbyClearing(posX, posZ)
+    local inCoveZone = math.abs(posZ - (-37.81)) > 15
+    local approachingCove = (rafting.route == "Clearing & Chest Explorer") and nearbySite and not rafting.visitedSites[nearbySite.Id]
+    local suppressBoostForCove = (inCoveZone or approachingCove) and not shouldEvadeBoost
+
+    if (rafting.autoBoost or shouldEvadeBoost) and rem and not suppressBoostForCove then
         local energy = snap.Energy or 0
         local maxEnergy = snap.MaxEnergy or 100
         local energyPct = (energy / math.max(maxEnergy, 1)) * 100
@@ -9437,6 +9516,12 @@ function rafting.stepSteering(dt)
                 rafting.nextBoostAt = 0
                 rem:FireServer("BoostRelease")
             end
+        end
+    else
+        if rafting.isBoosting and rem then
+            rafting.isBoosting = false
+            rafting.nextBoostAt = 0
+            rem:FireServer("BoostRelease")
         end
     end
 
@@ -9464,8 +9549,24 @@ end
 
 function rafting.stepSteeringAnimation(dt)
     if not rafting.enabled or not rafting.currentSnapshot then return end
-    if rafting.status == "Docked" then return end
     local snap = rafting.currentSnapshot
+    if rafting.status == "Docked" or snap.Status == "Docked" then
+        if rafting.lastSteerKey and VirtualInput and VirtualInput.SendKeyEvent then
+            pcall(function()
+                VirtualInput:SendKeyEvent(false, Enum.KeyCode.A, false, game)
+                VirtualInput:SendKeyEvent(false, Enum.KeyCode.D, false, game)
+            end)
+            rafting.lastSteerKey = nil
+        end
+        if humanoid then
+            pcall(function()
+                humanoid:Move(Vector3.zero, false)
+                humanoid.AutoRotate = true
+            end)
+        end
+        return
+    end
+
     if snap.Status ~= "Travelling" and snap.Status ~= "Departing" then return end
 
     local deck = rafting.getRaftDeck()
