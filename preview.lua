@@ -9038,33 +9038,15 @@ function rafting.getTargetZ(posX, currentZ, clearances)
         return -37.81
     end
 
-    local minX = targetSite.MinX
+    local mouthX = targetSite.Mouth and targetSite.Mouth.X or targetSite.MinX
     local maxX = targetSite.MaxX
 
-    if posX < minX - 80 then
-        -- Before cove: stay centered in river channel (-37.81)
+    if posX < mouthX - 55 then
+        -- Before cove mouth opening: stay centered in river channel (-37.81)
         return -37.81
-    elseif posX < minX then
-        -- Within 80 studs before cove mouth: stay centered so we never turn early into cliff wall
-        return -37.81
-    elseif posX <= maxX then
-        -- At cove mouth opening:
-        -- Whisker check: ensure the lateral opening is clear
-        local isClear = true
-        if clearances then
-            if targetSite.BankSide == "North" and clearances.LeftLateral and clearances.LeftLateral < 12 then
-                isClear = false
-            elseif targetSite.BankSide == "South" and clearances.RightLateral and clearances.RightLateral < 12 then
-                isClear = false
-            end
-        end
-
-        if isClear then
-            -- Steer into cove mouth towards shoreline
-            return targetSite.ShoreZ
-        else
-            return -37.81
-        end
+    elseif posX <= maxX + 20 then
+        -- At cove mouth opening or inside cove: steer directly towards shoreline!
+        return targetSite.ShoreZ
     else
         return -37.81
     end
@@ -9329,9 +9311,10 @@ function rafting.handleSnapshot(payload)
         local posZ = payload.Frame.Position.Z
         local speed = payload.Speed or 0
 
-        -- Auto-mark clearing as visited once past its downriver exit
+        -- Auto-mark clearing as visited once past its downriver exit (only when in main river channel)
         for _, site in ipairs(clearingSites) do
-            if posX > site.MaxX - 10 and not rafting.visitedSites[site.Id] then
+            local inCove = (site.BankSide == "North" and posZ < -70.0) or (site.BankSide == "South" and posZ > 35.0)
+            if posX > site.MaxX + 25 and not rafting.visitedSites[site.Id] and rafting.status ~= "Docked" and not inCove then
                 rafting.visitedSites[site.Id] = true
             end
         end
@@ -9343,13 +9326,14 @@ function rafting.handleSnapshot(payload)
         end
 
         if rafting.status ~= "Docked" then
-            local site = (payload.SiteId and rafting.getClearingById(payload.SiteId)) or rafting.getNearbyClearing(posX, posZ)
+            local nextSite = rafting.getNextTargetClearing(posX)
+            local site = (payload.SiteId and rafting.getClearingById(payload.SiteId)) or rafting.getNearbyClearing(posX, posZ) or nextSite
             local isSelectedSite = (not site) or (not rafting.selectedClearings) or (rafting.selectedClearings[site.Id] == true) or isServerDocked
             if (site or isServerDocked) and isSelectedSite and ((site and not rafting.visitedSites[site.Id]) or isServerDocked) then
-                -- Must be legitimately inside the cove past river bank (North cove Z < -85, South cove Z > 45)
-                local inCove = site and ((site.BankSide == "North" and posZ < -85.0) or (site.BankSide == "South" and posZ > 45.0))
-                -- Reached shore only if server confirmed dock OR raft is deep in cove and brought to a standstill
-                local reachedShore = isServerDocked or (site and inCove and posX >= site.MinX + 80 and speed < 3.0)
+                -- Inside the cove past river bank (North cove Z < -70, South cove Z > 35)
+                local inCove = site and ((site.BankSide == "North" and posZ < -70.0) or (site.BankSide == "South" and posZ > 35.0))
+                -- Reached shore if server confirmed dock OR raft is deep in cove and brought to a standstill
+                local reachedShore = isServerDocked or (site and inCove and speed < 3.0)
 
                 if reachedShore then
                     local siteId = (site and site.Id) or payload.SiteId or "Clearing_Dock"
@@ -9538,11 +9522,18 @@ function rafting.stepSteering(dt)
     local rightMinDist = math.min(clearances.RightOblique or 40, clearances.RightLateral or 25)
     local forwardDist = clearances.Forward or 50
 
-    if leftMinDist < 20.0 then
+    local nextSite = (rafting.route == "Clearing & Chest Explorer" or rafting.route == "Hybrid Dynamic Explorer") and rafting.getNextTargetClearing(posX)
+    local mouthX = nextSite and (nextSite.Mouth and nextSite.Mouth.X or nextSite.MinX) or 0
+    local isHeadingToNorthCove = nextSite and nextSite.BankSide == "North" and posX >= (mouthX - 55) and posX <= (nextSite.MaxX + 20)
+    local isHeadingToSouthCove = nextSite and nextSite.BankSide == "South" and posX >= (mouthX - 55) and posX <= (nextSite.MaxX + 20)
+    local inCoveZone = (nextSite and ((nextSite.BankSide == "North" and posZ < -70.0) or (nextSite.BankSide == "South" and posZ > 35.0))) or math.abs(posZ - (-37.81)) > 20
+
+    -- When actively steering into a cove, suppress repulsion from the bank on the cove side
+    if leftMinDist < 20.0 and not (isHeadingToNorthCove or inCoveZone) then
         local push = math.clamp((20.0 - leftMinDist) / 20.0, 0, 1)
         whiskerRepulsion = whiskerRepulsion + push * 4.5
     end
-    if rightMinDist < 20.0 then
+    if rightMinDist < 20.0 and not (isHeadingToSouthCove or inCoveZone) then
         local push = math.clamp((20.0 - rightMinDist) / 20.0, 0, 1)
         whiskerRepulsion = whiskerRepulsion - push * 4.5
     end
@@ -9560,41 +9551,75 @@ function rafting.stepSteering(dt)
 
     -- 5. Blend Flow Bias with Whisker Repulsion
     local targetDeckX = 0
-    if forwardDist < 25.0 or leftMinDist < 14.0 or rightMinDist < 14.0 then
-        -- Critical collision distance: 100% collision avoidance priority
+    if isHeadingToNorthCove then
+        -- Priority 1: Commit steering into North clearing cove!
+        if forwardDist < 20.0 and leftMinDist < rightMinDist then
+            targetDeckX = 4.5
+        else
+            targetDeckX = -4.5
+        end
+        rafting.statusText = string.format("Approaching %s! Steering into North cove...", nextSite.Id)
+    elseif isHeadingToSouthCove then
+        -- Priority 1: Commit steering into South clearing cove!
+        if forwardDist < 20.0 and rightMinDist < leftMinDist then
+            targetDeckX = -4.5
+        else
+            targetDeckX = 4.5
+        end
+        rafting.statusText = string.format("Approaching %s! Steering into South cove...", nextSite.Id)
+    elseif forwardDist < 25.0 or leftMinDist < 14.0 or rightMinDist < 14.0 then
         targetDeckX = whiskerRepulsion
     elseif math.abs(whiskerRepulsion) > 1.0 then
-        -- Near wall: blend 70% repulsion + 30% flow bias
         targetDeckX = whiskerRepulsion * 0.7 + flowBias * 0.3
     else
-        -- Open water: follow flow bias
         targetDeckX = flowBias
     end
 
-    -- 6. Check Hobgoblin Rock Threat (Harmonized with Raycast Whisker Clearance)
-    local nearbySite = rafting.getNearbyClearing(posX, posZ)
-    local inCoveZone = math.abs(posZ - (-37.81)) > 15
-    local approachingCove = (rafting.route == "Clearing & Chest Explorer" or rafting.route == "Hybrid Dynamic Explorer") and nearbySite and not rafting.visitedSites[nearbySite.Id]
-
+    -- 6. Check Hobgoblin Rock Threat (Prioritize landing at clearing over dodging)
     local evadeDeckX, shouldEvadeBoost, shouldEvadeJump = rafting.getHobgoblinEvasionOffset(deck, frame)
     if evadeDeckX ~= nil then
-        local safeToEvade = true
-        if forwardDist < 28.0 then
-            safeToEvade = false
-        elseif evadeDeckX < 0 and leftMinDist < 18.0 then
-            safeToEvade = false
-        elseif evadeDeckX > 0 and rightMinDist < 18.0 then
-            safeToEvade = false
-        elseif approachingCove or inCoveZone then
-            safeToEvade = false
-        end
-
-        if safeToEvade then
-            targetDeckX = evadeDeckX
-            rafting.statusText = "DODGING HOBGOBLIN ROCK! Steering clear of impact..."
+        if isHeadingToNorthCove or (inCoveZone and nextSite and nextSite.BankSide == "North") then
+            -- Landing at North clearing (cove is to the Left / -4.5)
+            if evadeDeckX < 0 then
+                -- Dodge aligns with clearing!
+                targetDeckX = -4.5
+                rafting.statusText = "DODGING TOWARDS CLEARING! Steering into North cove..."
+            else
+                -- Dodge pulls away from clearing: prioritize landing at clearing!
+                targetDeckX = -4.5
+                shouldEvadeJump = true
+                rafting.statusText = "PRIORITIZING CLEARING DOCK! Holding course into cove..."
+            end
+        elseif isHeadingToSouthCove or (inCoveZone and nextSite and nextSite.BankSide == "South") then
+            -- Landing at South clearing (cove is to the Right / +4.5)
+            if evadeDeckX > 0 then
+                -- Dodge aligns with clearing!
+                targetDeckX = 4.5
+                rafting.statusText = "DODGING TOWARDS CLEARING! Steering into South cove..."
+            else
+                -- Dodge pulls away from clearing: prioritize landing at clearing!
+                targetDeckX = 4.5
+                shouldEvadeJump = true
+                rafting.statusText = "PRIORITIZING CLEARING DOCK! Holding course into cove..."
+            end
         else
-            shouldEvadeBoost = true
-            rafting.statusText = "HOBGOBLIN THREAT! Wall near: boosting ahead to dodge..."
+            -- Open river navigation
+            local safeToEvade = true
+            if forwardDist < 28.0 then
+                safeToEvade = false
+            elseif evadeDeckX < 0 and leftMinDist < 18.0 then
+                safeToEvade = false
+            elseif evadeDeckX > 0 and rightMinDist < 18.0 then
+                safeToEvade = false
+            end
+
+            if safeToEvade then
+                targetDeckX = evadeDeckX
+                rafting.statusText = "DODGING HOBGOBLIN ROCK! Steering clear of impact..."
+            else
+                shouldEvadeJump = true
+                rafting.statusText = "HOBGOBLIN THREAT! Wall near: cow jump evasion..."
+            end
         end
     end
 
@@ -9649,17 +9674,18 @@ function rafting.stepSteering(dt)
         end
     end
 
-    -- Auto-Boost on straightaways OR when evading incoming rocks!
-    -- CRITICAL: Suppress boost when in or approaching any clearing cove to prevent wall ramming!
+    -- Auto-Boost on straightaways: strictly conserve stamina & suppress in cove
     local rem = rafting.getRemote()
-    local suppressBoostForCove = inCoveZone or (approachingCove and posX >= (nearbySite.MinX - 30))
+    local approachingCove = nextSite and posX >= (mouthX - 80) and posX <= (nextSite.MaxX + 20)
+    local suppressBoostForCove = inCoveZone or approachingCove
 
-    if (rafting.autoBoost or shouldEvadeBoost) and rem and not suppressBoostForCove then
+    if rafting.autoBoost and rem and not suppressBoostForCove then
         local energy = snap.Energy or 0
         local maxEnergy = snap.MaxEnergy or 100
         local energyPct = (energy / math.max(maxEnergy, 1)) * 100
-        local isStraight = (math.abs(errorZ) <= 8 and not snap.LowEnergy and (snap.Speed or 0) > 5) or shouldEvadeBoost
-        local shouldBoost = (energyPct >= (shouldEvadeBoost and 10 or rafting.minBoostStamina)) and isStraight
+        local isStraight = (math.abs(errorZ) <= 8 and not snap.LowEnergy and (snap.Speed or 0) > 5)
+        local minEnergyThreshold = math.max(rafting.minBoostStamina, 40)
+        local shouldBoost = (energyPct >= minEnergyThreshold) and not snap.LowEnergy and isStraight
 
         if shouldBoost then
             if not rafting.isBoosting or os.clock() >= (rafting.nextBoostAt or 0) then
@@ -9678,7 +9704,7 @@ function rafting.stepSteering(dt)
         if rafting.isBoosting and rem then
             rafting.isBoosting = false
             rafting.nextBoostAt = 0
-            rem:FireServer("BoostRelease")
+            pcall(function() rem:FireServer("BoostRelease") end)
         end
     end
 
