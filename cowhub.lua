@@ -9589,16 +9589,25 @@ function rafting.stepSteering(dt)
             return
         end
 
-        -- Overboard recovery only if in water near boat
-        local isOverboard = (distFromDeck > 6.0 and distFromDeck <= 25.0) or (distFromDeck <= 25.0 and cowRel.Y < -2.0)
+        -- Oriented Bounding Box Deck Check: Longboat is 14 wide (X: -7 to +7), 32 long (Z: -16 to +16).
+        -- Deck top is at Y = 0.6; character root is at Y in [1.5, 5.0].
+        local isOnDeck = math.abs(cowRel.X) <= 6.8 and math.abs(cowRel.Z) <= 16.2 and cowRel.Y >= -1.0
 
-        if isOverboard then
-            local recPos = deck.CFrame:PointToWorldSpace(Vector3.new(0, 3.45, 0))
-            root.CFrame = CFrame.new(recPos) * (root.CFrame - root.CFrame.Position)
-            stopCharacterVelocity()
-            local rem = rafting.getRemote()
-            if rem then pcall(function() rem:FireServer("Boarded") end) end
+        if not isOnDeck and cowRel.Y < -2.0 and distFromDeck <= 25.0 then
+            -- Character genuinely slipped off into water adjacent to boat: require sustained duration before recovery
+            if not rafting.overboardStartTime then
+                rafting.overboardStartTime = os.clock()
+            elseif os.clock() - rafting.overboardStartTime > 0.35 then
+                local recPos = deck.CFrame:PointToWorldSpace(Vector3.new(0, 3.45, 0))
+                root.CFrame = CFrame.new(recPos) * (root.CFrame - root.CFrame.Position)
+                stopCharacterVelocity()
+                rafting.overboardStartTime = nil
+                local rem = rafting.getRemote()
+                if rem then pcall(function() rem:FireServer("Boarded") end) end
+            end
         else
+            rafting.overboardStartTime = nil
+
             -- Deck Railing Clamp: Never allow character center beyond +/- 4.8 on the deck
             if math.abs(cowRel.X) > 4.8 then
                 local clampedX = math.clamp(cowRel.X, -4.5, 4.5)
@@ -9618,7 +9627,7 @@ function rafting.stepSteering(dt)
     local rem = rafting.getRemote()
     local nearbySite = rafting.getNearbyClearing(posX, posZ)
     local inCoveZone = math.abs(posZ - (-37.81)) > 15
-    local approachingCove = (rafting.route == "Clearing & Chest Explorer") and nearbySite and not rafting.visitedSites[nearbySite.Id]
+    local approachingCove = (rafting.route == "Clearing & Chest Explorer" or rafting.route == "Hybrid Dynamic Explorer") and nearbySite and not rafting.visitedSites[nearbySite.Id]
     local suppressBoostForCove = (inCoveZone or approachingCove) and not shouldEvadeBoost
 
     if (rafting.autoBoost or shouldEvadeBoost) and rem and not suppressBoostForCove then
