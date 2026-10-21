@@ -11,7 +11,7 @@ if queueOnTeleport then
     pcall(function()
         queueOnTeleport([[
             task.wait(3)
-            loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/preview.lua'))()
+            loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/cowhub.lua'))()
         ]])
     end)
 end
@@ -23,7 +23,7 @@ local Window = Rayfield:CreateWindow({
     Name = "Cow Hub",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
-    theme = "frost",
+    theme = "rose",
     configuration = {
         autoSave = true,
         autoLoad = true,
@@ -42,6 +42,8 @@ local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualUser = game:GetService("VirtualUser")
+local Lighting = game:GetService("Lighting")
+local ContentProvider = game:GetService("ContentProvider")
 
 local successVIM, VirtualInput = pcall(function()
     return game:GetService("VirtualInputManager")
@@ -525,6 +527,142 @@ local fps = {
 }
 local HeartbeatConnection = nil
 
+-- ==========================
+-- MAP & ASSET OPTIMIZER (Anti-Lag, Potato Mode & Streaming Watcher)
+-- ==========================
+local mapOptimizer = {
+    enabled = false,
+    autoCleanStreamed = true,
+    removeTextures = true,
+    disableShadows = true,
+    disableParticles = true,
+    optimizeTerrain = true,
+    descendantConnection = nil,
+    preloaded = false,
+    lastPreloadTime = 0,
+}
+
+function mapOptimizer.optimizeInstance(inst)
+    if not inst then return end
+    pcall(function()
+        if inst:IsA("BasePart") then
+            if mapOptimizer.disableShadows then
+                inst.CastShadow = false
+            end
+            if mapOptimizer.removeTextures then
+                inst.Material = Enum.Material.SmoothPlastic
+                inst.Reflectance = 0
+            end
+        elseif inst:IsA("Decal") or inst:IsA("Texture") then
+            if mapOptimizer.removeTextures then
+                inst.Transparency = 1
+            end
+        elseif inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Smoke") or inst:IsA("Fire") or inst:IsA("Sparkles") or inst:IsA("Beam") then
+            if mapOptimizer.disableParticles then
+                inst.Enabled = false
+            end
+        elseif inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight") then
+            if mapOptimizer.disableShadows then
+                inst.Shadows = false
+            end
+        elseif inst:IsA("PostEffect") then
+            if mapOptimizer.disableParticles then
+                inst.Enabled = false
+            end
+        elseif inst:IsA("Highlight") then
+            if inst.Name ~= "ManatiteHighlight" and inst.Name ~= "MithrilHighlight" then
+                inst.Enabled = false
+            end
+        end
+    end)
+end
+
+function mapOptimizer.applyLighting()
+    pcall(function()
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = 9e9
+        for _, child in ipairs(Lighting:GetChildren()) do
+            if child:IsA("PostEffect") then
+                child.Enabled = false
+            end
+        end
+    end)
+    pcall(function()
+        if settings and settings().Rendering then
+            settings().Rendering.QualityLevel = 1
+        end
+    end)
+end
+
+function mapOptimizer.applyTerrain()
+    pcall(function()
+        local terrain = workspace:FindFirstChildOfClass("Terrain") or workspace.Terrain
+        if terrain then
+            terrain.WaterWaveSize = 0
+            terrain.WaterWaveSpeed = 0
+            terrain.WaterReflectance = 0
+            if sethiddenproperty then
+                pcall(function() sethiddenproperty(terrain, "Decoration", false) end)
+            end
+        end
+    end)
+end
+
+function mapOptimizer.applyToWorld()
+    mapOptimizer.applyLighting()
+    mapOptimizer.applyTerrain()
+
+    task.spawn(function()
+        local descendants = workspace:GetDescendants()
+        local batch = 350
+        for i, inst in ipairs(descendants) do
+            if not mapOptimizer.enabled then break end
+            mapOptimizer.optimizeInstance(inst)
+            if i % batch == 0 then
+                task.wait()
+            end
+        end
+    end)
+end
+
+function mapOptimizer.startStreamHook()
+    if not mapOptimizer.descendantConnection then
+        mapOptimizer.descendantConnection = workspace.DescendantAdded:Connect(function(inst)
+            if mapOptimizer.enabled and mapOptimizer.autoCleanStreamed then
+                mapOptimizer.optimizeInstance(inst)
+            end
+        end)
+        table.insert(scriptConnections, mapOptimizer.descendantConnection)
+    end
+end
+
+function mapOptimizer.stopStreamHook()
+    if mapOptimizer.descendantConnection then
+        pcall(function() mapOptimizer.descendantConnection:Disconnect() end)
+        mapOptimizer.descendantConnection = nil
+    end
+end
+
+function mapOptimizer.preloadAssets()
+    local now = os.clock()
+    if now - mapOptimizer.lastPreloadTime < 8 then return end
+    mapOptimizer.lastPreloadTime = now
+
+    task.spawn(function()
+        local toPreload = {}
+        local pGui = plr and plr:FindFirstChildOfClass("PlayerGui")
+        if pGui then table.insert(toPreload, pGui) end
+
+        local cowGame = ReplicatedStorage:FindFirstChild("CowGame")
+        if cowGame then table.insert(toPreload, cowGame) end
+
+        pcall(function()
+            ContentProvider:PreloadAsync(toPreload)
+        end)
+        mapOptimizer.preloaded = true
+    end)
+end
+
 manatite = {
     auto = false,
     delay = 0.1,
@@ -539,6 +677,7 @@ manatite = {
     lastChompTime = 0,
     lastTeleportTime = 0,
     lastSearchTime = 0,
+    lastFolderSearch = 0,
     startTime = 0,
     blacklist = setmetatable({}, { __mode = "k" }),
     lastBlacklistCleanup = 0,
@@ -585,6 +724,7 @@ mithril = {
     lastChompTime = 0,
     lastTeleportTime = 0,
     lastSearchTime = 0,
+    lastFolderSearch = 0,
     startTime = 0,
     blacklist = setmetatable({}, { __mode = "k" }),
     lastBlacklistCleanup = 0,
@@ -632,6 +772,8 @@ trickOrTreat = {
     clientEventConn = nil,
     statusCard = nil,
     infoCard = nil,
+    cachedHousesFolder = nil,
+    lastDeepSearch = 0,
 }
 
 local function stopCharacterVelocity()
@@ -693,21 +835,54 @@ function trickOrTreat.detectCooldown()
 end
 
 function trickOrTreat.getHousesFolder()
+    if trickOrTreat.cachedHousesFolder and trickOrTreat.cachedHousesFolder.Parent then
+        return trickOrTreat.cachedHousesFolder
+    end
+
     local cowWorld = cache.cowWorldRef
     if not cowWorld or not cowWorld.Parent then
         cowWorld = workspace:FindFirstChild("CowWorld")
         cache.cowWorldRef = cowWorld
     end
+
+    -- 1. Direct path: workspace.CowWorld.Geometry.FarmerHouses (O(1))
     if cowWorld then
-        local geometry = cowWorld:FindFirstChild("Geometry") or cowWorld:FindFirstChild("Geometry", true)
+        local geometry = cowWorld:FindFirstChild("Geometry")
         if geometry then
             local fh = geometry:FindFirstChild("FarmerHouses") or geometry:FindFirstChild("Houses")
-            if fh then return fh end
+            if fh then
+                trickOrTreat.cachedHousesFolder = fh
+                return fh
+            end
         end
-        local fhDirect = cowWorld:FindFirstChild("FarmerHouses", true) or cowWorld:FindFirstChild("Houses", true)
-        if fhDirect then return fhDirect end
+        local fhDirect = cowWorld:FindFirstChild("FarmerHouses") or cowWorld:FindFirstChild("Houses")
+        if fhDirect then
+            trickOrTreat.cachedHousesFolder = fhDirect
+            return fhDirect
+        end
     end
-    return workspace:FindFirstChild("FarmerHouses", true) or workspace:FindFirstChild("Houses", true)
+
+    -- 2. Direct top-level check (O(1))
+    local topFh = workspace:FindFirstChild("FarmerHouses") or workspace:FindFirstChild("Houses")
+    if topFh then
+        trickOrTreat.cachedHousesFolder = topFh
+        return topFh
+    end
+
+    -- 3. Throttled recursive search (at most once every 3.0s to avoid frame freezing)
+    local now = os.clock()
+    if not trickOrTreat.lastDeepSearch or (now - trickOrTreat.lastDeepSearch >= 3.0) then
+        trickOrTreat.lastDeepSearch = now
+        local fhDeep = (cowWorld and (cowWorld:FindFirstChild("FarmerHouses", true) or cowWorld:FindFirstChild("Houses", true)))
+            or workspace:FindFirstChild("FarmerHouses", true)
+            or workspace:FindFirstChild("Houses", true)
+        if fhDeep then
+            trickOrTreat.cachedHousesFolder = fhDeep
+            return fhDeep
+        end
+    end
+
+    return nil
 end
 
 function trickOrTreat.getHouseList()
@@ -1166,13 +1341,13 @@ function trickOrTreat.runCycle()
     trickOrTreat.statusText = "Loading Map at Barn..."
     trickOrTreat.updateStatusUI()
 
-    pcall(function() root.Anchored = false end)
+    stopCharacterVelocity()
     pcall(function()
+        root.Anchored = true
         char:PivotTo(CFrame.new(trickOrTreat.barnPosition))
         setRootCFrame(CFrame.new(trickOrTreat.barnPosition))
         stopCharacterVelocity()
     end)
-    pcall(function() root.Anchored = true end)
 
     -- Wait for map to load (poll for houses)
     local barnStart = os.clock()
@@ -1184,14 +1359,15 @@ function trickOrTreat.runCycle()
             trickOrTreat.updateStatusUI()
             return
         end
-        task.wait(0.25)
+        task.wait(0.4)
         houses = trickOrTreat.getHouseList()
-        if #houses > 0 and (os.clock() - barnStart >= 1.5) then
+        if #houses > 0 and (os.clock() - barnStart >= 1.0) then
             break
         end
     end
 
     pcall(function() root.Anchored = false end)
+    stopCharacterVelocity()
 
     if #houses == 0 then
         houses = trickOrTreat.getHouseList()
@@ -1590,7 +1766,7 @@ function afkRelog.triggerRejoin()
         pcall(function()
             qot([[
                 task.wait(3)
-                loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/preview.lua'))()
+                loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/cowhub.lua'))()
             ]])
         end)
     end
@@ -2456,21 +2632,18 @@ function manatite.getFolder()
         return manatite.cachedFolder
     end
 
-    -- Primary: workspace.FjordDelta.ManatiteFjordCave.ManatiteMaze.ManatiteClusters
+    -- 1. Direct path: workspace.FjordDelta.ManatiteFjordCave.ManatiteMaze.ManatiteClusters (O(1))
     local fjord = workspace:FindFirstChild("FjordDelta")
     if not fjord and cache.cowWorldRef and cache.cowWorldRef.Parent then
         fjord = cache.cowWorldRef:FindFirstChild("FjordDelta")
     end
-    if not fjord then
-        fjord = workspace:FindFirstChild("FjordDelta", true)
-    end
 
     if fjord then
-        local cave = fjord:FindFirstChild("ManatiteFjordCave") or fjord:FindFirstChild("ManatiteFjordCave", true)
+        local cave = fjord:FindFirstChild("ManatiteFjordCave")
         if cave then
-            local maze = cave:FindFirstChild("ManatiteMaze") or cave:FindFirstChild("ManatiteMaze", true)
+            local maze = cave:FindFirstChild("ManatiteMaze")
             if maze then
-                local clusters = maze:FindFirstChild("ManatiteClusters") or maze:FindFirstChild("ManatiteClusters", true)
+                local clusters = maze:FindFirstChild("ManatiteClusters")
                 if clusters then
                     manatite.cachedFolder = clusters
                     return clusters
@@ -2479,11 +2652,37 @@ function manatite.getFolder()
         end
     end
 
-    -- Fallback: Search workspace for "ManatiteClusters"
-    local clusters = workspace:FindFirstChild("ManatiteClusters", true)
-    if clusters then
-        manatite.cachedFolder = clusters
-        return clusters
+    local directClusters = workspace:FindFirstChild("ManatiteClusters")
+    if directClusters then
+        manatite.cachedFolder = directClusters
+        return directClusters
+    end
+
+    -- 2. Throttled deep search (at most once every 2.0s to avoid frame freezing)
+    local now = os.clock()
+    if not manatite.lastFolderSearch or (now - manatite.lastFolderSearch >= 2.0) then
+        manatite.lastFolderSearch = now
+        if not fjord then
+            fjord = workspace:FindFirstChild("FjordDelta", true)
+        end
+        if fjord then
+            local cave = fjord:FindFirstChild("ManatiteFjordCave") or fjord:FindFirstChild("ManatiteFjordCave", true)
+            if cave then
+                local maze = cave:FindFirstChild("ManatiteMaze") or cave:FindFirstChild("ManatiteMaze", true)
+                if maze then
+                    local clusters = maze:FindFirstChild("ManatiteClusters") or maze:FindFirstChild("ManatiteClusters", true)
+                    if clusters then
+                        manatite.cachedFolder = clusters
+                        return clusters
+                    end
+                end
+            end
+        end
+        local clusters = workspace:FindFirstChild("ManatiteClusters", true)
+        if clusters then
+            manatite.cachedFolder = clusters
+            return clusters
+        end
     end
 
     return nil
@@ -2828,8 +3027,10 @@ function manatite.teleport(grazeTarget, model)
         targetCFrame = CFrame.new(targetPos)
     end
 
+    stopCharacterVelocity()
     char:PivotTo(targetCFrame)
     root.CFrame = targetCFrame
+    stopCharacterVelocity()
 
     for _, part in ipairs(charBaseParts) do
         part.AssemblyLinearVelocity = Vector3.zero
@@ -2851,42 +3052,75 @@ function mithril.getFolder()
         return mithril.cachedFolder
     end
 
-    -- 1. Primary: workspace.CowWorld.FjordRafting.Resources.CrystalGeodeOres
+    -- 1. Direct path: resources.CrystalGeodeOres (O(1))
     local res = getResourcesFolder()
     if res then
-        local geode = res:FindFirstChild("CrystalGeodeOres") or res:FindFirstChild("CrystalGeodeOres", true)
+        local geode = res:FindFirstChild("CrystalGeodeOres")
         if geode then
             mithril.cachedFolder = geode
             return geode
         end
     end
 
-    -- 2. Direct path via CowWorld
+    -- 2. Direct path via CowWorld (O(1))
     local cowWorld = cache.cowWorldRef
     if not cowWorld or not cowWorld.Parent then
         cowWorld = workspace:FindFirstChild("CowWorld")
+        cache.cowWorldRef = cowWorld
     end
     if cowWorld then
-        local rafting = cowWorld:FindFirstChild("FjordRafting") or cowWorld:FindFirstChild("FjordRafting", true)
+        local rafting = cowWorld:FindFirstChild("FjordRafting")
         if rafting then
-            local geode = rafting:FindFirstChild("CrystalGeodeOres") or rafting:FindFirstChild("CrystalGeodeOres", true)
+            local geode = rafting:FindFirstChild("CrystalGeodeOres")
             if geode then
                 mithril.cachedFolder = geode
                 return geode
             end
         end
-        local directGeode = cowWorld:FindFirstChild("CrystalGeodeOres", true)
+        local directGeode = cowWorld:FindFirstChild("CrystalGeodeOres")
         if directGeode then
             mithril.cachedFolder = directGeode
             return directGeode
         end
     end
 
-    -- 3. Fallback: Search anywhere in workspace
-    local geode = workspace:FindFirstChild("CrystalGeodeOres", true)
-    if geode then
-        mithril.cachedFolder = geode
-        return geode
+    local topGeode = workspace:FindFirstChild("CrystalGeodeOres")
+    if topGeode then
+        mithril.cachedFolder = topGeode
+        return topGeode
+    end
+
+    -- 3. Throttled deep search (at most once every 2.0s to avoid frame freezing)
+    local now = os.clock()
+    if not mithril.lastFolderSearch or (now - mithril.lastFolderSearch >= 2.0) then
+        mithril.lastFolderSearch = now
+        if res then
+            local geode = res:FindFirstChild("CrystalGeodeOres", true)
+            if geode then
+                mithril.cachedFolder = geode
+                return geode
+            end
+        end
+        if cowWorld then
+            local rafting = cowWorld:FindFirstChild("FjordRafting", true)
+            if rafting then
+                local geode = rafting:FindFirstChild("CrystalGeodeOres", true)
+                if geode then
+                    mithril.cachedFolder = geode
+                    return geode
+                end
+            end
+            local directGeode = cowWorld:FindFirstChild("CrystalGeodeOres", true)
+            if directGeode then
+                mithril.cachedFolder = directGeode
+                return directGeode
+            end
+        end
+        local geode = workspace:FindFirstChild("CrystalGeodeOres", true)
+        if geode then
+            mithril.cachedFolder = geode
+            return geode
+        end
     end
 
     return nil
@@ -3101,8 +3335,10 @@ function mithril.teleport(orePart, model)
         targetCFrame = CFrame.new(targetPos)
     end
 
+    stopCharacterVelocity()
     char:PivotTo(targetCFrame)
     root.CFrame = targetCFrame
+    stopCharacterVelocity()
 
     for _, part in ipairs(charBaseParts) do
         part.AssemblyLinearVelocity = Vector3.zero
@@ -3719,17 +3955,35 @@ function cache.getMithrilCaveSpidersFolder()
             return folder
         end
     end
-    if cache.cowWorldRef and cache.cowWorldRef.Parent then
-        local folder = cache.cowWorldRef:FindFirstChild("MithrilCaveSpiders", true)
+    local cowWorld = cache.cowWorldRef and cache.cowWorldRef.Parent and cache.cowWorldRef or workspace:FindFirstChild("CowWorld")
+    if cowWorld then
+        local folder = cowWorld:FindFirstChild("MithrilCaveSpiders")
         if folder then
             cache.cachedMithrilCaveFolder = folder
             return folder
         end
     end
-    local folder = workspace:FindFirstChild("MithrilCaveSpiders", true)
-    if folder then
-        cache.cachedMithrilCaveFolder = folder
-        return folder
+    local topFolder = workspace:FindFirstChild("MithrilCaveSpiders")
+    if topFolder then
+        cache.cachedMithrilCaveFolder = topFolder
+        return topFolder
+    end
+
+    local now = os.clock()
+    if not cache.lastSpiderFolderSearch or (now - cache.lastSpiderFolderSearch >= 3.0) then
+        cache.lastSpiderFolderSearch = now
+        if cowWorld then
+            local folder = cowWorld:FindFirstChild("MithrilCaveSpiders", true)
+            if folder then
+                cache.cachedMithrilCaveFolder = folder
+                return folder
+            end
+        end
+        local folder = workspace:FindFirstChild("MithrilCaveSpiders", true)
+        if folder then
+            cache.cachedMithrilCaveFolder = folder
+            return folder
+        end
     end
     return nil
 end
@@ -5511,54 +5765,106 @@ function farm.processGrassChomp(now, rootPos)
         end
         farm.lastRaycastChompTime = now
 
-        local targetGrassNode = nil
-        local hit = workspace:Raycast(rootPos, RAYCAST_DOWN, raycastParams)
-        if hit and hit.Instance then
-            targetGrassNode = cache.resolveGrassNode(hit.Instance)
+        local targetNodeId = nil
+        local targetInstance = nil
+        local repeatDelay = farm.grassChompRepeatDelay or (chompDelay + 0.1)
+
+        local function tryCandidate(inst, id)
+            if not id and inst then
+                id = cache.getNodeID(inst) or cache.extractGrassNodeId(inst)
+            end
+            if not id then return false end
+
+            -- If candidate is the last chomped node, only accept if repeatDelay has elapsed
+            if id == farm.lastChompedNode and (now - farm.chompCooldown < repeatDelay) then
+                return false
+            end
+
+            targetNodeId = id
+            targetInstance = inst
+            return true
         end
 
-        -- Proximity Fallback 1: Current target node within 6 studs (36 sq)
-        if not targetGrassNode and farm.currentTargetNode and farm.currentTargetNode.Parent then
-            local tPos = cache.getNodePosition(farm.currentTargetNode)
-            if tPos and get2DDistanceSq(rootPos, tPos) <= 36 then
-                local id = cache.getNodeID(farm.currentTargetNode)
-                if id then
-                    targetGrassNode = farm.currentTargetNode
+        -- 1. Primary: Game's native CowGrassPrediction SelectionBox in Camera (mouth/view target)
+        local camera = workspace.CurrentCamera or workspace:FindFirstChildOfClass("Camera") or workspace:FindFirstChild("Camera")
+        local predBox = camera and camera:FindFirstChild("CowGrassPrediction")
+        if predBox then
+            local adornee = nil
+            local pcallOk, propVal = pcall(function() return predBox.Adornee end)
+            if pcallOk and propVal then
+                adornee = propVal
+            else
+                adornee = predBox:GetAttribute("Adornee") or predBox:GetAttribute("Target") or predBox:GetAttribute("Node")
+            end
+
+            if adornee then
+                local resolved = (typeof(adornee) == "Instance" and cache.resolveGrassNode(adornee)) or adornee
+                local pos = (typeof(resolved) == "Instance" and cache.getNodePosition(resolved))
+                -- Ensure prediction target is within reasonable eating reach (<= 7 studs / 49 sq)
+                if not pos or get2DDistanceSq(rootPos, pos) <= 49 then
+                    local id = cache.extractGrassNodeId(resolved) or (typeof(resolved) == "Instance" and cache.getNodeID(resolved))
+                    tryCandidate(resolved, id)
                 end
             end
         end
 
-        -- Proximity Fallback 2: Any grass node in CowVirtualGrass within 6 studs
-        if not targetGrassNode then
+        -- 2. Physical Downward Raycast: Directly detect grass beneath character
+        if not targetNodeId then
+            local hit = workspace:Raycast(rootPos, RAYCAST_DOWN, raycastParams)
+            if hit and hit.Instance then
+                local rayNode = cache.resolveGrassNode(hit.Instance)
+                if rayNode then
+                    tryCandidate(rayNode, cache.getNodeID(rayNode))
+                end
+            end
+        end
+
+        -- 3. Proximity Fallback 1: Current target node within 6 studs (36 sq)
+        if not targetNodeId and farm.currentTargetNode and farm.currentTargetNode.Parent then
+            local tPos = cache.getNodePosition(farm.currentTargetNode)
+            if tPos and get2DDistanceSq(rootPos, tPos) <= 36 then
+                tryCandidate(farm.currentTargetNode, cache.getNodeID(farm.currentTargetNode))
+            end
+        end
+
+        -- 4. Proximity Fallback 2: Any grass node in CowVirtualGrass within 6 studs (closest)
+        if not targetNodeId then
             local grassNodes = cache.getGrassNodes()
             local bestDistSq = 36
+            local bestNode = nil
             for _, node in ipairs(grassNodes) do
                 if node and node.Parent then
                     local nodePos = cache.getNodePosition(node)
                     if nodePos then
                         local dSq = get2DDistanceSq(rootPos, nodePos)
                         if dSq < bestDistSq then
-                            local nodeId = cache.getNodeID(node)
-                            if nodeId then
+                            local id = cache.getNodeID(node)
+                            if id and (id ~= farm.lastChompedNode or (now - farm.chompCooldown >= repeatDelay)) then
                                 bestDistSq = dSq
-                                targetGrassNode = node
+                                bestNode = node
                             end
                         end
                     end
                 end
             end
+            if bestNode then
+                tryCandidate(bestNode, cache.getNodeID(bestNode))
+            end
         end
 
-        if targetGrassNode then
-            local nodeId = cache.getNodeID(targetGrassNode)
-            if nodeId then
-                local repeatDelay = farm.grassChompRepeatDelay or (chompDelay + 0.1)
-                if (now - farm.chompCooldown >= chompDelay) and (nodeId ~= farm.lastChompedNode or (now - farm.chompCooldown >= repeatDelay)) then
-                    chompEvent:FireServer(nodeId)
-                    farm.lastChompedNode = nodeId
-                    farm.chompCooldown = now
+        -- 5. Fire Chomp Request
+        if targetNodeId then
+            if (now - farm.chompCooldown >= chompDelay) and (targetNodeId ~= farm.lastChompedNode or (now - farm.chompCooldown >= repeatDelay)) then
+                chompEvent:FireServer(targetNodeId)
+                farm.lastChompedNode = targetNodeId
+                farm.chompCooldown = now
 
-                    if farm.currentTargetNode and (farm.currentTargetNode == targetGrassNode or farm.currentTargetNode.Name == targetGrassNode.Name) then
+                if farm.currentTargetNode then
+                    local currId = cache.getNodeID(farm.currentTargetNode)
+                    if farm.currentTargetNode == targetInstance
+                        or farm.currentTargetNode.Name == targetNodeId
+                        or (targetInstance and typeof(targetInstance) == "Instance" and farm.currentTargetNode.Name == targetInstance.Name)
+                        or (currId and currId == targetNodeId) then
                         farm.currentTargetNode = nil
                         farm.currentNodeStartTime = 0
                         farm.lastNodeSearchTime = 0
@@ -7235,7 +7541,11 @@ function townAuction.getFitoutModel()
     local creamery = village and village:FindFirstChild("ButtercupCreamery")
     local fitout = creamery and creamery:FindFirstChild("TownStoreFitout")
     if not fitout then
-        fitout = workspace:FindFirstChild("TownStoreFitout", true)
+        local now = os.clock()
+        if not townAuction.lastFitoutSearch or (now - townAuction.lastFitoutSearch >= 3.0) then
+            townAuction.lastFitoutSearch = now
+            fitout = workspace:FindFirstChild("TownStoreFitout", true)
+        end
     end
     townAuction.fitoutModel = fitout
     return fitout
@@ -7430,6 +7740,27 @@ function townAuction.updateAllCards()
     townAuction.updateInfoCard()
 end
 
+local townAuctionResultMessages = {
+    Purchased = "Purchased! Your item is being delivered.",
+    Accepted = "Your bid is now the highest.",
+    Listed = "Your exact item copy is listed.",
+    PurchaseSaving = "Your purchase is saving. It will not charge twice if you try again.",
+    Pending = "Confirmation is pending. Your funds or item remain reserved.",
+    Saving = "Saving your reservation. Please try again shortly.",
+    SlotOccupied = "That player auction spot was taken. Your item is being returned.",
+    InventoryFull = "There is no room for another copy of this item.",
+    OfferChanged = "That offer has changed. The current offers are shown below.",
+    AlreadyLeading = "You are already the highest bidder.",
+    BidTooLow = "A higher bid is required.",
+    UnequipRequired = "Unequip this item before listing it.",
+    Cancelled = "Listing cancelled. Your exact copy returns when your inventory has room.",
+    BidsAlreadyPlaced = "This listing already has bids and must finish its auction.",
+    ListingNotFound = "That listing has already finished. Your inventory is up to date.",
+    RoundBusy = "This round is busy. Please use another auction or wait for the next offer.",
+    DuplicateRequired = "You need a duplicate. Your first copy stays in your Closet.",
+    RarityNotEligible = "Player auctions accept Super Rare and Mythic duplicates only. Your first copy cannot be sold."
+}
+
 function townAuction.handleSnapshotResult(res)
     if not res or type(res) ~= "table" or not res.Ok then return end
     townAuction.snapshot = res
@@ -7444,23 +7775,21 @@ function townAuction.handleSnapshotResult(res)
 
     table.clear(townAuction.lotsBySlot)
     if type(res.Lots) == "table" then
-        local buyNowIndex = 1
         for _, lot in ipairs(res.Lots) do
             if lot.Slot then
-                if lot.Slot == "BuyNow" then
-                    if buyNowIndex == 1 then
+                local slotId = tostring(lot.Slot)
+                local roundStr = tostring(lot.Round or "")
+                if slotId == "BuyNow2" or string.find(roundStr, "BuyNow2") then
+                    townAuction.lotsBySlot["BuyNow2"] = lot
+                elseif slotId == "BuyNow" or slotId == "BuyNow1" or string.find(roundStr, "BuyNow_") or string.find(roundStr, "BuyNow1") then
+                    if not townAuction.lotsBySlot["BuyNow"] then
                         townAuction.lotsBySlot["BuyNow"] = lot
                         townAuction.lotsBySlot["BuyNow1"] = lot
-                        buyNowIndex = 2
                     else
                         townAuction.lotsBySlot["BuyNow2"] = lot
-                        buyNowIndex = buyNowIndex + 1
                     end
                 else
-                    townAuction.lotsBySlot[lot.Slot] = lot
-                    if lot.Slot == "BuyNow1" then
-                        townAuction.lotsBySlot["BuyNow"] = lot
-                    end
+                    townAuction.lotsBySlot[slotId] = lot
                 end
             end
         end
@@ -7680,16 +8009,17 @@ function townAuction.checkAndAutoBidSlot(slotName)
     townAuction.lastAutoBidTime[slotName] = now
 
     task.spawn(function()
+        local targetSlot = slotName == "BuyNow1" and "BuyNow" or slotName
         local success, result = pcall(function()
             if isBuyNow then
                 return remote:InvokeServer({
                     Round = round,
                     Action = "Buy",
-                    Slot = "BuyNow"
+                    Slot = targetSlot
                 })
             else
                 return remote:InvokeServer({
-                    Slot = slotName,
+                    Slot = targetSlot,
                     Round = round,
                     Action = "Bid",
                     Amount = amount
@@ -7701,18 +8031,22 @@ function townAuction.checkAndAutoBidSlot(slotName)
 
         if success then
             local isOk = (type(result) == "table" and result.Ok ~= false) or (result == true or result == nil)
+            local code = type(result) == "table" and result.Code
+            local translatedMsg = code and (townAuctionResultMessages[code] or code)
+
             if isOk then
                 local itemName = (lot and lot.Name)
                     or (model and (model:GetAttribute("TownAuctionName") or model:GetAttribute("TownAuctionItemID")))
                     or slotName
+                local statusLine = translatedMsg and ("\n" .. translatedMsg) or ""
                 Window:Notify({
                     Title = isBuyNow and "Auto Buy Placed!" or "Auto Outbid Placed!",
-                    Content = string.format("%s (%s)\nAmount: 🪙 %s %s\nOutbidding: %s",
+                    Content = string.format("%s (%s)\nAmount: 🪙 %s %s%s",
                         slotName,
                         tostring(itemName),
                         formatNumber(amount),
                         townAuction.currency,
-                        tostring(leaderName or "None")),
+                        isBuyNow and statusLine or ("\nOutbidding: " .. tostring(leaderName or "None"))),
                     Duration = 4
                 })
                 task.delay(0.5, function()
@@ -7762,16 +8096,18 @@ function townAuction.executeBid(slotName, customAmount, forcePrice)
         return false
     end
 
+    local targetSlot = slotName == "BuyNow1" and "BuyNow" or slotName
+
     local success, result = pcall(function()
         if isBuyNow then
             return remote:InvokeServer({
                 Round = round,
                 Action = "Buy",
-                Slot = "BuyNow"
+                Slot = targetSlot
             })
         else
             return remote:InvokeServer({
-                Slot = slotName,
+                Slot = targetSlot,
                 Round = round,
                 Action = "Bid",
                 Amount = amount
@@ -7785,11 +8121,15 @@ function townAuction.executeBid(slotName, customAmount, forcePrice)
             or (model and (model:GetAttribute("TownAuctionName") or model:GetAttribute("TownAuctionItemID")))
             or slotName
 
+        local code = type(result) == "table" and result.Code
+        local translatedMsg = code and (townAuctionResultMessages[code] or code)
+
         if isOk then
             local actionTitle = isBuyNow and "Purchase Placed!" or "Bid Placed!"
+            local statusLine = translatedMsg and ("\n" .. translatedMsg) or ""
             Window:Notify({
                 Title = actionTitle,
-                Content = string.format("%s (%s)\nAmount: 🪙 %s %s", slotName, tostring(itemName), formatNumber(amount), townAuction.currency),
+                Content = string.format("%s (%s)\nAmount: 🪙 %s %s%s", slotName, tostring(itemName), formatNumber(amount), townAuction.currency, statusLine),
                 Duration = 4
             })
             task.delay(0.5, function()
@@ -7797,7 +8137,7 @@ function townAuction.executeBid(slotName, customAmount, forcePrice)
             end)
             return true
         else
-            local errMsg = (type(result) == "table" and (result.Error or result.Message or result.Reason)) or tostring(result)
+            local errMsg = (type(result) == "table" and (translatedMsg or result.Error or result.Message or result.Reason)) or tostring(result)
             Window:Notify({
                 Title = isBuyNow and "Purchase Rejected" or "Bid Rejected",
                 Content = string.format("%s: %s", slotName, tostring(errMsg)),
@@ -8485,62 +8825,75 @@ function rafting.getTargetZ(posX, currentZ)
 
     -- "Clearing & Chest Explorer" (Docks at clearings along the river)
     if r == "Clearing & Chest Explorer" then
-        if posX <= 1420 then
+        if posX <= 1450 then
             if rafting.visitedSites["Clearing_01"] then
-                -- Already visited Clearing 01: steer smoothly towards Clearing 02 approach
-                local t = math.clamp((posX - 1200) / 220, 0, 1)
-                return -37.81 + t * (90.0 - (-37.81))
+                -- Already visited Clearing 01: return smoothly to river center (-37.81)
+                local t = math.clamp((posX - 1200) / 250, 0, 1)
+                return -140.0 + t * (-37.81 - (-140.0))
             elseif posX <= 1260 then
-                -- Approach Clearing 01 (North cove, mouth X=1334.58, Z=-175.96, dock box Z in [-261.46, -87.36])
+                -- Approach Clearing 01 (North cove, mouth X=1334.58, Z=-175.96)
                 local t = math.clamp((posX - 1094.58) / 165.42, 0, 1)
                 return -37.81 + t * (-140.0 - (-37.81))
             else
                 -- Dock at Clearing 01
                 return -140.0
             end
-        elseif posX <= 1540 then
-            -- Depart Clearing 01 and cross towards Clearing 02 (South cove, mouth X=1622.58, Z=113.34, dock box Z in [11.74, 211.84])
-            local t = math.clamp((posX - 1420) / 120, 0, 1)
-            return -37.81 + t * (90.0 - (-37.81))
-        elseif posX <= 1720 then
+        elseif posX <= 1550 then
+            -- Safely stay in center channel (-37.81) between Clearing 01 and Clearing 02
+            -- (Avoids Cave_Cubby02 south wall between X=1182 and X=1438)
+            return -37.81
+        elseif posX <= 1650 then
             if rafting.visitedSites["Clearing_02"] then
-                -- Depart Clearing 02 and merge into South Channel (412.19)
-                local t = math.clamp((posX - 1600) / 244.58, 0, 1)
-                return 90.0 + t * (412.19 - 90.0)
+                -- Already visited Clearing 02: return to center channel (-37.81)
+                local t = math.clamp((posX - 1550) / 100, 0, 1)
+                return 90.0 + t * (-37.81 - 90.0)
+            else
+                -- Approach Clearing 02 (South cove, mouth X=1622.58, Z=113.34)
+                local t = math.clamp((posX - 1550) / 72.58, 0, 1)
+                return -37.81 + t * (90.0 - (-37.81))
+            end
+        elseif posX <= 1750 then
+            if rafting.visitedSites["Clearing_02"] then
+                -- Depart Clearing 02: return to center channel (-37.81)
+                local t = math.clamp((posX - 1650) / 100, 0, 1)
+                return 90.0 + t * (-37.81 - 90.0)
             else
                 -- Dock at Clearing 02
                 return 90.0
             end
         elseif posX <= 1844.58 then
-            -- Depart Clearing 02 and merge into South Channel (412.19)
-            local t = math.clamp((posX - 1720) / 124.58, 0, 1)
-            return 90.0 + t * (412.19 - 90.0)
+            -- Merged back into center channel before Reach 2 River Split
+            return -37.81
         elseif posX <= 2844.58 then
-            -- Reach 2 South Channel
-            return 412.19
+            -- Reach 2 South Diagonal Channel (FjordZones.lua Channel 2 South: X=1844.58 to 2844.58)
+            -- Follows natural river diagonal from -37.81 to 412.19
+            local t = math.clamp((posX - 1844.58) / 1000, 0, 1)
+            return -37.81 + t * (412.19 - (-37.81))
         elseif posX <= 3050 then
-            -- Reach 3 South Channel approach
+            -- Reach 3 South Channel
             return 412.19
         elseif posX <= 3180 then
             if rafting.visitedSites["Clearing_04"] then
-                return 540.0
+                return 412.19
             else
-                -- Steer into Clearing 04 (South cove, mouth X=3144.58, Z=578.34, dock box Z in [463.74, 691.84])
+                -- Steer into Clearing 04 (South cove, mouth X=3144.58, Z=578.34)
                 local t = math.clamp((posX - 3050) / 130, 0, 1)
                 return 412.19 + t * (540.0 - 412.19)
             end
         elseif posX <= 3294.58 then
             if rafting.visitedSites["Clearing_04"] then
+                -- Depart Clearing 04: return to South Channel (412.19)
                 local t = math.clamp((posX - 3180) / 114.58, 0, 1)
-                return 540.0 + t * (862.19 - 540.0)
+                return 540.0 + t * (412.19 - 540.0)
             else
                 -- Dock at Clearing 04
                 return 540.0
             end
         elseif posX <= 4294.58 then
-            -- Reach 4: transition from 540 to Far South (862.19)
+            -- Reach 4 South Diagonal Channel (FjordZones.lua Channel 4 South: X=3294.58 to 4294.58)
+            -- Follows natural river diagonal from 412.19 to 862.19
             local t = math.clamp((posX - 3294.58) / 1000, 0, 1)
-            return 540.0 + t * (862.19 - 540.0)
+            return 412.19 + t * (862.19 - 412.19)
         elseif posX <= 4520 then
             if rafting.visitedSites["Clearing_07"] then
                 return 862.19
@@ -8551,16 +8904,17 @@ function rafting.getTargetZ(posX, currentZ)
             end
         elseif posX <= 4744.58 then
             if rafting.visitedSites["Clearing_08"] then
-                return 960.0
+                return 862.19
             else
                 -- Steer towards Clearing 08 (mouth X=4604.08, Z=1013.34)
                 local t = math.clamp((posX - 4520) / 224.58, 0, 1)
                 return 710.0 + t * (960.0 - 710.0)
             end
         elseif posX <= 5844.58 then
-            -- Reach 6: diagonal to Extreme South (1312.19)
+            -- Reach 6 South Diagonal Channel (FjordZones.lua Channel 6 South: X=4744.58 to 5844.58)
+            -- Follows natural river diagonal from 862.19 to 1312.19
             local t = math.clamp((posX - 4744.58) / 1100, 0, 1)
-            return 960.0 + t * (1312.19 - 960.0)
+            return 862.19 + t * (1312.19 - 862.19)
         else
             -- Reach 7 to Sea
             return 1312.19
@@ -8625,8 +8979,13 @@ function rafting.castOff()
     local deck = rafting.getRaftDeck()
     if root and deck then
         stopCharacterVelocity()
-        root.CFrame = deck.CFrame * CFrame.new(0, 3.45, 0)
-        task.wait(0.2)
+        local deckTarget = deck.CFrame:PointToWorldSpace(Vector3.new(0, 3.45, 0))
+        root.CFrame = CFrame.new(deckTarget) * (root.CFrame - root.CFrame.Position)
+        if humanoid then
+            humanoid:Move(Vector3.zero, false)
+            humanoid.AutoRotate = true
+        end
+        task.wait(0.3)
     end
 
     if status == "Docked" then
@@ -8694,8 +9053,16 @@ end
 
 function rafting.handleSnapshot(payload)
     if not payload or type(payload) ~= "table" then return end
+
+    -- Detect new session
+    if payload.Id and payload.Id ~= rafting.sessionId then
+        rafting.sessionId = payload.Id
+        rafting.visitedSites = {}
+        rafting.isDockedState = false
+        rafting.lastLootedSite = nil
+    end
+
     rafting.currentSnapshot = payload
-    rafting.sessionId = payload.Id
     rafting.status = payload.Status or "Travelling"
 
     if rafting.status ~= "Docked" then
@@ -8721,6 +9088,21 @@ function rafting.handleSnapshot(payload)
         local siteId = payload.SiteId or "Clearing"
         rafting.visitedSites[siteId] = true
 
+        -- Stop any active steering and ensure rotation is free on dock
+        if humanoid then
+            pcall(function()
+                humanoid:Move(Vector3.zero, false)
+                humanoid.AutoRotate = true
+            end)
+        end
+        if VirtualInput and VirtualInput.SendKeyEvent and rafting.lastSteerKey then
+            pcall(function()
+                VirtualInput:SendKeyEvent(false, Enum.KeyCode.A, false, game)
+                VirtualInput:SendKeyEvent(false, Enum.KeyCode.D, false, game)
+            end)
+            rafting.lastSteerKey = nil
+        end
+
         -- Recover player if they slipped into the river water while docked
         if root and root.Position.Y < 701 then
             local landPos = clearingLandCoords[siteId]
@@ -8732,7 +9114,7 @@ function rafting.handleSnapshot(payload)
 
         if not rafting.isDockedState then
             rafting.isDockedState = true
-            rafting.statusText = string.format("Docked at %s. Looting & resuming in %ds...", tostring(siteId), rafting.dockMaxWaitSeconds)
+            rafting.statusText = string.format("Docked at %s. Looting chest...", tostring(siteId))
 
             -- 1. Teleport player safely onto clearing dry land
             task.spawn(function()
@@ -8748,6 +9130,10 @@ function rafting.handleSnapshot(payload)
                 if landPos and root then
                     stopCharacterVelocity()
                     root.CFrame = CFrame.new(landPos)
+                    if humanoid then
+                        humanoid.AutoRotate = true
+                        humanoid:Move(Vector3.zero, false)
+                    end
                 end
             end)
             
@@ -8766,12 +9152,17 @@ function rafting.handleSnapshot(payload)
                 end)
             end
 
-            -- 3. Automatically cast off after dockMaxWaitSeconds (ONLY ONCE per docking session)
-            task.delay(rafting.dockMaxWaitSeconds, function()
-                if rafting.enabled and rafting.status == "Docked" then
-                    rafting.castOff()
-                end
-            end)
+            -- 3. Automatic departure only if Auto-Loop is active; otherwise user clicks 'Sail Now'
+            if rafting.autoLoop then
+                rafting.statusText = string.format("Docked at %s. Resuming in %ds...", tostring(siteId), rafting.dockMaxWaitSeconds)
+                task.delay(rafting.dockMaxWaitSeconds, function()
+                    if rafting.enabled and rafting.status == "Docked" then
+                        rafting.castOff()
+                    end
+                end)
+            else
+                rafting.statusText = string.format("Docked at %s. Looted chest! Click 'Sail Now' to resume.", tostring(siteId))
+            end
         end
     end
 
@@ -8835,9 +9226,6 @@ function rafting.stepSteering(dt)
     -- This keeps the cow standing fully on top of the deck with hooves grounded,
     -- allowing Roblox humanoid platform replication and the game's _stepDeckMotion to work seamlessly!
     if root and char and humanoid and humanoid.Health > 0 then
-        if humanoid.AutoRotate then
-            humanoid.AutoRotate = false
-        end
         local cowPos = root.Position
         local cowRel = deck.CFrame:PointToObjectSpace(cowPos)
         local currentX = cowRel.X
@@ -8846,7 +9234,8 @@ function rafting.stepSteering(dt)
 
         -- Overboard / fall-through recovery safeguard: only teleport if thrown off the raft into water
         if math.abs(currentX) > 8.5 or math.abs(currentZ) > 17.5 or currentY < -1.5 or currentY > 7.0 then
-            root.CFrame = deck.CFrame * CFrame.new(targetDeckX, 3.45, 0)
+            local recPos = deck.CFrame:PointToWorldSpace(Vector3.new(targetDeckX, 3.45, 0))
+            root.CFrame = CFrame.new(recPos) * (root.CFrame - root.CFrame.Position)
             stopCharacterVelocity()
         else
             -- Preserve valid deck elevation (normal standing height is ~3.45)
@@ -8863,9 +9252,9 @@ function rafting.stepSteering(dt)
 
             local nextX = currentX + stepX
             local nextZ = currentZ + stepZ
-            -- Fix character spinning: do not multiply by root.CFrame.Rotation!
-            -- deck.CFrame * CFrame.new(...) is already oriented facing downriver with the raft deck
-            root.CFrame = deck.CFrame * CFrame.new(nextX, currentY, nextZ)
+            -- Move position across deck without compounding rotation (preserves cow world rotation, eliminating spin!)
+            local targetWorldPos = deck.CFrame:PointToWorldSpace(Vector3.new(nextX, currentY, nextZ))
+            root.CFrame = CFrame.new(targetWorldPos) * (root.CFrame - root.CFrame.Position)
         end
     end
 
@@ -9023,9 +9412,6 @@ function rafting.startVoyage()
     rafting.isSailing = false
     rafting.updateCards()
 
-    if prompt and fireproximityprompt then
-        pcall(fireproximityprompt, prompt)
-    end
     rem:FireServer("Start")
     Window:Notify({ Title = "Rafting Started", Content = "Session requested at launch pad. Boarding raft...", Duration = 3 })
 end
@@ -9342,7 +9728,53 @@ RaftingTab:CreateSlider({
 -- ==========================
 local SettingsTab = Window:CreateTab({ Name = "Settings", Icon = 4483362458 })
 
-SettingsTab:CreateSection({ Name = "Performance" })
+SettingsTab:CreateSection({ Name = "Performance & Anti-Lag" })
+
+SettingsTab:CreateToggle({
+    Name = "Map & Asset Optimizer (Anti-Lag)",
+    CurrentValue = false,
+    Flag = "Toggle_MapOptimizer",
+    Callback = function(Value)
+        mapOptimizer.enabled = Value
+        if Value then
+            mapOptimizer.applyToWorld()
+            mapOptimizer.startStreamHook()
+            mapOptimizer.preloadAssets()
+            if Window and Window.Notify then
+                Window:Notify({
+                    Title = "Anti-Lag Optimizer Enabled",
+                    Content = "Simplified map materials, disabled heavy shadows/particles, and hooked chunk streaming.",
+                    Duration = 3.5,
+                })
+            end
+        else
+            mapOptimizer.stopStreamHook()
+        end
+    end,
+})
+
+SettingsTab:CreateToggle({
+    Name = "Auto-Clean Streamed Chunks",
+    CurrentValue = true,
+    Flag = "Toggle_StreamCleaner",
+    Callback = function(Value)
+        mapOptimizer.autoCleanStreamed = Value
+    end,
+})
+
+SettingsTab:CreateButton({
+    Name = "Preload Game Audio & Assets",
+    Callback = function()
+        mapOptimizer.preloadAssets()
+        if Window and Window.Notify then
+            Window:Notify({
+                Title = "Asset Preloader",
+                Content = "Preloaded game audio and interface assets into memory cache.",
+                Duration = 2.5,
+            })
+        end
+    end,
+})
 
 SettingsTab:CreateToggle({
     Name = "Disable 3D Rendering",
@@ -9641,6 +10073,9 @@ SettingsTab:CreateButton({
                     pcall(function() conn:Disconnect() end)
                 end
             end
+            if mapOptimizer and mapOptimizer.stopStreamHook then
+                pcall(function() mapOptimizer.stopStreamHook() end)
+            end
             table.clear(scriptConnections)
 
             pcall(function() RunService:Set3dRenderingEnabled(true) end)
@@ -9664,7 +10099,13 @@ SettingsTab:CreateButton({
 })
 
 -- ==========================
--- BOOT: Initialize 6-Hour AFK Timer & State Resume
+-- BOOT: Initialize 6-Hour AFK Timer, State Resume & Preloading
 -- ==========================
 afkRelog.startTimer()
 afkRelog.checkAndResumeState()
+task.spawn(function()
+    task.wait(1.5)
+    if mapOptimizer and mapOptimizer.preloadAssets then
+        mapOptimizer.preloadAssets()
+    end
+end)

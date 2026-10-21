@@ -8825,62 +8825,75 @@ function rafting.getTargetZ(posX, currentZ)
 
     -- "Clearing & Chest Explorer" (Docks at clearings along the river)
     if r == "Clearing & Chest Explorer" then
-        if posX <= 1420 then
+        if posX <= 1450 then
             if rafting.visitedSites["Clearing_01"] then
-                -- Already visited Clearing 01: steer smoothly towards Clearing 02 approach
-                local t = math.clamp((posX - 1200) / 220, 0, 1)
-                return -37.81 + t * (90.0 - (-37.81))
+                -- Already visited Clearing 01: return smoothly to river center (-37.81)
+                local t = math.clamp((posX - 1200) / 250, 0, 1)
+                return -140.0 + t * (-37.81 - (-140.0))
             elseif posX <= 1260 then
-                -- Approach Clearing 01 (North cove, mouth X=1334.58, Z=-175.96, dock box Z in [-261.46, -87.36])
+                -- Approach Clearing 01 (North cove, mouth X=1334.58, Z=-175.96)
                 local t = math.clamp((posX - 1094.58) / 165.42, 0, 1)
                 return -37.81 + t * (-140.0 - (-37.81))
             else
                 -- Dock at Clearing 01
                 return -140.0
             end
-        elseif posX <= 1540 then
-            -- Depart Clearing 01 and cross towards Clearing 02 (South cove, mouth X=1622.58, Z=113.34, dock box Z in [11.74, 211.84])
-            local t = math.clamp((posX - 1420) / 120, 0, 1)
-            return -37.81 + t * (90.0 - (-37.81))
-        elseif posX <= 1720 then
+        elseif posX <= 1550 then
+            -- Safely stay in center channel (-37.81) between Clearing 01 and Clearing 02
+            -- (Avoids Cave_Cubby02 south wall between X=1182 and X=1438)
+            return -37.81
+        elseif posX <= 1650 then
             if rafting.visitedSites["Clearing_02"] then
-                -- Depart Clearing 02 and merge into South Channel (412.19)
-                local t = math.clamp((posX - 1600) / 244.58, 0, 1)
-                return 90.0 + t * (412.19 - 90.0)
+                -- Already visited Clearing 02: return to center channel (-37.81)
+                local t = math.clamp((posX - 1550) / 100, 0, 1)
+                return 90.0 + t * (-37.81 - 90.0)
+            else
+                -- Approach Clearing 02 (South cove, mouth X=1622.58, Z=113.34)
+                local t = math.clamp((posX - 1550) / 72.58, 0, 1)
+                return -37.81 + t * (90.0 - (-37.81))
+            end
+        elseif posX <= 1750 then
+            if rafting.visitedSites["Clearing_02"] then
+                -- Depart Clearing 02: return to center channel (-37.81)
+                local t = math.clamp((posX - 1650) / 100, 0, 1)
+                return 90.0 + t * (-37.81 - 90.0)
             else
                 -- Dock at Clearing 02
                 return 90.0
             end
         elseif posX <= 1844.58 then
-            -- Depart Clearing 02 and merge into South Channel (412.19)
-            local t = math.clamp((posX - 1720) / 124.58, 0, 1)
-            return 90.0 + t * (412.19 - 90.0)
+            -- Merged back into center channel before Reach 2 River Split
+            return -37.81
         elseif posX <= 2844.58 then
-            -- Reach 2 South Channel
-            return 412.19
+            -- Reach 2 South Diagonal Channel (FjordZones.lua Channel 2 South: X=1844.58 to 2844.58)
+            -- Follows natural river diagonal from -37.81 to 412.19
+            local t = math.clamp((posX - 1844.58) / 1000, 0, 1)
+            return -37.81 + t * (412.19 - (-37.81))
         elseif posX <= 3050 then
-            -- Reach 3 South Channel approach
+            -- Reach 3 South Channel
             return 412.19
         elseif posX <= 3180 then
             if rafting.visitedSites["Clearing_04"] then
-                return 540.0
+                return 412.19
             else
-                -- Steer into Clearing 04 (South cove, mouth X=3144.58, Z=578.34, dock box Z in [463.74, 691.84])
+                -- Steer into Clearing 04 (South cove, mouth X=3144.58, Z=578.34)
                 local t = math.clamp((posX - 3050) / 130, 0, 1)
                 return 412.19 + t * (540.0 - 412.19)
             end
         elseif posX <= 3294.58 then
             if rafting.visitedSites["Clearing_04"] then
+                -- Depart Clearing 04: return to South Channel (412.19)
                 local t = math.clamp((posX - 3180) / 114.58, 0, 1)
-                return 540.0 + t * (862.19 - 540.0)
+                return 540.0 + t * (412.19 - 540.0)
             else
                 -- Dock at Clearing 04
                 return 540.0
             end
         elseif posX <= 4294.58 then
-            -- Reach 4: transition from 540 to Far South (862.19)
+            -- Reach 4 South Diagonal Channel (FjordZones.lua Channel 4 South: X=3294.58 to 4294.58)
+            -- Follows natural river diagonal from 412.19 to 862.19
             local t = math.clamp((posX - 3294.58) / 1000, 0, 1)
-            return 540.0 + t * (862.19 - 540.0)
+            return 412.19 + t * (862.19 - 412.19)
         elseif posX <= 4520 then
             if rafting.visitedSites["Clearing_07"] then
                 return 862.19
@@ -8891,16 +8904,17 @@ function rafting.getTargetZ(posX, currentZ)
             end
         elseif posX <= 4744.58 then
             if rafting.visitedSites["Clearing_08"] then
-                return 960.0
+                return 862.19
             else
                 -- Steer towards Clearing 08 (mouth X=4604.08, Z=1013.34)
                 local t = math.clamp((posX - 4520) / 224.58, 0, 1)
                 return 710.0 + t * (960.0 - 710.0)
             end
         elseif posX <= 5844.58 then
-            -- Reach 6: diagonal to Extreme South (1312.19)
+            -- Reach 6 South Diagonal Channel (FjordZones.lua Channel 6 South: X=4744.58 to 5844.58)
+            -- Follows natural river diagonal from 862.19 to 1312.19
             local t = math.clamp((posX - 4744.58) / 1100, 0, 1)
-            return 960.0 + t * (1312.19 - 960.0)
+            return 862.19 + t * (1312.19 - 862.19)
         else
             -- Reach 7 to Sea
             return 1312.19
@@ -8965,8 +8979,13 @@ function rafting.castOff()
     local deck = rafting.getRaftDeck()
     if root and deck then
         stopCharacterVelocity()
-        root.CFrame = deck.CFrame * CFrame.new(0, 3.45, 0)
-        task.wait(0.2)
+        local deckTarget = deck.CFrame:PointToWorldSpace(Vector3.new(0, 3.45, 0))
+        root.CFrame = CFrame.new(deckTarget) * (root.CFrame - root.CFrame.Position)
+        if humanoid then
+            humanoid:Move(Vector3.zero, false)
+            humanoid.AutoRotate = true
+        end
+        task.wait(0.3)
     end
 
     if status == "Docked" then
@@ -9034,8 +9053,16 @@ end
 
 function rafting.handleSnapshot(payload)
     if not payload or type(payload) ~= "table" then return end
+
+    -- Detect new session
+    if payload.Id and payload.Id ~= rafting.sessionId then
+        rafting.sessionId = payload.Id
+        rafting.visitedSites = {}
+        rafting.isDockedState = false
+        rafting.lastLootedSite = nil
+    end
+
     rafting.currentSnapshot = payload
-    rafting.sessionId = payload.Id
     rafting.status = payload.Status or "Travelling"
 
     if rafting.status ~= "Docked" then
@@ -9061,6 +9088,21 @@ function rafting.handleSnapshot(payload)
         local siteId = payload.SiteId or "Clearing"
         rafting.visitedSites[siteId] = true
 
+        -- Stop any active steering and ensure rotation is free on dock
+        if humanoid then
+            pcall(function()
+                humanoid:Move(Vector3.zero, false)
+                humanoid.AutoRotate = true
+            end)
+        end
+        if VirtualInput and VirtualInput.SendKeyEvent and rafting.lastSteerKey then
+            pcall(function()
+                VirtualInput:SendKeyEvent(false, Enum.KeyCode.A, false, game)
+                VirtualInput:SendKeyEvent(false, Enum.KeyCode.D, false, game)
+            end)
+            rafting.lastSteerKey = nil
+        end
+
         -- Recover player if they slipped into the river water while docked
         if root and root.Position.Y < 701 then
             local landPos = clearingLandCoords[siteId]
@@ -9072,7 +9114,7 @@ function rafting.handleSnapshot(payload)
 
         if not rafting.isDockedState then
             rafting.isDockedState = true
-            rafting.statusText = string.format("Docked at %s. Looting & resuming in %ds...", tostring(siteId), rafting.dockMaxWaitSeconds)
+            rafting.statusText = string.format("Docked at %s. Looting chest...", tostring(siteId))
 
             -- 1. Teleport player safely onto clearing dry land
             task.spawn(function()
@@ -9088,6 +9130,10 @@ function rafting.handleSnapshot(payload)
                 if landPos and root then
                     stopCharacterVelocity()
                     root.CFrame = CFrame.new(landPos)
+                    if humanoid then
+                        humanoid.AutoRotate = true
+                        humanoid:Move(Vector3.zero, false)
+                    end
                 end
             end)
             
@@ -9106,12 +9152,17 @@ function rafting.handleSnapshot(payload)
                 end)
             end
 
-            -- 3. Automatically cast off after dockMaxWaitSeconds (ONLY ONCE per docking session)
-            task.delay(rafting.dockMaxWaitSeconds, function()
-                if rafting.enabled and rafting.status == "Docked" then
-                    rafting.castOff()
-                end
-            end)
+            -- 3. Automatic departure only if Auto-Loop is active; otherwise user clicks 'Sail Now'
+            if rafting.autoLoop then
+                rafting.statusText = string.format("Docked at %s. Resuming in %ds...", tostring(siteId), rafting.dockMaxWaitSeconds)
+                task.delay(rafting.dockMaxWaitSeconds, function()
+                    if rafting.enabled and rafting.status == "Docked" then
+                        rafting.castOff()
+                    end
+                end)
+            else
+                rafting.statusText = string.format("Docked at %s. Looted chest! Click 'Sail Now' to resume.", tostring(siteId))
+            end
         end
     end
 
@@ -9175,9 +9226,6 @@ function rafting.stepSteering(dt)
     -- This keeps the cow standing fully on top of the deck with hooves grounded,
     -- allowing Roblox humanoid platform replication and the game's _stepDeckMotion to work seamlessly!
     if root and char and humanoid and humanoid.Health > 0 then
-        if humanoid.AutoRotate then
-            humanoid.AutoRotate = false
-        end
         local cowPos = root.Position
         local cowRel = deck.CFrame:PointToObjectSpace(cowPos)
         local currentX = cowRel.X
@@ -9186,7 +9234,8 @@ function rafting.stepSteering(dt)
 
         -- Overboard / fall-through recovery safeguard: only teleport if thrown off the raft into water
         if math.abs(currentX) > 8.5 or math.abs(currentZ) > 17.5 or currentY < -1.5 or currentY > 7.0 then
-            root.CFrame = deck.CFrame * CFrame.new(targetDeckX, 3.45, 0)
+            local recPos = deck.CFrame:PointToWorldSpace(Vector3.new(targetDeckX, 3.45, 0))
+            root.CFrame = CFrame.new(recPos) * (root.CFrame - root.CFrame.Position)
             stopCharacterVelocity()
         else
             -- Preserve valid deck elevation (normal standing height is ~3.45)
@@ -9203,9 +9252,9 @@ function rafting.stepSteering(dt)
 
             local nextX = currentX + stepX
             local nextZ = currentZ + stepZ
-            -- Fix character spinning: do not multiply by root.CFrame.Rotation!
-            -- deck.CFrame * CFrame.new(...) is already oriented facing downriver with the raft deck
-            root.CFrame = deck.CFrame * CFrame.new(nextX, currentY, nextZ)
+            -- Move position across deck without compounding rotation (preserves cow world rotation, eliminating spin!)
+            local targetWorldPos = deck.CFrame:PointToWorldSpace(Vector3.new(nextX, currentY, nextZ))
+            root.CFrame = CFrame.new(targetWorldPos) * (root.CFrame - root.CFrame.Position)
         end
     end
 
@@ -9363,9 +9412,6 @@ function rafting.startVoyage()
     rafting.isSailing = false
     rafting.updateCards()
 
-    if prompt and fireproximityprompt then
-        pcall(fireproximityprompt, prompt)
-    end
     rem:FireServer("Start")
     Window:Notify({ Title = "Rafting Started", Content = "Session requested at launch pad. Boarding raft...", Duration = 3 })
 end
