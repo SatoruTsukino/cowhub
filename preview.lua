@@ -8897,12 +8897,82 @@ function rafting.getNearbyClearing(posX, posZ)
     return nil
 end
 
-function rafting.getNextTargetClearing(posX)
+local clearingChannelCorridors = {
+    ["Clearing_01"] = { [1] = -37.81 },
+    ["Clearing_02"] = { [1] = -37.81 },
+    ["Clearing_03"] = { [1] = -50.0, [2] = -262.81, [3] = -487.81 },
+    ["Clearing_04"] = { [1] = -20.0, [2] = 187.19,  [3] = 412.19 },
+    ["Clearing_05"] = { [1] = -50.0, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81 },
+    ["Clearing_06"] = { [1] = -50.0, [2] = -262.81, [3] = -262.81, [4] = -487.81, [5] = -487.81 },
+    ["Clearing_07"] = { [1] = -20.0, [2] = 187.19,  [3] = 412.19,  [4] = 412.19,  [5] = 412.19 },
+    ["Clearing_08"] = { [1] = -20.0, [2] = 187.19,  [3] = 412.19,  [4] = 637.19,  [5] = 862.19 },
+    ["Clearing_09"] = { [1] = -50.0, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -937.81, [7] = -937.81 },
+    ["Clearing_10"] = { [1] = -37.81, [2] = -37.81, [3] = -37.81,  [4] = -37.81,  [5] = -37.81,  [6] = -37.81,  [7] = -37.81 },
+}
+
+local function getReachIndex(posX)
+    if posX <= 1469.58 then return 1
+    elseif posX <= 2344.58 then return 2
+    elseif posX <= 3069.58 then return 3
+    elseif posX <= 3794.58 then return 4
+    elseif posX <= 4519.58 then return 5
+    elseif posX <= 5294.58 then return 6
+    else return 7 end
+end
+
+function rafting.isSiteReachable(site, posX, currentZ)
+    if not site then return false end
+
+    -- Downriver rule: river only flows East (+X). Any clearing whose MaxX is behind current posX is unreachable.
+    if posX > site.MaxX + 15 then
+        return false
+    end
+
+    -- In Harbour & Reach 1 (before Fork at X = 1469.58): all downriver clearings are reachable
+    if posX <= 1500 then
+        return true
+    end
+
+    -- After Fork at X = 1500, check channel branch separation
+    if currentZ ~= nil then
+        -- Raft is in South branch (Z > 50)
+        if currentZ > 50 then
+            -- Cannot cross rock islands to North coves
+            if site.BankSide == "North" and site.ShoreZ < -100 then
+                return false
+            end
+        -- Raft is in North branch (Z < -100)
+        elseif currentZ < -100 then
+            -- Cannot cross rock islands to South coves
+            if site.BankSide == "South" and site.ShoreZ > 50 then
+                return false
+            end
+        -- Raft is in Middle branch (-100 <= Z <= 50)
+        else
+            -- At X > 1800, outer coves (Clearing 03 at Z = -635 and Clearing 04 at Z = +540) are behind rock walls
+            if posX > 1800 and (site.Id == "Clearing_03" or site.Id == "Clearing_04") then
+                return false
+            end
+        end
+    end
+
+    return true
+end
+
+function rafting.getNextTargetClearing(posX, currentZ)
     for _, site in ipairs(clearingSites) do
         if rafting.selectedClearings and rafting.selectedClearings[site.Id] then
             if not rafting.visitedSites[site.Id] then
-                if posX <= site.MaxX then
-                    return site
+                if posX <= site.MaxX + 15 then
+                    if currentZ == nil or rafting.isSiteReachable(site, posX, currentZ) then
+                        return site
+                    else
+                        -- Unreachable from current channel branch downriver: mark passed
+                        rafting.visitedSites[site.Id] = true
+                    end
+                else
+                    -- Past clearing downriver: mark passed
+                    rafting.visitedSites[site.Id] = true
                 end
             end
         end
@@ -9036,10 +9106,10 @@ function rafting.getTargetZ(posX, currentZ, clearances)
         end
     end
 
-    -- Find next upcoming selected, unvisited clearing
-    local targetSite = rafting.getNextTargetClearing(posX)
+    -- Find next upcoming selected, unvisited, and reachable clearing
+    local targetSite = rafting.getNextTargetClearing(posX, currentZ)
     if not targetSite then
-        -- All selected clearings visited: stay in main river channel directly to the Sea
+        -- All selected clearings visited or unreachable: stay in main river channel directly to the Sea
         return -37.81
     end
 
@@ -9047,7 +9117,12 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     local maxX = targetSite.MaxX
 
     if posX < minX - 30 then
-        -- Before cove mouth opening: stay centered in river channel (-37.81)
+        -- Navigating downriver through channels towards target clearing
+        local reachIdx = getReachIndex(posX)
+        local corridors = clearingChannelCorridors[targetSite.Id]
+        if corridors and corridors[reachIdx] then
+            return corridors[reachIdx]
+        end
         return -37.81
     elseif posX <= maxX + 20 then
         -- At cove mouth opening or inside cove: steer directly towards shoreline!
@@ -9139,7 +9214,7 @@ end
 function rafting.updateCards()
     local snap = rafting.currentSnapshot
     local statusTitle = "Fjord Rafting: " .. tostring(rafting.statusText)
-    local nextSite = snap and snap.Frame and typeof(snap.Frame) == "CFrame" and rafting.getNextTargetClearing(snap.Frame.Position.X)
+    local nextSite = snap and snap.Frame and typeof(snap.Frame) == "CFrame" and rafting.getNextTargetClearing(snap.Frame.Position.X, snap.Frame.Position.Z)
     local nextSiteStr = nextSite and nextSite.Id or "Sea (Finish)"
     local statusContent = string.format("Session: %s | Auto-Pilot: %s | Target: %s\nRoute: %s | Auto-Loop: %s",
         tostring(rafting.status),
@@ -9340,11 +9415,13 @@ function rafting.handleSnapshot(payload)
         local posZ = payload.Frame.Position.Z
         local speed = payload.Speed or 0
 
-        -- Auto-mark clearing as visited once past its downriver exit (only when in main river channel)
+        -- Auto-mark clearing as visited once past its downriver exit or unreachable from current channel
         for _, site in ipairs(clearingSites) do
-            local inCove = (site.BankSide == "North" and posZ < -70.0) or (site.BankSide == "South" and posZ > 35.0)
-            if posX > site.MaxX + 25 and not rafting.visitedSites[site.Id] and rafting.status ~= "Docked" and not inCove then
-                rafting.visitedSites[site.Id] = true
+            if not rafting.visitedSites[site.Id] and rafting.status ~= "Docked" then
+                local inCove = (site.BankSide == "North" and posZ < -70.0) or (site.BankSide == "South" and posZ > 35.0)
+                if (posX > site.MaxX + 25 and not inCove) or (not rafting.isSiteReachable(site, posX, posZ)) then
+                    rafting.visitedSites[site.Id] = true
+                end
             end
         end
 
@@ -9355,7 +9432,7 @@ function rafting.handleSnapshot(payload)
         end
 
         if rafting.status ~= "Docked" then
-            local nextSite = rafting.getNextTargetClearing(posX)
+            local nextSite = rafting.getNextTargetClearing(posX, posZ)
             local site = (payload.SiteId and rafting.getClearingById(payload.SiteId)) or rafting.getNearbyClearing(posX, posZ) or nextSite
             local isSelectedSite = (not site) or (not rafting.selectedClearings) or (rafting.selectedClearings[site.Id] == true) or isServerDocked
             if (site or isServerDocked) and isSelectedSite and ((site and not rafting.visitedSites[site.Id]) or isServerDocked) then
@@ -9526,7 +9603,7 @@ function rafting.stepSteering(dt)
     -- so the raft does not turn towards the bank before the opening arrives
     local lookAhead = 50
     if rafting.route == "Clearing & Chest Explorer" or rafting.route == "Hybrid Dynamic Explorer" then
-        local nextSite = rafting.getNextTargetClearing(posX)
+        local nextSite = rafting.getNextTargetClearing(posX, posZ)
         if nextSite and posX >= (nextSite.MinX - 80) and posX < nextSite.MinX then
             lookAhead = 20
         end
@@ -9557,7 +9634,7 @@ function rafting.stepSteering(dt)
     local rightMinDist = math.min(clearances.RightOblique or 40, clearances.RightLateral or 25)
     local forwardDist = clearances.Forward or 50
 
-    local nextSite = (rafting.route == "Clearing & Chest Explorer" or rafting.route == "Hybrid Dynamic Explorer") and rafting.getNextTargetClearing(posX)
+    local nextSite = (rafting.route == "Clearing & Chest Explorer" or rafting.route == "Hybrid Dynamic Explorer") and rafting.getNextTargetClearing(posX, posZ)
     local minX = nextSite and nextSite.MinX or 0
     local isHeadingToNorthCove = nextSite and nextSite.BankSide == "North" and posX >= (minX - 30) and posX <= (nextSite.MaxX + 20)
     local isHeadingToSouthCove = nextSite and nextSite.BankSide == "South" and posX >= (minX - 30) and posX <= (nextSite.MaxX + 20)
