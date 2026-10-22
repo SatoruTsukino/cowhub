@@ -8917,12 +8917,12 @@ local clearingChannelCorridors = {
 }
 
 local function getReachIndex(posX)
-    if posX <= 1469.58 then return 1
-    elseif posX <= 2344.58 then return 2
-    elseif posX <= 3069.58 then return 3
-    elseif posX <= 3794.58 then return 4
-    elseif posX <= 4519.58 then return 5
-    elseif posX <= 5294.58 then return 6
+    if posX <= 1844.58 then return 1
+    elseif posX <= 2844.58 then return 2
+    elseif posX <= 3294.58 then return 3
+    elseif posX <= 4294.58 then return 4
+    elseif posX <= 4744.58 then return 5
+    elseif posX <= 5844.58 then return 6
     else return 7 end
 end
 
@@ -8934,29 +8934,29 @@ function rafting.isSiteReachable(site, posX, currentZ)
         return false
     end
 
-    -- In Harbour & Reach 1 (before Fork at X = 1469.58): all downriver clearings are reachable
-    if posX <= 1500 then
+    -- In Harbour & Reach 1 (before Reach 2 fork at X = 1844.58): all downriver clearings are reachable
+    if posX <= 1845 then
         return true
     end
 
-    -- After Fork at X = 1500, check channel branch separation
+    -- After Fork into Reach 2 (X > 1845), check channel branch separation
     if currentZ ~= nil then
         -- Raft is in South branch (Z > 50)
         if currentZ > 50 then
             -- Cannot cross rock islands to North coves
-            if site.BankSide == "North" and site.ShoreZ < -100 then
+            if site.BankSide == "North" then
                 return false
             end
         -- Raft is in North branch (Z < -100)
         elseif currentZ < -100 then
             -- Cannot cross rock islands to South coves
-            if site.BankSide == "South" and site.ShoreZ > 50 then
+            if site.BankSide == "South" then
                 return false
             end
         -- Raft is in Middle branch (-100 <= Z <= 50)
         else
-            -- At X > 1800, outer coves (Clearing 03 at Z = -635 and Clearing 04 at Z = +540) are behind rock walls
-            if posX > 1800 and (site.Id == "Clearing_03" or site.Id == "Clearing_04") then
+            -- Past Reach 2 commitment (X > 2400), outer coves (Clearing 03 at Z = -635 and Clearing 04 at Z = +540) are behind rock walls
+            if posX > 2400 and (site.Id == "Clearing_03" or site.Id == "Clearing_04") then
                 return false
             end
         end
@@ -9037,13 +9037,13 @@ function rafting.getWhiskerClearances(deck)
 
     -- Whisker directions in deck space (-Z is bow forward, -X is Left/North, +X is Right/South)
     local whiskers = {
-        Forward = { origin = bowOrigin, dir = Vector3.new(0, 0, -1), range = 60 },
-        LeftOblique = { origin = bowOrigin, dir = Vector3.new(-0.5736, 0, -0.8192), range = 45 },  -- 35 deg forward-left
-        RightOblique = { origin = bowOrigin, dir = Vector3.new(0.5736, 0, -0.8192), range = 45 }, -- 35 deg forward-right
-        LeftLateral = { origin = midOrigin, dir = Vector3.new(-1, 0, 0), range = 22 },              -- 90 deg mid-left
-        RightLateral = { origin = midOrigin, dir = Vector3.new(1, 0, 0), range = 22 },             -- 90 deg mid-right
-        LeftStern = { origin = sternOrigin, dir = Vector3.new(-1, 0, 0), range = 22 },              -- 90 deg stern-left
-        RightStern = { origin = sternOrigin, dir = Vector3.new(1, 0, 0), range = 22 },             -- 90 deg stern-right
+        Forward = { origin = bowOrigin, dir = Vector3.new(0, 0, -1), range = 65 },
+        LeftOblique = { origin = bowOrigin, dir = Vector3.new(-0.5736, 0, -0.8192), range = 55 },  -- 35 deg forward-left
+        RightOblique = { origin = bowOrigin, dir = Vector3.new(0.5736, 0, -0.8192), range = 55 }, -- 35 deg forward-right
+        LeftLateral = { origin = midOrigin, dir = Vector3.new(-1, 0, 0), range = 35 },              -- 90 deg mid-left
+        RightLateral = { origin = midOrigin, dir = Vector3.new(1, 0, 0), range = 35 },             -- 90 deg mid-right
+        LeftStern = { origin = sternOrigin, dir = Vector3.new(-1, 0, 0), range = 35 },              -- 90 deg stern-left
+        RightStern = { origin = sternOrigin, dir = Vector3.new(1, 0, 0), range = 35 },             -- 90 deg stern-right
     }
 
     local distances = {}
@@ -9128,12 +9128,35 @@ function rafting.getTargetZ(posX, currentZ, clearances)
 
     if posX < minX - 30 then
         -- Navigating downriver through channels towards target clearing
-        local reachIdx = getReachIndex(posX)
-        local corridors = clearingChannelCorridors[targetSite.Id]
-        if corridors and corridors[reachIdx] then
-            return corridors[reachIdx]
+        -- Smooth corridor guidance for Clearing_03 (North Reach 3)
+        if targetSite.Id == "Clearing_03" then
+            if posX <= 1600 then
+                return -55.0 -- Align with North side of Reach 1 channel
+            elseif posX <= 2344.58 then
+                local t = math.clamp((posX - 1600) / 744.58, 0, 1)
+                return -55.0 + t * (-262.81 - (-55.0)) -- Smooth transition into Reach 2 North
+            else
+                local t = math.clamp((posX - 2344.58) / 500.0, 0, 1)
+                return -262.81 + t * (-487.81 - (-262.81)) -- Sloping to Reach 3 Far North
+            end
+        elseif targetSite.Id == "Clearing_04" then
+            if posX <= 1600 then
+                return -20.0 -- Align with South side of Reach 1 channel
+            elseif posX <= 2344.58 then
+                local t = math.clamp((posX - 1600) / 744.58, 0, 1)
+                return -20.0 + t * (187.19 - (-20.0)) -- Smooth transition into Reach 2 South
+            else
+                local t = math.clamp((posX - 2344.58) / 500.0, 0, 1)
+                return 187.19 + t * (412.19 - 187.19) -- Sloping to Reach 3 South
+            end
+        else
+            local reachIdx = getReachIndex(posX)
+            local corridors = clearingChannelCorridors[targetSite.Id]
+            if corridors and corridors[reachIdx] then
+                return corridors[reachIdx]
+            end
+            return -37.81
         end
-        return -37.81
     elseif posX <= maxX + 20 then
         -- At cove mouth opening or inside cove: steer directly towards shoreline!
         return targetSite.ShoreZ
@@ -9659,9 +9682,9 @@ function rafting.stepSteering(dt)
 
     -- 4. Dynamic Whisker Wall Repulsion
     local whiskerRepulsion = 0
-    local leftMinDist = math.min(clearances.LeftOblique or 45, clearances.LeftLateral or 22, clearances.LeftStern or 22)
-    local rightMinDist = math.min(clearances.RightOblique or 45, clearances.RightLateral or 22, clearances.RightStern or 22)
-    local forwardDist = clearances.Forward or 60
+    local leftMinDist = math.min(clearances.LeftOblique or 55, clearances.LeftLateral or 35, clearances.LeftStern or 35)
+    local rightMinDist = math.min(clearances.RightOblique or 55, clearances.RightLateral or 35, clearances.RightStern or 35)
+    local forwardDist = clearances.Forward or 65
 
     local nextSite = (rafting.route == "Clearing & Chest Explorer" or rafting.route == "Hybrid Dynamic Explorer") and rafting.getNextTargetClearing(posX, posZ)
     local minX = nextSite and nextSite.MinX or 0
@@ -9669,17 +9692,19 @@ function rafting.stepSteering(dt)
     local isHeadingToSouthCove = nextSite and nextSite.BankSide == "South" and posX >= (minX - 30) and posX <= (nextSite.MaxX + 20)
     local inCoveZone = (nextSite and ((nextSite.BankSide == "North" and posZ < -70.0) or (nextSite.BankSide == "South" and posZ > 35.0))) or math.abs(posZ - (-37.81)) > 20
 
-    -- When actively steering into a cove, suppress repulsion from the bank on the cove side
-    if leftMinDist < 18.0 and not (isHeadingToNorthCove or inCoveZone) then
-        local push = math.clamp((18.0 - leftMinDist) / 10.0, 0, 1)
-        whiskerRepulsion = whiskerRepulsion + (if leftMinDist < 10.0 then 5.8 else push * 5.8)
+    -- Generous Stand-Off Buffer: deck half-width is 7.0 studs.
+    -- Begin repelling when wall is closer than 28 studs from center (21 studs from railing).
+    -- Full lock repel when closer than 16 studs from center (9 studs from railing).
+    if leftMinDist < 28.0 and not (isHeadingToNorthCove or inCoveZone) then
+        local push = math.clamp((28.0 - leftMinDist) / 12.0, 0, 1)
+        whiskerRepulsion = whiskerRepulsion + (if leftMinDist < 16.0 then 5.8 else push * 5.8)
     end
-    if rightMinDist < 18.0 and not (isHeadingToSouthCove or inCoveZone) then
-        local push = math.clamp((18.0 - rightMinDist) / 10.0, 0, 1)
-        whiskerRepulsion = whiskerRepulsion - (if rightMinDist < 10.0 then 5.8 else push * 5.8)
+    if rightMinDist < 28.0 and not (isHeadingToSouthCove or inCoveZone) then
+        local push = math.clamp((28.0 - rightMinDist) / 12.0, 0, 1)
+        whiskerRepulsion = whiskerRepulsion - (if rightMinDist < 16.0 then 5.8 else push * 5.8)
     end
 
-    if forwardDist < 30.0 then
+    if forwardDist < 35.0 then
         if leftMinDist > rightMinDist + 2.0 then
             whiskerRepulsion = -5.8
         elseif rightMinDist > leftMinDist + 2.0 then
@@ -9688,8 +9713,15 @@ function rafting.stepSteering(dt)
             whiskerRepulsion = if (errorZ < 0) then -5.8 else 5.8
         end
         rafting.statusText = "OBSTACLE AHEAD! Raycast whiskers steering clear..."
-    elseif math.abs(whiskerRepulsion) > 1.5 then
-        rafting.statusText = "WALL PROXIMITY! Raycast whiskers steering clear..."
+    elseif math.abs(whiskerRepulsion) > 1.0 then
+        rafting.statusText = "WALL PROXIMITY! Raycast whiskers maintaining clearance..."
+    end
+
+    -- Directional flow suppression: never allow flow bias to steer towards a detected wall
+    if whiskerRepulsion > 0.5 and flowBias < 0 then
+        flowBias = 0
+    elseif whiskerRepulsion < -0.5 and flowBias > 0 then
+        flowBias = 0
     end
 
     -- 5. Blend Flow Bias with Whisker Repulsion
@@ -9716,10 +9748,9 @@ function rafting.stepSteering(dt)
             targetDeckX = 5.8
             rafting.statusText = string.format("Approaching %s! Steering into South cove...", nextSite.Id)
         end
-    elseif forwardDist < 25.0 or leftMinDist < 10.0 or rightMinDist < 10.0 then
+    elseif forwardDist < 30.0 or leftMinDist < 18.0 or rightMinDist < 18.0 or math.abs(whiskerRepulsion) > 1.2 then
+        -- Complete obstacle avoidance dominance: no dilution by flow bias
         targetDeckX = whiskerRepulsion
-    elseif math.abs(whiskerRepulsion) > 1.0 then
-        targetDeckX = whiskerRepulsion * 0.7 + flowBias * 0.3
     else
         targetDeckX = flowBias
     end
