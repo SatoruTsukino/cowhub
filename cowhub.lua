@@ -9177,31 +9177,53 @@ function rafting.getTargetZ(posX, currentZ, clearances)
 
     if posX < minX - 30 then
         -- Navigating downriver towards target docking area
-        local targetZ = targetSite.ShoreZ or -37.81
-        if FjordZones and FjordZones.Channels then
-            local reachIdx = getReachIndex(posX)
-            local bestChZ = -37.81
-            local minChDiff = math.huge
-            for _, ch in ipairs(FjordZones.Channels) do
-                if ch[7] == reachIdx then
-                    local chZ = ch[2]
-                    local chReachable = true
-                    if currentZ and posX > 1845 then
-                        if currentZ > 50 and chZ < -100 then chReachable = false end
-                        if currentZ < -100 and chZ > 50 then chReachable = false end
-                    end
-                    if chReachable then
-                        local diff = math.abs(chZ - targetZ)
-                        if diff < minChDiff then
-                            minChDiff = diff
-                            bestChZ = chZ
+        if targetSite.Id == "Clearing_03" then
+            if posX <= 1600 then
+                return -55.0 -- Align with North side of Reach 1 channel before fork
+            elseif posX <= 2344.58 then
+                local t = math.clamp((posX - 1600) / 744.58, 0, 1)
+                return -55.0 + t * (-262.81 - (-55.0)) -- Smooth transition into Reach 2 North
+            else
+                local t = math.clamp((posX - 2344.58) / 500.0, 0, 1)
+                return -262.81 + t * (-487.81 - (-262.81)) -- Sloping to Reach 3 Far North
+            end
+        elseif targetSite.Id == "Clearing_04" then
+            if posX <= 1600 then
+                return -20.0 -- Align with South side of Reach 1 channel before fork
+            elseif posX <= 2344.58 then
+                local t = math.clamp((posX - 1600) / 744.58, 0, 1)
+                return -20.0 + t * (187.19 - (-20.0)) -- Smooth transition into Reach 2 South
+            else
+                local t = math.clamp((posX - 2344.58) / 500.0, 0, 1)
+                return 187.19 + t * (412.19 - 187.19) -- Sloping to Reach 3 South
+            end
+        else
+            local targetZ = targetSite.ShoreZ or -37.81
+            if FjordZones and FjordZones.Channels then
+                local reachIdx = getReachIndex(posX)
+                local bestChZ = -37.81
+                local minChDiff = math.huge
+                for _, ch in ipairs(FjordZones.Channels) do
+                    if ch[7] == reachIdx then
+                        local chZ = ch[2]
+                        local chReachable = true
+                        if currentZ and posX > 1845 then
+                            if currentZ > 50 and chZ < -100 then chReachable = false end
+                            if currentZ < -100 and chZ > 50 then chReachable = false end
+                        end
+                        if chReachable then
+                            local diff = math.abs(chZ - targetZ)
+                            if diff < minChDiff then
+                                minChDiff = diff
+                                bestChZ = chZ
+                            end
                         end
                     end
                 end
+                return bestChZ
+            else
+                return targetZ
             end
-            return bestChZ
-        else
-            return targetZ
         end
     elseif posX <= maxX + 20 then
         -- At cove mouth opening or inside cove: steer directly towards shoreline!
@@ -9453,15 +9475,6 @@ function rafting.getThreatEvasionOffset(deck, frame)
                 end
                 break
             end
-        end
-    end
-
-    -- 3. Environmental Damage and Hazard Rectangles from FjordZones
-    if not threatFound and FjordZones and (FjordZones.InHazard or FjordZones.InDamage) then
-        local predPos = deck.Position + deck.CFrame.LookVector * (speed * 1.2)
-        if (FjordZones.InHazard and FjordZones.InHazard(predPos)) or (FjordZones.InDamage and FjordZones.InDamage(predPos)) then
-            threatFound = true
-            bestEvadeDeckX = if deck.Position.Z > -37.81 then -4.5 else 4.5
         end
     end
 
