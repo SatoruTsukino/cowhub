@@ -8830,13 +8830,15 @@ local function getHarbourZ(posX)
     return -37.81
 end
 
+local clearingSites = {}
+rafting.clearingSites = clearingSites
 rafting.allSites = {}
 rafting.sitesById = {}
 rafting.sitesInitialized = false
 rafting.collectAllLootChests = true
 
 function rafting.ensureDynamicSites()
-    if rafting.sitesInitialized and #rafting.allSites > 0 then return end
+    if rafting.sitesInitialized and #clearingSites > 0 then return end
     if not FjordZones then
         pcall(function()
             local cg = game:GetService("ReplicatedStorage"):FindFirstChild("CowGame")
@@ -8850,6 +8852,7 @@ function rafting.ensureDynamicSites()
     if not FjordZones or not FjordZones.Sites then return end
 
     local sitesList = {}
+    local clearingsList = {}
     local byId = {}
     local coves = FjordZones.Coves or {}
 
@@ -8896,13 +8899,41 @@ function rafting.ensureDynamicSites()
             ShoreZ = coveZ,
         }
         table.insert(sitesList, siteData)
+        if kind == "Clearing" then
+            table.insert(clearingsList, siteData)
+        end
         byId[sid] = siteData
     end
 
     table.sort(sitesList, function(a, b) return a.MinX < b.MinX end)
+    table.sort(clearingsList, function(a, b) return a.MinX < b.MinX end)
+    for i, s in ipairs(clearingsList) do
+        clearingSites[i] = s
+    end
+    rafting.clearingSites = clearingSites
     rafting.allSites = sitesList
     rafting.sitesById = byId
     rafting.sitesInitialized = true
+end
+
+function rafting.getSiteChannelZ(site)
+    if not site then return -37.81 end
+    if FjordZones and FjordZones.Channels then
+        local reach = getReachIndex(site.MinX)
+        local bestZ = -37.81
+        local minDiff = math.huge
+        for _, ch in ipairs(FjordZones.Channels) do
+            if ch[7] == reach then
+                local diff = math.abs(ch[2] - site.ShoreZ)
+                if diff < minDiff then
+                    minDiff = diff
+                    bestZ = ch[2]
+                end
+            end
+        end
+        return bestZ
+    end
+    return -37.81
 end
 
 function rafting.getClearingById(siteId)
@@ -8961,31 +8992,31 @@ function rafting.getNextTargetClearing(posX, currentZ)
     local bestSite = nil
     local bestCost = math.huge
 
-    for _, site in ipairs(rafting.allSites) do
-        local isCandidate = false
-        if rafting.collectAllLootChests then
-            isCandidate = true
-        elseif rafting.selectedClearings and rafting.selectedClearings[site.Id] then
-            isCandidate = true
-        end
+    for _, site in ipairs(clearingSites) do
+        if site.Kind == "Clearing" then
+            local isCandidate = false
+            if rafting.collectAllLootChests or not rafting.selectedClearings or rafting.selectedClearings[site.Id] then
+                isCandidate = true
+            end
 
-        if isCandidate and not rafting.visitedSites[site.Id] then
-            if posX <= site.MaxX + 20 then
-                if currentZ == nil or rafting.isSiteReachable(site, posX, currentZ) then
-                    local dx = math.max(0, (site.Mouth and site.Mouth.X or site.MinX) - posX)
-                    local dz = math.abs((site.ShoreZ or -37.81) - (currentZ or -37.81))
-                    local cost = dz + 0.35 * dx
-                    if cost < bestCost then
-                        bestCost = cost
-                        bestSite = site
+            if isCandidate and not rafting.visitedSites[site.Id] then
+                if posX <= site.MaxX + 20 then
+                    if currentZ == nil or rafting.isSiteReachable(site, posX, currentZ) then
+                        local dx = math.max(0, (site.Mouth and site.Mouth.X or site.MinX) - posX)
+                        local dz = math.abs((site.ShoreZ or -37.81) - (currentZ or -37.81))
+                        local cost = dz + 0.35 * dx
+                        if cost < bestCost then
+                            bestCost = cost
+                            bestSite = site
+                        end
+                    else
+                        if posX > (site.MinX - 80) then
+                            rafting.visitedSites[site.Id] = true
+                        end
                     end
                 else
-                    if posX > (site.MinX - 80) then
-                        rafting.visitedSites[site.Id] = true
-                    end
+                    rafting.visitedSites[site.Id] = true
                 end
-            else
-                rafting.visitedSites[site.Id] = true
             end
         end
     end
@@ -9124,12 +9155,13 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     end
 
     -- "Hybrid Dynamic Explorer" (Default) & "Clearing & Chest Explorer":
-    -- If currently inside or departing a visited clearing cove, steer back towards the river center
+    -- If currently inside or departing a visited clearing cove, steer back towards the reach channel
     local currentSite = rafting.currentDockSite and rafting.getClearingById(rafting.currentDockSite)
     if currentSite and rafting.visitedSites[currentSite.Id] then
-        local inCove = (currentSite.BankSide == "North" and currentZ < -85.0) or (currentSite.BankSide == "South" and currentZ > 45.0)
-        if inCove then
-            return -37.81
+        local isDeparting = (os.clock() - (rafting.lastCastOffTime or 0)) < 6.0
+        local insideCoveBounds = posX <= (currentSite.MaxX + 40)
+        if isDeparting or insideCoveBounds then
+            return rafting.getSiteChannelZ(currentSite)
         end
     end
 
@@ -9542,6 +9574,7 @@ function rafting.handleSnapshot(payload)
                     if humanoid then
                         pcall(function()
                             humanoid:Move(Vector3.zero, false)
+                            if root then humanoid:MoveTo(root.Position) end
                             humanoid.AutoRotate = true
                         end)
                     end
@@ -9572,6 +9605,7 @@ function rafting.handleSnapshot(payload)
                                 if humanoid then
                                     humanoid.AutoRotate = true
                                     humanoid:Move(Vector3.zero, false)
+                                    humanoid:MoveTo(root.Position)
                                 end
                                 if root then pcall(function() root.Anchored = false end) end
                                 task.wait(0.35)
@@ -9586,16 +9620,23 @@ function rafting.handleSnapshot(payload)
                                     if deck and root then
                                         stopCharacterVelocity()
                                         root.CFrame = deck.CFrame * CFrame.new(0, 3.5, 0)
+                                        if humanoid then
+                                            humanoid:Move(Vector3.zero, false)
+                                            humanoid:MoveTo(root.Position)
+                                        end
                                     end
                                 end
-                            elseif site and site.LandPos then
-                                stopCharacterVelocity()
-                                root.CFrame = CFrame.new(site.LandPos)
-                                if humanoid then
-                                    humanoid.AutoRotate = true
-                                    humanoid:Move(Vector3.zero, false)
+                            else
+                                -- No chest: keep character safely standing on raft deck center
+                                local deck = rafting.getRaftDeck()
+                                if deck and root then
+                                    stopCharacterVelocity()
+                                    root.CFrame = deck.CFrame * CFrame.new(0, 3.5, 0)
+                                    if humanoid then
+                                        humanoid:Move(Vector3.zero, false)
+                                        humanoid:MoveTo(root.Position)
+                                    end
                                 end
-                                if root then pcall(function() root.Anchored = false end) end
                             end
                         end
                     end)
@@ -9616,19 +9657,18 @@ function rafting.handleSnapshot(payload)
             end
         end
 
-        -- Water recovery check: ONLY if character slipped into deep water (Y < 696) AND is away from boat
+        -- Water recovery check: If character touches water or is away from deck, instantly return to deck +3.5 studs
         if rafting.status == "Docked" and root then
             local deck = rafting.getRaftDeck()
-            local distFromDeck = deck and (root.Position - deck.Position).Magnitude or 100
-            if root.Position.Y < 696 and distFromDeck > 15 then
-                local currentSite = rafting.currentDockSite and rafting.getClearingById(rafting.currentDockSite)
-                local landPos = currentSite and currentSite.LandPos
-                if landPos then
+            if deck then
+                local distFromDeck = (root.Position - deck.Position).Magnitude
+                local inWater = (root.Position.Y < 700.5 and distFromDeck > 6.0) or (root.Position.Y < 698.0) or (humanoid and humanoid.FloorMaterial == Enum.Material.Water)
+                if inWater then
                     stopCharacterVelocity()
-                    root.CFrame = CFrame.new(landPos)
+                    root.CFrame = deck.CFrame * CFrame.new(0, 3.5, 0)
                     if humanoid then
-                        humanoid.AutoRotate = true
                         humanoid:Move(Vector3.zero, false)
+                        humanoid:MoveTo(root.Position)
                     end
                 end
             end
@@ -9661,7 +9701,15 @@ function rafting.stepSteering(dt)
 
     local snap = rafting.currentSnapshot
     if not snap or (snap.Status ~= "Travelling" and snap.Status ~= "Departing") then return end
-    if rafting.status == "Docked" or snap.Status == "Docked" then return end
+    if rafting.status == "Docked" or snap.Status == "Docked" then
+        if humanoid then
+            pcall(function()
+                humanoid:Move(Vector3.zero, false)
+                if root then humanoid:MoveTo(root.Position) end
+            end)
+        end
+        return
+    end
 
     local frame = snap.Frame
     if not frame or typeof(frame) ~= "CFrame" then return end
@@ -9724,20 +9772,20 @@ function rafting.stepSteering(dt)
 
     local nextSite = (rafting.route == "Clearing & Chest Explorer" or rafting.route == "Hybrid Dynamic Explorer") and rafting.getNextTargetClearing(posX, posZ)
     local minX = nextSite and nextSite.MinX or 0
-    local isHeadingToNorthCove = nextSite and nextSite.BankSide == "North" and posX >= (minX - 30) and posX <= (nextSite.MaxX + 20)
-    local isHeadingToSouthCove = nextSite and nextSite.BankSide == "South" and posX >= (minX - 30) and posX <= (nextSite.MaxX + 20)
-    local inCoveZone = (nextSite and ((nextSite.BankSide == "North" and posZ < -70.0) or (nextSite.BankSide == "South" and posZ > 35.0))) or math.abs(posZ - (-37.81)) > 20
+    local isDeparting = (os.clock() - (rafting.lastCastOffTime or 0)) < 6.0
+    local isHeadingToNorthCove = (not isDeparting) and nextSite and nextSite.BankSide == "North" and posX >= (minX - 30) and posX <= (nextSite.MaxX + 20)
+    local isHeadingToSouthCove = (not isDeparting) and nextSite and nextSite.BankSide == "South" and posX >= (minX - 30) and posX <= (nextSite.MaxX + 20)
 
-    -- Generous Stand-Off Buffer: deck half-width is 7.0 studs.
-    -- Begin repelling when wall is closer than 28 studs from center (21 studs from railing).
-    -- Full lock repel when closer than 16 studs from center (9 studs from railing).
-    if leftMinDist < 28.0 and not (isHeadingToNorthCove or inCoveZone) then
-        local push = math.clamp((28.0 - leftMinDist) / 12.0, 0, 1)
-        whiskerRepulsion = whiskerRepulsion + (if leftMinDist < 16.0 then 5.8 else push * 5.8)
+    -- Stand-Off Buffer: deck half-width is 7.0 studs.
+    -- Begin repelling when wall is closer than 26 studs from center (19 studs from railing).
+    -- Full lock repel when closer than 15 studs from center (8 studs from railing).
+    if leftMinDist < 26.0 and not isHeadingToNorthCove then
+        local push = math.clamp((26.0 - leftMinDist) / 12.0, 0, 1)
+        whiskerRepulsion = whiskerRepulsion + (if leftMinDist < 15.0 then 5.8 else push * 5.8)
     end
-    if rightMinDist < 28.0 and not (isHeadingToSouthCove or inCoveZone) then
-        local push = math.clamp((28.0 - rightMinDist) / 12.0, 0, 1)
-        whiskerRepulsion = whiskerRepulsion - (if rightMinDist < 16.0 then 5.8 else push * 5.8)
+    if rightMinDist < 26.0 and not isHeadingToSouthCove then
+        local push = math.clamp((26.0 - rightMinDist) / 12.0, 0, 1)
+        whiskerRepulsion = whiskerRepulsion - (if rightMinDist < 15.0 then 5.8 else push * 5.8)
     end
 
     if forwardDist < 35.0 then
