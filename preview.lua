@@ -8738,6 +8738,12 @@ local rafting = {
     targetDeckX = 0,
     errorZ = 0,
     whiskerClearances = {},
+    lastProgressPos = nil,
+    lastProgressTime = 0,
+    stuckDuration = 0,
+    isUnsticking = false,
+    unstickDirection = 0,
+    unstickStartTime = 0,
     currentSnapshot = nil,
     teamChests = nil,
     teamChestSite = nil,
@@ -9024,24 +9030,28 @@ function rafting.getWhiskerClearances(deck)
     if deck then table.insert(filterList, deck) end
     whiskerRayParams.FilterDescendantsInstances = filterList
 
-    -- Bow origin: 14 studs forward along deck (-Z in deck space), 2 studs above deck surface
-    local bowPos = deck.CFrame:PointToWorldSpace(Vector3.new(0, 2.0, -14.0))
+    -- Origins placed safely inside hull air so rays never start inside walls
+    local bowOrigin = deck.CFrame:PointToWorldSpace(Vector3.new(0, 2.5, -6.0))
+    local midOrigin = deck.CFrame:PointToWorldSpace(Vector3.new(0, 2.5, 0.0))
+    local sternOrigin = deck.CFrame:PointToWorldSpace(Vector3.new(0, 2.5, 8.0))
 
     -- Whisker directions in deck space (-Z is bow forward, -X is Left/North, +X is Right/South)
     local whiskers = {
-        Forward = { dir = Vector3.new(0, 0, -1), range = 50 },
-        LeftOblique = { dir = Vector3.new(-0.5736, 0, -0.8192), range = 40 },  -- 35 deg forward-left
-        RightOblique = { dir = Vector3.new(0.5736, 0, -0.8192), range = 40 }, -- 35 deg forward-right
-        LeftLateral = { dir = Vector3.new(-0.9659, 0, -0.2588), range = 25 },  -- 75 deg left
-        RightLateral = { dir = Vector3.new(0.9659, 0, -0.2588), range = 25 }, -- 75 deg right
+        Forward = { origin = bowOrigin, dir = Vector3.new(0, 0, -1), range = 60 },
+        LeftOblique = { origin = bowOrigin, dir = Vector3.new(-0.5736, 0, -0.8192), range = 45 },  -- 35 deg forward-left
+        RightOblique = { origin = bowOrigin, dir = Vector3.new(0.5736, 0, -0.8192), range = 45 }, -- 35 deg forward-right
+        LeftLateral = { origin = midOrigin, dir = Vector3.new(-1, 0, 0), range = 22 },              -- 90 deg mid-left
+        RightLateral = { origin = midOrigin, dir = Vector3.new(1, 0, 0), range = 22 },             -- 90 deg mid-right
+        LeftStern = { origin = sternOrigin, dir = Vector3.new(-1, 0, 0), range = 22 },              -- 90 deg stern-left
+        RightStern = { origin = sternOrigin, dir = Vector3.new(1, 0, 0), range = 22 },             -- 90 deg stern-right
     }
 
     local distances = {}
     for name, w in pairs(whiskers) do
         local worldDir = deck.CFrame:VectorToWorldSpace(w.dir)
-        local result = workspace:Raycast(bowPos, worldDir * w.range, whiskerRayParams)
+        local result = workspace:Raycast(w.origin, worldDir * w.range, whiskerRayParams)
         if result and result.Instance and result.Instance.CanCollide then
-            distances[name] = (result.Position - bowPos).Magnitude
+            distances[name] = (result.Position - w.origin).Magnitude
         else
             distances[name] = w.range
         end
@@ -9138,6 +9148,12 @@ function rafting.castOff()
     if rafting.isCastingOff then return end
     rafting.isCastingOff = true
     rafting.lastCastOffTime = os.clock()
+    rafting.lastProgressPos = nil
+    rafting.lastProgressTime = 0
+    rafting.stuckDuration = 0
+    rafting.isUnsticking = false
+    rafting.unstickDirection = 0
+    rafting.unstickStartTime = 0
     local wasDocked = (rafting.status == "Docked")
     rafting.statusText = "Boarding raft..."
     rafting.updateCards()
@@ -9430,6 +9446,12 @@ function rafting.handleSnapshot(payload)
         if isServerDocked and rafting.lastCastOffTime and (os.clock() - rafting.lastCastOffTime < 6.0) then
             isServerDocked = false
         end
+        if isServerDocked then
+            rafting.stuckDuration = 0
+            rafting.isUnsticking = false
+            rafting.unstickDirection = 0
+            rafting.lastProgressPos = nil
+        end
 
         if rafting.status ~= "Docked" then
             local nextSite = rafting.getNextTargetClearing(posX, posZ)
@@ -9618,21 +9640,28 @@ function rafting.stepSteering(dt)
     local errorZ = targetZ - posZ
     rafting.errorZ = errorZ
 
-    -- 3. Flow Guidance Bias (-5.8 to +5.8)
+    -- 3. Flow Guidance Bias (-5.8 to +5.8 with smooth proportional ramp & deadband)
+    local absErr = math.abs(errorZ)
     local flowBias = 0
-    if math.abs(errorZ) <= 1.0 then
+    if absErr <= 0.6 then
         flowBias = 0
-    elseif errorZ < -1.0 then
-        flowBias = -5.8 -- Steer Left / North
+    elseif absErr <= 4.0 then
+        local t = (absErr - 0.6) / 3.4
+        local mag = 0.8 + t * 2.0
+        flowBias = if errorZ > 0 then mag else -mag
+    elseif absErr <= 10.0 then
+        local t = (absErr - 4.0) / 6.0
+        local mag = 2.8 + t * 2.2
+        flowBias = if errorZ > 0 then mag else -mag
     else
-        flowBias = 5.8  -- Steer Right / South
+        flowBias = if errorZ > 0 then 5.8 else -5.8
     end
 
     -- 4. Dynamic Whisker Wall Repulsion
     local whiskerRepulsion = 0
-    local leftMinDist = math.min(clearances.LeftOblique or 40, clearances.LeftLateral or 25)
-    local rightMinDist = math.min(clearances.RightOblique or 40, clearances.RightLateral or 25)
-    local forwardDist = clearances.Forward or 50
+    local leftMinDist = math.min(clearances.LeftOblique or 45, clearances.LeftLateral or 22, clearances.LeftStern or 22)
+    local rightMinDist = math.min(clearances.RightOblique or 45, clearances.RightLateral or 22, clearances.RightStern or 22)
+    local forwardDist = clearances.Forward or 60
 
     local nextSite = (rafting.route == "Clearing & Chest Explorer" or rafting.route == "Hybrid Dynamic Explorer") and rafting.getNextTargetClearing(posX, posZ)
     local minX = nextSite and nextSite.MinX or 0
@@ -9641,20 +9670,22 @@ function rafting.stepSteering(dt)
     local inCoveZone = (nextSite and ((nextSite.BankSide == "North" and posZ < -70.0) or (nextSite.BankSide == "South" and posZ > 35.0))) or math.abs(posZ - (-37.81)) > 20
 
     -- When actively steering into a cove, suppress repulsion from the bank on the cove side
-    if leftMinDist < 20.0 and not (isHeadingToNorthCove or inCoveZone) then
-        local push = math.clamp((20.0 - leftMinDist) / 20.0, 0, 1)
-        whiskerRepulsion = whiskerRepulsion + push * 5.8
+    if leftMinDist < 18.0 and not (isHeadingToNorthCove or inCoveZone) then
+        local push = math.clamp((18.0 - leftMinDist) / 10.0, 0, 1)
+        whiskerRepulsion = whiskerRepulsion + (if leftMinDist < 10.0 then 5.8 else push * 5.8)
     end
-    if rightMinDist < 20.0 and not (isHeadingToSouthCove or inCoveZone) then
-        local push = math.clamp((20.0 - rightMinDist) / 20.0, 0, 1)
-        whiskerRepulsion = whiskerRepulsion - push * 5.8
+    if rightMinDist < 18.0 and not (isHeadingToSouthCove or inCoveZone) then
+        local push = math.clamp((18.0 - rightMinDist) / 10.0, 0, 1)
+        whiskerRepulsion = whiskerRepulsion - (if rightMinDist < 10.0 then 5.8 else push * 5.8)
     end
 
     if forwardDist < 30.0 then
-        if leftMinDist > rightMinDist then
-            whiskerRepulsion = whiskerRepulsion - 5.8
+        if leftMinDist > rightMinDist + 2.0 then
+            whiskerRepulsion = -5.8
+        elseif rightMinDist > leftMinDist + 2.0 then
+            whiskerRepulsion = 5.8
         else
-            whiskerRepulsion = whiskerRepulsion + 5.8
+            whiskerRepulsion = if (errorZ < 0) then -5.8 else 5.8
         end
         rafting.statusText = "OBSTACLE AHEAD! Raycast whiskers steering clear..."
     elseif math.abs(whiskerRepulsion) > 1.5 then
@@ -9685,12 +9716,60 @@ function rafting.stepSteering(dt)
             targetDeckX = 5.8
             rafting.statusText = string.format("Approaching %s! Steering into South cove...", nextSite.Id)
         end
-    elseif forwardDist < 25.0 or leftMinDist < 14.0 or rightMinDist < 14.0 then
+    elseif forwardDist < 25.0 or leftMinDist < 10.0 or rightMinDist < 10.0 then
         targetDeckX = whiskerRepulsion
     elseif math.abs(whiskerRepulsion) > 1.0 then
         targetDeckX = whiskerRepulsion * 0.7 + flowBias * 0.3
     else
         targetDeckX = flowBias
+    end
+
+    -- 5b. Wall Contact / Progress Watchdog & Active Dislodge Maneuver
+    local now = os.clock()
+    local currentPos2D = Vector3.new(posX, 0, posZ)
+
+    if not rafting.lastProgressPos then
+        rafting.lastProgressPos = currentPos2D
+        rafting.lastProgressTime = now
+        rafting.stuckDuration = 0
+        rafting.isUnsticking = false
+    else
+        local timeSinceCheck = now - (rafting.lastProgressTime or now)
+        if timeSinceCheck >= 0.5 then
+            local distMoved = (currentPos2D - rafting.lastProgressPos).Magnitude
+            if distMoved < 2.5 and (snap.Status == "Travelling" or snap.Status == "Departing") then
+                rafting.stuckDuration = (rafting.stuckDuration or 0) + timeSinceCheck
+            else
+                rafting.stuckDuration = math.max(0, (rafting.stuckDuration or 0) - timeSinceCheck * 1.5)
+                if rafting.isUnsticking and distMoved >= 4.0 then
+                    rafting.isUnsticking = false
+                    rafting.unstickDirection = 0
+                end
+            end
+            rafting.lastProgressPos = currentPos2D
+            rafting.lastProgressTime = now
+        end
+    end
+
+    local isWallStuck = (rafting.stuckDuration or 0) >= 0.8
+    if isWallStuck then
+        if not rafting.isUnsticking then
+            rafting.isUnsticking = true
+            rafting.unstickStartTime = now
+            -- Hard counter-steer away from contact side: if previously steering negative (into North wall), counter-steer +5.8 (South)
+            local prevSteer = rafting.targetDeckX or 0
+            rafting.unstickDirection = if (prevSteer <= 0) then 5.8 else -5.8
+        else
+            -- Alternate counter-steer (wiggle) every 1.2s if still wedged
+            local elapsed = now - (rafting.unstickStartTime or now)
+            local cycle = math.floor(elapsed / 1.2) % 2
+            if cycle == 1 then
+                rafting.unstickDirection = if (rafting.unstickDirection > 0) then -5.8 else 5.8
+            end
+        end
+
+        targetDeckX = rafting.unstickDirection
+        rafting.statusText = string.format("WALL STUCK! Dislodging: hard counter-steer (%+.1f)...", targetDeckX)
     end
 
     -- 6. Check Hobgoblin Rock Threat (Prioritize landing at clearing over dodging)
@@ -9745,7 +9824,7 @@ function rafting.stepSteering(dt)
 
     -- Active Steering via Humanoid:MoveTo & Overboard Safety Check
     if root and char and humanoid and humanoid.Health > 0 then
-        if shouldEvadeJump then
+        if shouldEvadeJump or isWallStuck then
             humanoid.Jump = true
         end
 
@@ -9803,9 +9882,9 @@ function rafting.stepSteering(dt)
     -- Auto-Boost on straightaways: strictly conserve stamina & suppress in cove
     local rem = rafting.getRemote()
     local approachingCove = nextSite and posX >= (minX - 80) and posX <= (nextSite.MaxX + 20)
-    local suppressBoostForCove = inCoveZone or approachingCove
+    local suppressBoost = inCoveZone or approachingCove or isWallStuck or rafting.isUnsticking
 
-    if rafting.autoBoost and rem and not suppressBoostForCove then
+    if rafting.autoBoost and rem and not suppressBoost then
         local energy = snap.Energy or 0
         local maxEnergy = snap.MaxEnergy or 100
         local energyPct = (energy / math.max(maxEnergy, 1)) * 100
@@ -9966,6 +10045,12 @@ function rafting.startVoyage()
     rafting.lastLootedSite = nil
     rafting.currentSnapshot = nil
     rafting.targetDeckX = 0
+    rafting.lastProgressPos = nil
+    rafting.lastProgressTime = 0
+    rafting.stuckDuration = 0
+    rafting.isUnsticking = false
+    rafting.unstickDirection = 0
+    rafting.unstickStartTime = 0
     rafting.initClientListener()
     rafting.startSteeringLoop()
     rafting.statusText = "Starting session at Raft Yard..."
@@ -10004,6 +10089,12 @@ function rafting.onSessionEnded(reason)
     rafting.isEvadingRock = false
     rafting.targetDeckX = 0
     rafting.lastSnapshotTime = nil
+    rafting.lastProgressPos = nil
+    rafting.lastProgressTime = 0
+    rafting.stuckDuration = 0
+    rafting.isUnsticking = false
+    rafting.unstickDirection = 0
+    rafting.unstickStartTime = 0
     rafting.stopSteeringLoop()
     if reason then
         rafting.statusText = reason
