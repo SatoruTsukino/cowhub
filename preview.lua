@@ -8812,43 +8812,6 @@ function rafting.getRaftDeck()
     return nil, nil
 end
 
-local harbourRibbon = {
-    { -241.77, -29.41 },
-    { -141.77, -37.84 },
-    {  -41.77, -36.71 },
-    {   58.23, -37.96 },
-    {  158.23, -40.16 },
-    {  258.23, -39.84 },
-    {  358.23, -37.84 },
-    {  458.23, -35.84 },
-    {  558.23, -35.58 },
-    {  658.23, -36.00 },
-    {  758.23, -37.74 },
-    {  858.23, -37.81 },
-    {  958.23, -37.81 },
-    { 1094.58, -37.81 },
-}
-
-local function getHarbourZ(posX)
-    if posX <= harbourRibbon[1][1] then
-        return harbourRibbon[1][2]
-    end
-    if posX >= harbourRibbon[#harbourRibbon][1] then
-        return harbourRibbon[#harbourRibbon][2]
-    end
-    for i = 1, #harbourRibbon - 1 do
-        local p0 = harbourRibbon[i]
-        local p1 = harbourRibbon[i + 1]
-        if posX >= p0[1] and posX <= p1[1] then
-            local span = p1[1] - p0[1]
-            if span <= 0 then return p0[2] end
-            local alpha = (posX - p0[1]) / span
-            return p0[2] + alpha * (p1[2] - p0[2])
-        end
-    end
-    return -37.81
-end
-
 local FjordZones
 pcall(function()
     local cg = game:GetService("ReplicatedStorage"):FindFirstChild("CowGame")
@@ -8859,43 +8822,97 @@ pcall(function()
     end
 end)
 
-local clearingLandCoords = {
-    ["Clearing_01"] = Vector3.new(1344.0, 702.5, -180.0),
-    ["Clearing_02"] = Vector3.new(1622.58, 702.5, 113.34),
-    ["Clearing_03"] = Vector3.new(2985.08, 702.5, -635.96),
-    ["Clearing_04"] = Vector3.new(3144.58, 702.5, 578.34),
-    ["Clearing_05"] = Vector3.new(4424.58, 702.5, -1108.46),
-    ["Clearing_06"] = Vector3.new(4564.58, 702.5, -347.66),
-    ["Clearing_07"] = Vector3.new(4448.08, 702.5, 712.04),
-    ["Clearing_08"] = Vector3.new(4604.08, 702.5, 1013.34),
-    ["Clearing_09"] = Vector3.new(6014.58, 702.5, -772.66),
-    ["Clearing_10"] = Vector3.new(6274.58, 702.5, -190.96),
-}
+local function getHarbourZ(posX)
+    if FjordZones and FjordZones.RibbonAt then
+        local cz = FjordZones.RibbonAt(posX)
+        if cz then return cz end
+    end
+    return -37.81
+end
 
-local clearingSites = {
-    { Id = "Clearing_01", Name = "Clearing 01 (North, Reach 1)", BankSide = "North", Mouth = Vector3.new(1334.58, 700.5, -87.36), MinX = 1174.58, MaxX = 1494.58, MinZ = -261.46, MaxZ = -87.36, LandPos = Vector3.new(1344.0, 702.5, -180.0), ShoreZ = -100.0 },
-    { Id = "Clearing_02", Name = "Clearing 02 (South, Reach 1)", BankSide = "South", Mouth = Vector3.new(1622.58, 700.5, 11.74),  MinX = 1447.58, MaxX = 1797.58, MinZ = 11.74,   MaxZ = 211.84,  LandPos = Vector3.new(1622.58, 702.5, 113.34),  ShoreZ = 60.0 },
-    { Id = "Clearing_03", Name = "Clearing 03 (North, Reach 3)", BankSide = "North", Mouth = Vector3.new(2985.08, 700.5, -537.36), MinX = 2854.58, MaxX = 3115.58, MinZ = -731.46, MaxZ = -537.36, LandPos = Vector3.new(2985.08, 702.5, -635.96), ShoreZ = -635.0 },
-    { Id = "Clearing_04", Name = "Clearing 04 (South, Reach 3)", BankSide = "South", Mouth = Vector3.new(3144.58, 700.5, 463.74),  MinX = 2997.58, MaxX = 3291.58, MinZ = 463.74,  MaxZ = 691.84,  LandPos = Vector3.new(3144.58, 702.5, 578.34),  ShoreZ = 540.0 },
-    { Id = "Clearing_05", Name = "Clearing 05 (North, Reach 5)", BankSide = "North", Mouth = Vector3.new(4424.58, 700.5, -987.36), MinX = 4297.58, MaxX = 4551.58, MinZ = -1226.46,MaxZ = -987.36, LandPos = Vector3.new(4424.58, 702.5, -1108.46),ShoreZ = -1100.0 },
-    { Id = "Clearing_06", Name = "Clearing 06 (South, Reach 5)", BankSide = "South", Mouth = Vector3.new(4564.58, 700.5, -260.16), MinX = 4408.58, MaxX = 4720.58, MinZ = -435.26, MaxZ = -260.16, LandPos = Vector3.new(4564.58, 702.5, -347.66), ShoreZ = -347.0 },
-    { Id = "Clearing_07", Name = "Clearing 07 (North, Reach 5)", BankSide = "North", Mouth = Vector3.new(4448.08, 700.5, 614.54),  MinX = 4299.58, MaxX = 4596.58, MinZ = 614.54,  MaxZ = 812.64,  LandPos = Vector3.new(4448.08, 702.5, 712.04),  ShoreZ = 710.0 },
-    { Id = "Clearing_08", Name = "Clearing 08 (South, Reach 5)", BankSide = "South", Mouth = Vector3.new(4604.08, 700.5, 911.74),  MinX = 4470.58, MaxX = 4737.58, MinZ = 911.74,  MaxZ = 1111.84, LandPos = Vector3.new(4604.08, 702.5, 1013.34), ShoreZ = 960.0 },
-    { Id = "Clearing_09", Name = "Clearing 09 (South, Reach 7)", BankSide = "South", Mouth = Vector3.new(6014.58, 700.5, -660.16), MinX = 5847.58, MaxX = 6181.58, MinZ = -885.26, MaxZ = -660.16, LandPos = Vector3.new(6014.58, 702.5, -772.66), ShoreZ = -772.0 },
-    { Id = "Clearing_10", Name = "Clearing 10 (North, Reach 7)", BankSide = "North", Mouth = Vector3.new(6274.58, 700.5, -89.36),  MinX = 6089.58, MaxX = 6459.58, MinZ = -291.46, MaxZ = -89.36,  LandPos = Vector3.new(6274.58, 702.5, -190.96), ShoreZ = -190.0 },
-}
+rafting.allSites = {}
+rafting.sitesById = {}
+rafting.sitesInitialized = false
+rafting.collectAllLootChests = true
+
+function rafting.ensureDynamicSites()
+    if rafting.sitesInitialized and #rafting.allSites > 0 then return end
+    if not FjordZones then
+        pcall(function()
+            local cg = game:GetService("ReplicatedStorage"):FindFirstChild("CowGame")
+            local shared = cg and cg:FindFirstChild("Shared")
+            local fzMod = shared and shared:FindFirstChild("FjordZones")
+            if fzMod and fzMod:IsA("ModuleScript") then
+                FjordZones = require(fzMod)
+            end
+        end)
+    end
+    if not FjordZones or not FjordZones.Sites then return end
+
+    local sitesList = {}
+    local byId = {}
+    local coves = FjordZones.Coves or {}
+
+    for _, s in ipairs(FjordZones.Sites) do
+        local sid = s.Id
+        local kind = s.Kind or "Clearing"
+        local bank = s.BankSide or (if s.MaxZ < -37.81 then "North" else "South")
+        local floorY = s.FloorY or 700.7
+
+        local matchedCove = nil
+        for _, c in ipairs(coves) do
+            if c[6] == kind then
+                if kind == "Clearing" and c[7] == string.gsub(sid, "^Clearing_", "") then
+                    matchedCove = c
+                    break
+                elseif kind == "Cave" then
+                    local caveSub = string.gsub(sid, "^Cave_", "")
+                    if string.find(c[7], caveSub, 1, true) or (caveSub == "12" and string.find(c[7], "Cubby06", 1, true)) then
+                        matchedCove = c
+                        break
+                    end
+                end
+            end
+        end
+
+        local coveX = matchedCove and matchedCove[1] or ((s.MinX + s.MaxX) * 0.5)
+        local coveZ = matchedCove and matchedCove[2] or ((s.MinZ + s.MaxZ) * 0.5)
+        local mouthZ = if bank == "North" then s.MaxZ else s.MinZ
+        local mouthPos = Vector3.new(coveX, 700.5, mouthZ)
+        local landPos = Vector3.new(coveX, floorY + 1.8, coveZ)
+
+        local siteData = {
+            Id = sid,
+            Kind = kind,
+            Name = (if kind == "Clearing" then "Clearing " .. string.gsub(sid, "^Clearing_", "") else "Cave " .. string.gsub(sid, "^Cave_", "")) .. " (" .. bank .. ")",
+            BankSide = bank,
+            Mouth = mouthPos,
+            MinX = s.MinX,
+            MaxX = s.MaxX,
+            MinZ = s.MinZ,
+            MaxZ = s.MaxZ,
+            FloorY = floorY,
+            LandPos = landPos,
+            ShoreZ = coveZ,
+        }
+        table.insert(sitesList, siteData)
+        byId[sid] = siteData
+    end
+
+    table.sort(sitesList, function(a, b) return a.MinX < b.MinX end)
+    rafting.allSites = sitesList
+    rafting.sitesById = byId
+    rafting.sitesInitialized = true
+end
 
 function rafting.getClearingById(siteId)
-    for _, site in ipairs(clearingSites) do
-        if site.Id == siteId then
-            return site
-        end
-    end
-    return nil
+    rafting.ensureDynamicSites()
+    return rafting.sitesById[siteId]
 end
 
 function rafting.getNearbyClearing(posX, posZ)
-    for _, site in ipairs(clearingSites) do
+    rafting.ensureDynamicSites()
+    for _, site in ipairs(rafting.allSites) do
         if posX >= site.MinX and posX <= site.MaxX and posZ >= site.MinZ and posZ <= site.MaxZ then
             return site
         end
@@ -8903,90 +8920,80 @@ function rafting.getNearbyClearing(posX, posZ)
     return nil
 end
 
-local clearingChannelCorridors = {
-    ["Clearing_01"] = { [1] = -37.81 },
-    ["Clearing_02"] = { [1] = -37.81 },
-    ["Clearing_03"] = { [1] = -50.0, [2] = -262.81, [3] = -487.81 },
-    ["Clearing_04"] = { [1] = -20.0, [2] = 187.19,  [3] = 412.19 },
-    ["Clearing_05"] = { [1] = -50.0, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81 },
-    ["Clearing_06"] = { [1] = -50.0, [2] = -262.81, [3] = -262.81, [4] = -487.81, [5] = -487.81 },
-    ["Clearing_07"] = { [1] = -20.0, [2] = 187.19,  [3] = 412.19,  [4] = 412.19,  [5] = 412.19 },
-    ["Clearing_08"] = { [1] = -20.0, [2] = 187.19,  [3] = 412.19,  [4] = 637.19,  [5] = 862.19 },
-    ["Clearing_09"] = { [1] = -50.0, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -937.81, [7] = -937.81 },
-    ["Clearing_10"] = { [1] = -37.81, [2] = -37.81, [3] = -37.81,  [4] = -37.81,  [5] = -37.81,  [6] = -37.81,  [7] = -37.81 },
-}
-
 local function getReachIndex(posX)
-    if posX <= 1844.58 then return 1
-    elseif posX <= 2844.58 then return 2
-    elseif posX <= 3294.58 then return 3
-    elseif posX <= 4294.58 then return 4
-    elseif posX <= 4744.58 then return 5
-    elseif posX <= 5844.58 then return 6
+    if posX <= 1845 then return 1
+    elseif posX <= 2845 then return 2
+    elseif posX <= 3295 then return 3
+    elseif posX <= 4295 then return 4
+    elseif posX <= 4745 then return 5
+    elseif posX <= 5845 then return 6
     else return 7 end
 end
 
 function rafting.isSiteReachable(site, posX, currentZ)
     if not site then return false end
-
-    -- Downriver rule: river only flows East (+X). Any clearing whose MaxX is behind current posX is unreachable.
     if posX > site.MaxX + 15 then
         return false
     end
-
-    -- In Harbour & Reach 1 (before Reach 2 fork at X = 1844.58): all downriver clearings are reachable
     if posX <= 1845 then
         return true
     end
-
-    -- After Fork into Reach 2 (X > 1845), check channel branch separation
     if currentZ ~= nil then
-        -- Raft is in South branch (Z > 50)
         if currentZ > 50 then
-            -- Cannot cross rock islands to North coves
             if site.BankSide == "North" then
                 return false
             end
-        -- Raft is in North branch (Z < -100)
         elseif currentZ < -100 then
-            -- Cannot cross rock islands to South coves
             if site.BankSide == "South" then
                 return false
             end
-        -- Raft is in Middle branch (-100 <= Z <= 50)
         else
-            -- Past Reach 2 commitment (X > 2400), outer coves (Clearing 03 at Z = -635 and Clearing 04 at Z = +540) are behind rock walls
-            if posX > 2400 and (site.Id == "Clearing_03" or site.Id == "Clearing_04") then
+            if posX > 2400 and (site.ShoreZ < -400 or site.ShoreZ > 400) then
                 return false
             end
         end
     end
-
     return true
 end
 
 function rafting.getNextTargetClearing(posX, currentZ)
-    for _, site in ipairs(clearingSites) do
-        if rafting.selectedClearings and rafting.selectedClearings[site.Id] then
-            if not rafting.visitedSites[site.Id] then
-                if posX <= site.MaxX + 15 then
-                    if currentZ == nil or rafting.isSiteReachable(site, posX, currentZ) then
-                        return site
-                    else
-                        -- Unreachable from current channel branch downriver: mark passed
-                        rafting.visitedSites[site.Id] = true
+    rafting.ensureDynamicSites()
+    local bestSite = nil
+    local bestCost = math.huge
+
+    for _, site in ipairs(rafting.allSites) do
+        local isCandidate = false
+        if rafting.collectAllLootChests then
+            isCandidate = true
+        elseif rafting.selectedClearings and rafting.selectedClearings[site.Id] then
+            isCandidate = true
+        end
+
+        if isCandidate and not rafting.visitedSites[site.Id] then
+            if posX <= site.MaxX + 20 then
+                if currentZ == nil or rafting.isSiteReachable(site, posX, currentZ) then
+                    local dx = math.max(0, (site.Mouth and site.Mouth.X or site.MinX) - posX)
+                    local dz = math.abs((site.ShoreZ or -37.81) - (currentZ or -37.81))
+                    local cost = dz + 0.35 * dx
+                    if cost < bestCost then
+                        bestCost = cost
+                        bestSite = site
                     end
                 else
-                    -- Past clearing downriver: mark passed
-                    rafting.visitedSites[site.Id] = true
+                    if posX > (site.MinX - 80) then
+                        rafting.visitedSites[site.Id] = true
+                    end
                 end
+            else
+                rafting.visitedSites[site.Id] = true
             end
         end
     end
-    return nil
+    return bestSite
 end
 
 function rafting.updateTargetClearings(options)
+    rafting.ensureDynamicSites()
     local selected = {}
     local isAll = false
     if type(options) == "table" then
@@ -8998,6 +9005,10 @@ function rafting.updateTargetClearings(options)
                 if idMatch then
                     selected[string.format("Clearing_%02d", tonumber(idMatch))] = true
                 end
+                local caveMatch = string.match(opt, "Cave%s*([%w_]+)")
+                if caveMatch then
+                    selected["Cave_" .. caveMatch] = true
+                end
             end
         end
     elseif type(options) == "string" then
@@ -9008,12 +9019,18 @@ function rafting.updateTargetClearings(options)
             if idMatch then
                 selected[string.format("Clearing_%02d", tonumber(idMatch))] = true
             end
+            local caveMatch = string.match(options, "Cave%s*([%w_]+)")
+            if caveMatch then
+                selected["Cave_" .. caveMatch] = true
+            end
         end
     end
 
     if isAll then
-        for i = 1, 10 do
-            selected[string.format("Clearing_%02d", i)] = true
+        for _, s in ipairs(rafting.allSites) do
+            if s.Kind == "Clearing" then
+                selected[s.Id] = true
+            end
         end
     end
     rafting.selectedClearings = selected
@@ -9127,35 +9144,32 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     local maxX = targetSite.MaxX
 
     if posX < minX - 30 then
-        -- Navigating downriver through channels towards target clearing
-        -- Smooth corridor guidance for Clearing_03 (North Reach 3)
-        if targetSite.Id == "Clearing_03" then
-            if posX <= 1600 then
-                return -55.0 -- Align with North side of Reach 1 channel
-            elseif posX <= 2344.58 then
-                local t = math.clamp((posX - 1600) / 744.58, 0, 1)
-                return -55.0 + t * (-262.81 - (-55.0)) -- Smooth transition into Reach 2 North
-            else
-                local t = math.clamp((posX - 2344.58) / 500.0, 0, 1)
-                return -262.81 + t * (-487.81 - (-262.81)) -- Sloping to Reach 3 Far North
-            end
-        elseif targetSite.Id == "Clearing_04" then
-            if posX <= 1600 then
-                return -20.0 -- Align with South side of Reach 1 channel
-            elseif posX <= 2344.58 then
-                local t = math.clamp((posX - 1600) / 744.58, 0, 1)
-                return -20.0 + t * (187.19 - (-20.0)) -- Smooth transition into Reach 2 South
-            else
-                local t = math.clamp((posX - 2344.58) / 500.0, 0, 1)
-                return 187.19 + t * (412.19 - 187.19) -- Sloping to Reach 3 South
-            end
-        else
+        -- Navigating downriver towards target docking area
+        local targetZ = targetSite.ShoreZ or -37.81
+        if FjordZones and FjordZones.Channels then
             local reachIdx = getReachIndex(posX)
-            local corridors = clearingChannelCorridors[targetSite.Id]
-            if corridors and corridors[reachIdx] then
-                return corridors[reachIdx]
+            local bestChZ = -37.81
+            local minChDiff = math.huge
+            for _, ch in ipairs(FjordZones.Channels) do
+                if ch[7] == reachIdx then
+                    local chZ = ch[2]
+                    local chReachable = true
+                    if currentZ and posX > 1845 then
+                        if currentZ > 50 and chZ < -100 then chReachable = false end
+                        if currentZ < -100 and chZ > 50 then chReachable = false end
+                    end
+                    if chReachable then
+                        local diff = math.abs(chZ - targetZ)
+                        if diff < minChDiff then
+                            minChDiff = diff
+                            bestChZ = chZ
+                        end
+                    end
+                end
             end
-            return -37.81
+            return bestChZ
+        else
+            return targetZ
         end
     elseif posX <= maxX + 20 then
         -- At cove mouth opening or inside cove: steer directly towards shoreline!
@@ -9336,8 +9350,8 @@ function rafting.handleHobgoblinLanded(landed)
     end
 end
 
-function rafting.getHobgoblinEvasionOffset(deck, frame)
-    if not rafting.autoEvadeHobgoblins or not next(rafting.incomingRocks) then
+function rafting.getThreatEvasionOffset(deck, frame)
+    if not rafting.autoEvadeHobgoblins then
         rafting.isEvadingRock = false
         return nil, false, false
     end
@@ -9350,64 +9364,80 @@ function rafting.getHobgoblinEvasionOffset(deck, frame)
 
     local speed = (rafting.currentSnapshot and rafting.currentSnapshot.Speed) or 25
     local threats = {}
-    for rockId, rock in pairs(rafting.incomingRocks) do
-        local flight = rock.Flight or 1.8
-        local elapsed = now - (rock.ReceivedAt or now)
-        local timeLeft = flight - elapsed
 
-        if timeLeft < -0.5 or elapsed > 5.0 then
-            rafting.incomingRocks[rockId] = nil
-        elseif timeLeft > 0 and timeLeft < 2.5 then
-            table.insert(threats, { rock = rock, timeLeft = timeLeft })
+    -- 1. Incoming Hobgoblin projectile rocks
+    if rafting.incomingRocks then
+        for rockId, rock in pairs(rafting.incomingRocks) do
+            local flight = rock.Flight or 1.8
+            local elapsed = now - (rock.ReceivedAt or now)
+            local timeLeft = flight - elapsed
+            if timeLeft < -0.5 or elapsed > 5.0 then
+                rafting.incomingRocks[rockId] = nil
+            elseif timeLeft > 0 and timeLeft < 2.5 then
+                table.insert(threats, { pos = rock.Landing or Vector3.new(rock.X or 0, 700.5, rock.Z or 0), timeLeft = timeLeft })
+            end
+        end
+    end
+
+    -- 2. Workspace visual hazard indicators (LocalHobgoblinFx rings / cores)
+    local fxFolder = workspace:FindFirstChild("LocalHobgoblinFx")
+    if fxFolder then
+        for _, child in ipairs(fxFolder:GetChildren()) do
+            if child:IsA("BasePart") and child.Name == "RockRing" then
+                local dist = (child.Position - deck.Position).Magnitude
+                if dist < 60 then
+                    local timeLeft = math.clamp(dist / math.max(speed, 10), 0.2, 2.0)
+                    table.insert(threats, { pos = child.Position, timeLeft = timeLeft })
+                end
+            end
         end
     end
 
     if #threats > 0 then
         table.sort(threats, function(a, b) return a.timeLeft < b.timeLeft end)
         for _, entry in ipairs(threats) do
-            local rock = entry.rock
+            local threatPos = entry.pos
             local timeLeft = entry.timeLeft
-            local landingWorld = rock.Landing
-
-            -- Project raft forward displacement at rock impact time
             local forwardVec = deck.CFrame.LookVector
             local predictedPos = deck.Position + forwardVec * (speed * timeLeft)
             local predictedFrame = CFrame.new(predictedPos) * (deck.CFrame - deck.Position)
-            local relLanding = predictedFrame:PointToObjectSpace(landingWorld)
+            local relLanding = predictedFrame:PointToObjectSpace(threatPos)
 
-            -- Deck bounds: Longboat is 14 wide (X: -7 to +7), 32 long (Z: -16 to +16).
-            -- Threat window: within 11 studs laterally and 18 studs longitudinally.
-            if math.abs(relLanding.X) <= 11.0 and math.abs(relLanding.Z) <= 18.0 then
+            if math.abs(relLanding.X) <= 12.0 and math.abs(relLanding.Z) <= 18.0 then
                 threatFound = true
-                -- Steer away from impact side
                 if relLanding.X <= 0 then
-                    -- Rock landing on Left/Port side: steer Right (+4.5)
                     bestEvadeDeckX = 4.5
                 else
-                    -- Rock landing on Right/Starboard side: steer Left (-4.5)
                     bestEvadeDeckX = -4.5
                 end
-
-                -- Longitudinal boost: if landing towards mid/stern, boost away
                 if relLanding.Z >= -4 then
                     shouldBoost = true
                 end
-
-                -- Cow on-deck jump timing when about to strike
                 if timeLeft <= 0.35 and root then
-                    local cowDistToLanding = (root.Position - landingWorld).Magnitude
-                    if cowDistToLanding <= 12 then
+                    local cowDist = (root.Position - threatPos).Magnitude
+                    if cowDist <= 12 then
                         shouldJump = true
                     end
                 end
-                break -- Evasion prioritized for the most imminent rock
+                break
             end
+        end
+    end
+
+    -- 3. Environmental Damage and Hazard Rectangles from FjordZones
+    if not threatFound and FjordZones and (FjordZones.InHazard or FjordZones.InDamage) then
+        local predPos = deck.Position + deck.CFrame.LookVector * (speed * 1.2)
+        if (FjordZones.InHazard and FjordZones.InHazard(predPos)) or (FjordZones.InDamage and FjordZones.InDamage(predPos)) then
+            threatFound = true
+            bestEvadeDeckX = if deck.Position.Z > -37.81 then -4.5 else 4.5
         end
     end
 
     rafting.isEvadingRock = threatFound
     return bestEvadeDeckX, shouldBoost, shouldJump
 end
+
+rafting.getHobgoblinEvasionOffset = rafting.getThreatEvasionOffset
 
 function rafting.handleSnapshot(payload)
     if not payload or type(payload) ~= "table" then return end
@@ -9551,6 +9581,12 @@ function rafting.handleSnapshot(payload)
                                     rafting.lastLootedChestId = targetChest.Id
                                     targetChest.Opened = true
                                     pcall(function() teamChestReq:FireServer(targetChest.Id) end)
+                                    task.wait(0.4)
+                                    local deck = rafting.getRaftDeck()
+                                    if deck and root then
+                                        stopCharacterVelocity()
+                                        root.CFrame = deck.CFrame * CFrame.new(0, 3.5, 0)
+                                    end
                                 end
                             elseif site and site.LandPos then
                                 stopCharacterVelocity()
@@ -10212,9 +10248,13 @@ function rafting.initClientListener()
             elseif eventName == "TeamChestClear" then
                 rafting.teamChests = nil
                 rafting.teamChestSite = nil
-            elseif eventName == "RaftingNotice" then
-                if payload and typeof(payload.Text) == "string" and string.find(payload.Text, "Hobgoblin") then
-                    rafting.statusText = "Hobgoblins spotted on cliffs! Evasion armed."
+            elseif eventName == "RaftingNotice" or eventName == "WeatherEvent" or eventName == "RiverHazard" or eventName == "HazardWarning" then
+                if payload and typeof(payload.Text) == "string" then
+                    if string.find(payload.Text, "Hobgoblin") then
+                        rafting.statusText = "Hobgoblins spotted on cliffs! Evasion armed."
+                    else
+                        rafting.statusText = "Weather / river threat detected! Evasion armed."
+                    end
                     rafting.updateCards()
                 end
             end
@@ -10481,6 +10521,16 @@ RaftingTab:CreateToggle({
     end,
 })
 
+RaftingTab:CreateToggle({
+    Name = "Collect All Loot Chests (Clearings & Caves)",
+    CurrentValue = true,
+    Flag = "Toggle_Rafting_CollectAllLootChests",
+    Callback = function(Value)
+        rafting.collectAllLootChests = Value
+        rafting.updateCards()
+    end,
+})
+
 RaftingTab:CreateSection({ Name = "Automation & Safety" })
 
 RaftingTab:CreateToggle({
@@ -10502,7 +10552,7 @@ RaftingTab:CreateToggle({
 })
 
 RaftingTab:CreateToggle({
-    Name = "Auto-Evade Hobgoblins",
+    Name = "Auto-Evade Threats & Weather",
     CurrentValue = true,
     Flag = "Toggle_Rafting_AutoEvadeHobgoblins",
     Callback = function(Value)
