@@ -8702,7 +8702,13 @@ local rafting = {
     enabled = false,
     autoLoop = false,
     naturalMode = false,
-    route = "Hybrid Dynamic Explorer", -- "Hybrid Dynamic Explorer", "Clearing & Chest Explorer", "Fast Sea Run (Center/Direct)", "North Channels (Caves & Drops)", "South Channels (Scenic & Clearings)"
+    route = "Hybrid Dynamic Explorer", -- "Leftmost Clearings & Caves (Far-North / Left-Left-Forward)", "Hybrid Dynamic Explorer", "Clearing & Chest Explorer", "Fast Sea Run (Center/Direct)", "North Channels (Caves & Drops)", "South Channels (Scenic & Clearings)"
+    selectedByZone = {
+        [1] = { ["Clearing_02"] = true },
+        [2] = { ["Clearing_03"] = true, ["Clearing_04"] = true },
+        [3] = { ["Clearing_05"] = true, ["Clearing_06"] = true, ["Clearing_07"] = true, ["Clearing_08"] = true },
+        [4] = { ["Clearing_09"] = true, ["Clearing_10"] = true },
+    },
     selectedClearings = {
         ["Clearing_02"] = true,
         ["Clearing_03"] = true,
@@ -9109,10 +9115,38 @@ getReachIndex = function(posX)
     return rd.maxReach
 end
 
+local siteCorridors = {
+    -- Level 1 & 2 (Reach 1)
+    ["Clearing_01"] = { [1] = -37.81 },
+    ["Clearing_02"] = { [1] = -37.81 },
+    ["Cave_Cubby01"] = { [1] = -37.81 },
+    ["Cave_Cubby02"] = { [1] = -37.81 },
+
+    -- Level 3 (Reach 3)
+    ["Clearing_03"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81 },
+    ["Clearing_04"] = { [1] = -37.81, [2] = 187.19,  [3] = 412.19 },
+    ["Cave_Cubby03"] = { [1] = -37.81, [2] = -37.81,  [3] = -37.81 },
+
+    -- Level 4 Delta (Reach 5)
+    ["Clearing_05"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81 },
+    ["Clearing_06"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -487.81, [5] = -487.81 },
+    ["Cave_Cubby04"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -487.81, [5] = -487.81 },
+    ["Clearing_07"] = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 412.19,  [5] = 412.19 },
+    ["Clearing_08"] = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 637.19,  [5] = 862.19 },
+
+    -- Level 4 Terminus (Reach 7)
+    ["ManatiteFjordCave"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -1162.81, [7] = -1387.81 },
+    ["Cave_Cubby05"]      = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -937.81,  [7] = -937.81 },
+    ["Clearing_09"]       = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -487.81, [5] = -487.81, [6] = -487.81,  [7] = -487.81 },
+    ["Clearing_10"]       = { [1] = -37.81, [2] = -37.81,  [3] = -37.81,  [4] = -37.81,  [5] = -37.81,  [6] = -37.81,   [7] = -37.81 },
+    ["Cave_11"]           = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 412.19,  [5] = 412.19,  [6] = 412.19,   [7] = 412.19 },
+    ["Cave_12"]           = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 637.19,  [5] = 862.19,  [6] = 1087.19,  [7] = 1312.19 },
+}
+
 function rafting.isSiteReachable(site, posX, currentZ)
     if not site then return false end
     local maxX = site.MaxX or site.MinX
-    if posX > (maxX + 20) then
+    if posX > (maxX + 25) then
         return false
     end
     if currentZ == nil then
@@ -9121,71 +9155,31 @@ function rafting.isSiteReachable(site, posX, currentZ)
 
     local mouthX = site.Mouth and site.Mouth.X or ((site.MinX + site.MaxX) * 0.5)
     local shoreZ = site.ShoreZ or ((site.MinZ + site.MaxZ) * 0.5)
-    local distForward = mouthX - posX
-    local distLateral = math.abs(shoreZ - currentZ)
 
-    -- Kinematic Cone Constraint:
-    -- Raft cannot steer steeper than MaxTurnSlope (0.72) relative to forward travel
-    if distForward <= 0 then
-        return false
-    end
-    if (distLateral / distForward) > 0.72 then
-        return false
+    -- If already approaching or at cove mouth, it is reachable
+    if posX >= (mouthX - 140) and posX <= (maxX + 25) then
+        return true
     end
 
-    -- Branch Commitment Constraints:
-    -- Once past Fork 1 (posX > 1844.58), boat in North (currentZ < -100) cannot reach South (shoreZ > 50), and vice versa
-    if posX > 1844.58 then
-        if currentZ < -100 and shoreZ > 50 then return false end
-        if currentZ > 50 and shoreZ < -100 then return false end
+    -- In Harbour & Reach 1 (before Fork 1 at X = 1844.58): all downriver sites are reachable
+    if posX <= 1844.58 then
+        return true
     end
-    -- Once past Fork 3 (posX > 3294.58), North channels stay < -250, South channels stay > 200
+
+    -- Physical Canyon Wall Barriers:
+    -- Once past Fork 1: North branch (currentZ < -100) cannot reach South bank coves (shoreZ > 50)
+    if currentZ < -100 and shoreZ > 50 then
+        return false
+    end
+    -- South branch (currentZ > 50) cannot reach North bank coves (shoreZ < -100)
+    if currentZ > 50 and shoreZ < -100 then
+        return false
+    end
+
+    -- Once past Fork 3 (X > 3294.58): Far-North (currentZ < -550) cannot reach Central/South (shoreZ > -200)
     if posX > 3294.58 then
-        if currentZ < -250 and shoreZ > -100 then return false end
-        if currentZ > 200 and shoreZ < 100 then return false end
-    end
-
-    -- Channel & Fork Connectivity: verify unbroken channel path to target reach
-    local rd = getReachData()
-    local curR = getReachIndex(posX)
-    local siteR = getReachIndex(mouthX)
-
-    if siteR > curR then
-        local checkZ = currentZ
-        for r = curR, siteR - 1 do
-            local forkX = rd.forkX[r]
-            if forkX and posX < forkX then
-                local distToFork = forkX - posX
-                local nextChZ = nil
-                local minDiff = math.huge
-                local nextChs = rd.channelsByReach[r + 1]
-                if nextChs then
-                    for _, ch in ipairs(nextChs) do
-                        local chZ = ch[2]
-                        local chReachable = true
-                        if r > 1 then
-                            if math.abs(chZ - checkZ) > 280 and not ch[8] then chReachable = false end
-                            if checkZ > 50 and chZ < -100 then chReachable = false end
-                            if checkZ < -100 and chZ > 50 then chReachable = false end
-                        end
-                        if chReachable then
-                            local diff = math.abs(chZ - shoreZ)
-                            if diff < minDiff then
-                                minDiff = diff
-                                nextChZ = chZ
-                            end
-                        end
-                    end
-                end
-                if not nextChZ then
-                    return false
-                end
-                if distToFork > 0 and (math.abs(nextChZ - checkZ) / distToFork) > 0.72 then
-                    return false
-                end
-                checkZ = nextChZ
-            end
-        end
+        if currentZ < -550 and shoreZ > -200 then return false end
+        if currentZ > 500 and shoreZ < 200 then return false end
     end
 
     return true
@@ -9210,10 +9204,56 @@ local function getEndCaveSite(currentZ)
     return bestCave or rafting.sitesById["ManatiteFjordCave"] or rafting.sitesById["Cave_Cubby05"]
 end
 
+local leftmostSites = {
+    ["Clearing_01"] = true,
+    ["Cave_Cubby01"] = true,
+    ["Clearing_03"] = true,
+    ["Clearing_05"] = true,
+    ["ManatiteFjordCave"] = true,
+}
+
+local northPresetSites = {
+    ["Clearing_01"] = true,
+    ["Cave_Cubby01"] = true,
+    ["Clearing_03"] = true,
+    ["Cave_Cubby04"] = true,
+    ["Clearing_05"] = true,
+    ["Cave_Cubby05"] = true,
+    ["ManatiteFjordCave"] = true,
+}
+
+local southPresetSites = {
+    ["Cave_Cubby02"] = true,
+    ["Clearing_02"] = true,
+    ["Cave_Cubby03"] = true,
+    ["Clearing_04"] = true,
+    ["Clearing_07"] = true,
+    ["Clearing_08"] = true,
+    ["Cave_11"] = true,
+    ["Cave_12"] = true,
+}
+
 function rafting.isSiteSelected(site)
     if not site then return false end
-    if rafting.selectAllSites then return true end
-    if rafting.selectAllClearings then return site.Kind == "Clearing" end
+    local route = rafting.route or "Hybrid Dynamic Explorer"
+    if string.find(route, "Fast Sea Run", 1, true) then
+        return false
+    end
+    if string.find(route, "Leftmost", 1, true) then
+        return leftmostSites[site.Id] == true
+    end
+    if string.find(route, "North Channels", 1, true) then
+        return northPresetSites[site.Id] == true
+    end
+    if string.find(route, "South Channels", 1, true) then
+        return southPresetSites[site.Id] == true
+    end
+    if string.find(route, "Clearing & Chest Explorer", 1, true) or rafting.selectAllClearings then
+        return site.Kind == "Clearing"
+    end
+    if rafting.selectAllSites then
+        return true
+    end
     if rafting.selectedClearings then
         return rafting.selectedClearings[site.Id] == true
     end
@@ -9222,6 +9262,11 @@ end
 
 function rafting.getNextTargetClearing(posX, currentZ)
     rafting.ensureDynamicSites()
+    local route = rafting.route or "Hybrid Dynamic Explorer"
+    if string.find(route, "Fast Sea Run", 1, true) then
+        return nil
+    end
+
     local bestSite = nil
     local bestCost = math.huge
 
@@ -9230,18 +9275,14 @@ function rafting.getNextTargetClearing(posX, currentZ)
         local isCandidate = rafting.isSiteSelected(site)
 
         if isCandidate and not rafting.visitedSites[site.Id] then
-            if posX <= site.MaxX + 20 then
+            if posX <= site.MaxX + 25 then
                 if currentZ == nil or rafting.isSiteReachable(site, posX, currentZ) then
                     local dx = math.max(0, (site.Mouth and site.Mouth.X or site.MinX) - posX)
                     local dz = math.abs((site.ShoreZ or -37.81) - (currentZ or -37.81))
-                    local cost = dz * 1.5 + dx
+                    local cost = dz * 1.2 + dx
                     if cost < bestCost then
                         bestCost = cost
                         bestSite = site
-                    end
-                else
-                    if posX > (site.MinX - 80) then
-                        rafting.visitedSites[site.Id] = true
                     end
                 end
             else
@@ -9250,12 +9291,94 @@ function rafting.getNextTargetClearing(posX, currentZ)
         end
     end
 
-    -- If no further unvisited clearings downriver: target End Cave
-    if not bestSite then
-        return getEndCaveSite(currentZ)
+    if bestSite then
+        return bestSite
     end
 
-    return bestSite
+    -- End Cave fallback ONLY if route explicitly specifies caves or user selected caves
+    if string.find(route, "Leftmost", 1, true) or string.find(route, "North Channels", 1, true) then
+        local endSite = rafting.sitesById["ManatiteFjordCave"]
+        if endSite and not rafting.visitedSites[endSite.Id] and posX <= endSite.MaxX + 25 then
+            return endSite
+        end
+    elseif string.find(route, "South Channels", 1, true) then
+        local endSite = rafting.sitesById["Cave_12"] or rafting.sitesById["Cave_11"]
+        if endSite and not rafting.visitedSites[endSite.Id] and posX <= endSite.MaxX + 25 then
+            return endSite
+        end
+    end
+
+    if rafting.selectAllSites then
+        return getEndCaveSite(currentZ)
+    end
+    if rafting.selectedClearings then
+        for sId, active in pairs(rafting.selectedClearings) do
+            if active and (string.sub(sId, 1, 4) == "Cave" or sId == "ManatiteFjordCave") then
+                return getEndCaveSite(currentZ)
+            end
+        end
+    end
+
+    -- When clearings only selected and all passed downriver, return nil (steer straight to sea)
+    return nil
+end
+
+local function parseSiteId(opt)
+    if not opt or type(opt) ~= "string" then return nil end
+    if string.find(opt, "Manatite", 1, true) then
+        return "ManatiteFjordCave"
+    end
+    local cubbyNum = string.match(opt, "Cubby%s*(%d+)")
+    if cubbyNum then
+        return string.format("Cave_Cubby%02d", tonumber(cubbyNum))
+    end
+    local clearingNum = string.match(opt, "Clearing%s*(%d+)")
+    if clearingNum then
+        return string.format("Clearing_%02d", tonumber(clearingNum))
+    end
+    local caveNum = string.match(opt, "Cave%s*(%d+)")
+    if caveNum then
+        return string.format("Cave_%s", caveNum)
+    end
+    return nil
+end
+
+function rafting.updateZoneSites(zoneIdx, options)
+    rafting.ensureDynamicSites()
+    if not rafting.selectedByZone then
+        rafting.selectedByZone = { [1] = {}, [2] = {}, [3] = {}, [4] = {} }
+    end
+    local zoneSet = {}
+    if type(options) == "table" then
+        for k, v in pairs(options) do
+            local optStr = type(k) == "number" and v or k
+            local sid = parseSiteId(optStr)
+            if sid then
+                zoneSet[sid] = true
+            end
+        end
+    elseif type(options) == "string" then
+        local sid = parseSiteId(options)
+        if sid then
+            zoneSet[sid] = true
+        end
+    end
+
+    rafting.selectedByZone[zoneIdx] = zoneSet
+
+    local combined = {}
+    for z = 1, 4 do
+        local zMap = rafting.selectedByZone[z]
+        if zMap then
+            for sid, active in pairs(zMap) do
+                if active then combined[sid] = true end
+            end
+        end
+    end
+    rafting.selectedClearings = combined
+    rafting.selectAllSites = false
+    rafting.selectAllClearings = false
+    rafting.updateCards()
 end
 
 function rafting.updateTargetClearings(options)
@@ -9267,29 +9390,6 @@ function rafting.updateTargetClearings(options)
 
     local function parseOption(opt)
         if not opt or type(opt) ~= "string" then return end
-        local clearingMatch = string.match(opt, "Clearing%s*(%d+)")
-        if clearingMatch then
-            selected[string.format("Clearing_%02d", tonumber(clearingMatch))] = true
-            hasSpecific = true
-            return
-        end
-        local cubbyMatch = string.match(opt, "Cubby%s*(%d+)")
-        if cubbyMatch then
-            selected[string.format("Cave_Cubby%02d", tonumber(cubbyMatch))] = true
-            hasSpecific = true
-            return
-        end
-        local caveMatch = string.match(opt, "Cave%s*(%d+)")
-        if caveMatch then
-            selected["Cave_" .. caveMatch] = true
-            hasSpecific = true
-            return
-        end
-        if string.find(opt, "Manatite", 1, true) then
-            selected["ManatiteFjordCave"] = true
-            hasSpecific = true
-            return
-        end
         if string.find(opt, "All Sites", 1, true) then
             selectAllSites = true
             return
@@ -9297,6 +9397,11 @@ function rafting.updateTargetClearings(options)
         if opt == "All Clearings" or string.find(opt, "All Clearings", 1, true) then
             selectAllClearings = true
             return
+        end
+        local sid = parseSiteId(opt)
+        if sid then
+            selected[sid] = true
+            hasSpecific = true
         end
     end
 
@@ -9330,6 +9435,7 @@ function rafting.updateTargetClearings(options)
     rafting.selectAllSites = selectAllSites
     rafting.selectAllClearings = selectAllClearings
     rafting.selectedClearings = selected
+    rafting.updateCards()
 end
 
 local whiskerRayParams = RaycastParams.new()
@@ -9423,42 +9529,6 @@ function rafting.getTargetZ(posX, currentZ, clearances)
         return getHarbourZ(posX)
     end
 
-    local r = rafting.route
-
-    -- Direct sea run: stay centered in river channel (-37.81) all the way to the Sea
-    if r == "Fast Sea Run (Center/Direct)" then
-        return -37.81
-    elseif r == "North Channels (Caves & Drops)" then
-        if posX <= 1844.58 then return -37.81
-        elseif posX <= 2844.58 then
-            local t = math.clamp((posX - 1844.58) / 1000, 0, 1)
-            return -37.81 + t * (-487.81 - (-37.81))
-        elseif posX <= 3294.58 then return -487.81
-        elseif posX <= 4294.58 then
-            local t = math.clamp((posX - 3294.58) / 1000, 0, 1)
-            return -487.81 + t * (-937.81 - (-487.81))
-        elseif posX <= 4744.58 then return -937.81
-        elseif posX <= 5844.58 then
-            local t = math.clamp((posX - 4744.58) / 1100, 0, 1)
-            return -937.81 + t * (-1387.81 - (-937.81))
-        else return -1387.81 end
-    elseif r == "South Channels (Scenic & Clearings)" then
-        if posX <= 1844.58 then return -37.81
-        elseif posX <= 2844.58 then
-            local t = math.clamp((posX - 1844.58) / 1000, 0, 1)
-            return -37.81 + t * (412.19 - (-37.81))
-        elseif posX <= 3294.58 then return 412.19
-        elseif posX <= 4294.58 then
-            local t = math.clamp((posX - 3294.58) / 1000, 0, 1)
-            return 412.19 + t * (862.19 - 412.19)
-        elseif posX <= 4744.58 then return 862.19
-        elseif posX <= 5844.58 then
-            local t = math.clamp((posX - 4744.58) / 1100, 0, 1)
-            return 862.19 + t * (1312.19 - 862.19)
-        else return 1312.19 end
-    end
-
-    -- "Hybrid Dynamic Explorer" (Default) & "Clearing & Chest Explorer":
     -- If currently inside or departing a visited clearing cove, steer back towards the reach channel
     local departSiteId = rafting.currentDockSite or rafting.lastDepartSite
     local departSite = departSiteId and (rafting.sitesById[departSiteId] or rafting.getClearingById(departSiteId))
@@ -9474,9 +9544,36 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     local targetSite = rafting.getNextTargetClearing(posX, currentZ)
     local rd = getReachData()
     local reachIdx = getReachIndex(posX)
+    local r = rafting.route or "Hybrid Dynamic Explorer"
 
     if not targetSite then
-        -- All selected clearings visited or unreachable: stay in current branch channel
+        if r:find("Fast Sea") or r:find("Center") then
+            return -37.81
+        elseif r:find("Leftmost") or r:find("Left-Left") or r:find("North") then
+            local northChannels = { [-1] = -37.81, [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -1162.81, [7] = -1387.81 }
+            local chZ = northChannels[reachIdx] or -37.81
+            local forkX = rd.forkX[reachIdx]
+            if forkX and posX >= (forkX - 350) and posX <= forkX then
+                local nextChZ = northChannels[math.min(reachIdx + 1, rd.maxReach)] or chZ
+                local rawT = math.clamp((posX - (forkX - 350)) / 350, 0, 1)
+                local t = (1 - math.cos(rawT * math.pi)) * 0.5
+                return chZ + t * (nextChZ - chZ)
+            end
+            return chZ
+        elseif r:find("South") then
+            local southChannels = { [-1] = -37.81, [1] = -37.81, [2] = 187.19, [3] = 412.19, [4] = 637.19, [5] = 862.19, [6] = 1087.19, [7] = 1312.19 }
+            local chZ = southChannels[reachIdx] or -37.81
+            local forkX = rd.forkX[reachIdx]
+            if forkX and posX >= (forkX - 350) and posX <= forkX then
+                local nextChZ = southChannels[math.min(reachIdx + 1, rd.maxReach)] or chZ
+                local rawT = math.clamp((posX - (forkX - 350)) / 350, 0, 1)
+                local t = (1 - math.cos(rawT * math.pi)) * 0.5
+                return chZ + t * (nextChZ - chZ)
+            end
+            return chZ
+        end
+
+        -- Hybrid fallback: closest channel in current reach
         local chs = rd.channelsByReach[reachIdx]
         local bestFallbackZ = -37.81
         if chs and #chs > 0 then
@@ -9495,52 +9592,23 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     local minX = targetSite.MinX
     local maxX = targetSite.MaxX
     local mouthX = targetSite.Mouth and targetSite.Mouth.X or ((minX + maxX) * 0.5)
-    local mouthZ = targetSite.Mouth and targetSite.Mouth.Z or (targetSite.ShoreZ or -37.81)
-    local goalChZ = rafting.getSiteChannelZ(targetSite)
+    local shoreZ = targetSite.ShoreZ or -37.81
 
+    local corridors = siteCorridors[targetSite.Id]
+    local currentChZ = (corridors and corridors[reachIdx]) or rafting.getSiteChannelZ(targetSite)
+
+    -- If approaching or inside cove: steer directly towards interior ShoreZ (landing dock)!
     if posX >= (mouthX - 120) and posX <= (maxX + 25) then
         local rawT = math.clamp((posX - (mouthX - 120)) / 120, 0, 1)
         local t = (1 - math.cos(rawT * math.pi)) * 0.5
-        return goalChZ + t * (mouthZ - goalChZ)
+        return currentChZ + t * (shoreZ - currentChZ)
     end
 
-    local function findBestCh(rIdx, fromZ)
-        local chs = rd.channelsByReach[rIdx]
-        if not chs or #chs == 0 then return fromZ or -37.81 end
-        local bestZ = nil
-        local minDiff = math.huge
-        local closestToFromZ = chs[1][2]
-        local minFromDiff = math.huge
-        for _, ch in ipairs(chs) do
-            local candZ = ch[2]
-            local fromDiff = math.abs(candZ - (fromZ or candZ))
-            if fromDiff < minFromDiff then
-                minFromDiff = fromDiff
-                closestToFromZ = candZ
-            end
-            local reachable = true
-            if fromZ ~= nil and rIdx > 1 then
-                if fromDiff > 280 and not ch[8] then reachable = false end
-                if fromZ > 50 and candZ < -100 then reachable = false end
-                if fromZ < -100 and candZ > 50 then reachable = false end
-            end
-            if reachable then
-                local diff = math.abs(candZ - goalChZ)
-                if diff < minDiff then
-                    minDiff = diff
-                    bestZ = candZ
-                end
-            end
-        end
-        return bestZ or closestToFromZ
-    end
-
-    local currentChZ = findBestCh(reachIdx, currentZ)
+    -- If in fork approach: smooth S-curve to next reach channel
     local forkX = rd.forkX[reachIdx]
-
     if forkX and posX >= (forkX - 350) and posX <= forkX then
         local nextReach = math.min(reachIdx + 1, rd.maxReach)
-        local nextChZ = findBestCh(nextReach, currentChZ)
+        local nextChZ = (corridors and corridors[nextReach]) or currentChZ
         local rawT = math.clamp((posX - (forkX - 350)) / 350, 0, 1)
         local t = (1 - math.cos(rawT * math.pi)) * 0.5
         return currentChZ + t * (nextChZ - currentChZ)
@@ -9695,8 +9763,10 @@ local function sendRaftKey(keyCode, holdSec)
     end
 end
 
+local localPlayer = plr or Players.LocalPlayer
+
 local function getContinueButton()
-    local playerGui = localPlayer and localPlayer:FindFirstChildWhichIsA("PlayerGui")
+    local playerGui = (localPlayer or plr or Players.LocalPlayer) and (localPlayer or plr or Players.LocalPlayer):FindFirstChildWhichIsA("PlayerGui")
     if not playerGui then return nil end
     local hud = playerGui:FindFirstChild("FjordRaftingHUD")
     if hud then
@@ -10015,28 +10085,36 @@ end
 
 rafting.getHobgoblinEvasionOffset = rafting.getThreatEvasionOffset
 
-function rafting.dismissChestRewardGui()
-    if rafting.autoDismissRewardGui == false and rafting.autoAcceptRewards == false then return false end
-    local pg = plr and plr:FindFirstChildWhichIsA("PlayerGui")
+function rafting.dismissChestRewardGui(force)
+    if not force and rafting.autoDismissRewardGui == false and rafting.autoAcceptRewards == false then return false end
+    local p = plr or Players.LocalPlayer or localPlayer
+    local pg = p and p:FindFirstChildWhichIsA("PlayerGui")
     if not pg then return false end
     local dismissed = false
     local vi = VirtualInput
 
-    for _, gui in ipairs(pg:GetChildren()) do
-        if (gui:IsA("ScreenGui") or gui:IsA("BillboardGui")) and gui.Enabled then
-            for _, desc in ipairs(gui:GetDescendants()) do
+    -- 1. Targeted dismissal for known reward / reveal modal ScreenGuis (RewardBoxReveal from TeamChestController, etc.)
+    local targetGuiNames = { "RewardBoxReveal", "CaravanCrateReveal", "CowFavoriteReward", "FavoriteRewardPrompt", "QuestModal" }
+    for _, tName in ipairs(targetGuiNames) do
+        local rGui = pg:FindFirstChild(tName)
+        if rGui and rGui:IsA("ScreenGui") and rGui.Enabled then
+            -- Find action buttons inside panel (Primary: "Done" / "Open another", Secondary: "Done", WearIt, KeepRaiding, NotNow)
+            for _, desc in ipairs(rGui:GetDescendants()) do
                 if desc:IsA("GuiButton") and desc.Visible then
-                    local name = desc.Name:lower()
-                    local text = (desc:IsA("TextButton") and desc.Text:lower()) or ""
-                    local isRewardBtn = name:find("accept") or name:find("okay") or name == "ok" or name:find("claim") or name:find("confirm") or name:find("close") or name:find("dismiss")
-                        or text:find("accept") or text:find("okay") or text == "ok" or text:find("claim") or text:find("confirm") or text:find("close") or text:find("great")
-                    if isRewardBtn then
+                    local dName = desc.Name:lower()
+                    local dText = (desc:IsA("TextButton") and desc.Text:lower()) or ""
+                    if dName == "primary" or dName == "secondary" or dName == "wearit" or dName == "keepraiding" or dName == "notnow"
+                        or dText == "done" or dText:find("done") or dText:find("open another") or dText:find("wear") or dText:find("keep") or dText:find("not now") or dText:find("close") then
                         if firesignal then
                             pcall(function() firesignal(desc.Activated) end)
+                            pcall(function() firesignal(desc.MouseButton1Click) end)
                         end
                         if getconnections then
                             pcall(function()
                                 for _, c in ipairs(getconnections(desc.Activated)) do
+                                    if c.Function then pcall(c.Function) end
+                                end
+                                for _, c in ipairs(getconnections(desc.MouseButton1Click)) do
                                     if c.Function then pcall(c.Function) end
                                 end
                             end)
@@ -10053,22 +10131,91 @@ function rafting.dismissChestRewardGui()
                     end
                 end
             end
+            -- Send Escape key (natively bound to CowRewardBoxRevealClose in ContextActionService at priority 3300)
+            if vi and vi.SendKeyEvent then
+                pcall(function()
+                    vi:SendKeyEvent(true, Enum.KeyCode.Escape, false, game)
+                    task.wait(0.05)
+                    vi:SendKeyEvent(false, Enum.KeyCode.Escape, false, game)
+                end)
+            end
+            -- Direct safety disable
+            pcall(function() rGui.Enabled = false end)
+            dismissed = true
         end
     end
+
+    -- 2. General recursive search across all active ScreenGuis and BillboardGuis
+    for _, gui in ipairs(pg:GetChildren()) do
+        if (gui:IsA("ScreenGui") or gui:IsA("BillboardGui")) and gui.Enabled then
+            local gName = gui.Name:lower()
+            if not gName:find("rayfield") and not gName:find("cowhub") and not gName:find("fjordraftinghud") then
+                for _, desc in ipairs(gui:GetDescendants()) do
+                    if desc:IsA("GuiButton") and desc.Visible then
+                        local name = desc.Name:lower()
+                        local text = (desc:IsA("TextButton") and desc.Text:lower()) or ""
+                        local attrLabel = desc:GetAttribute("AccessibilityLabel")
+                        local labelText = (typeof(attrLabel) == "string" and attrLabel:lower()) or ""
+
+                        local isRewardBtn = name == "primary" or name == "secondary" or name == "wearit" or name == "keepraiding" or name == "notnow"
+                            or name:find("accept") or name:find("okay") or name == "ok" or name:find("claim") or name:find("confirm") or name:find("close") or name:find("dismiss") or name:find("done")
+                            or text == "done" or text:find("done") or text:find("accept") or text:find("okay") or text == "ok" or text:find("claim") or text:find("confirm") or text:find("close") or text:find("great")
+                            or text:find("open another") or text:find("wear it") or text:find("keep raiding") or text:find("keep knocking") or text:find("not now") or text:find("thank you")
+                            or labelText:find("done") or labelText:find("close") or labelText:find("accept") or labelText:find("okay")
+
+                        if isRewardBtn then
+                            if firesignal then
+                                pcall(function() firesignal(desc.Activated) end)
+                                pcall(function() firesignal(desc.MouseButton1Click) end)
+                            end
+                            if getconnections then
+                                pcall(function()
+                                    for _, c in ipairs(getconnections(desc.Activated)) do
+                                        if c.Function then pcall(c.Function) end
+                                    end
+                                    for _, c in ipairs(getconnections(desc.MouseButton1Click)) do
+                                        if c.Function then pcall(c.Function) end
+                                    end
+                                end)
+                            end
+                            if vi and vi.SendMouseButtonEvent then
+                                pcall(function()
+                                    local abs = desc.AbsolutePosition + (desc.AbsoluteSize * 0.5)
+                                    vi:SendMouseButtonEvent(abs.X, abs.Y, 0, true, game, 1)
+                                    task.wait(0.04)
+                                    vi:SendMouseButtonEvent(abs.X, abs.Y, 0, false, game, 1)
+                                end)
+                            end
+                            dismissed = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if dismissed and vi and vi.SendKeyEvent then
+        pcall(function()
+            vi:SendKeyEvent(true, Enum.KeyCode.Escape, false, game)
+            task.wait(0.04)
+            vi:SendKeyEvent(false, Enum.KeyCode.Escape, false, game)
+        end)
+    end
+
     return dismissed
 end
 
-function rafting.pollRewardGuiUntilDismissed(timeoutSecs)
-    if rafting.autoDismissRewardGui == false and rafting.autoAcceptRewards == false then return end
+function rafting.pollRewardGuiUntilDismissed(timeoutSecs, force)
+    if not force and rafting.autoDismissRewardGui == false and rafting.autoAcceptRewards == false then return end
     timeoutSecs = timeoutSecs or 8.0
     task.spawn(function()
         local startTime = os.clock()
         while (os.clock() - startTime) < timeoutSecs do
-            if rafting.autoDismissRewardGui == false and rafting.autoAcceptRewards == false then break end
-            local dismissed = rafting.dismissChestRewardGui()
+            if not force and rafting.autoDismissRewardGui == false and rafting.autoAcceptRewards == false then break end
+            local dismissed = rafting.dismissChestRewardGui(force)
             if dismissed then
                 task.wait(0.3)
-                if not rafting.dismissChestRewardGui() then
+                if not rafting.dismissChestRewardGui(force) then
                     break
                 end
             end
@@ -10081,16 +10228,29 @@ local ProximityPromptService = game:GetService("ProximityPromptService")
 if ProximityPromptService then
     pcall(function()
         ProximityPromptService.PromptTriggered:Connect(function(prompt, playerWhoTriggered)
-            if playerWhoTriggered == plr and prompt and prompt.Parent then
-                local pName = prompt.Parent.Name:lower()
-                local grandParentName = (prompt.Parent.Parent and prompt.Parent.Parent.Name:lower()) or ""
-                if pName:find("chest") or grandParentName:find("chest") or pName == "localteamchest" then
+            if playerWhoTriggered == (plr or Players.LocalPlayer) and prompt then
+                local promptName = prompt.Name:lower()
+                local pName = (prompt.Parent and prompt.Parent.Name:lower()) or ""
+                local grandParentName = (prompt.Parent and prompt.Parent.Parent and prompt.Parent.Parent.Name:lower()) or ""
+                if promptName:find("chest") or pName:find("chest") or grandParentName:find("chest") or pName == "localteamchest" or grandParentName == "localteamchest" then
                     rafting.pollRewardGuiUntilDismissed(8.0)
                 end
             end
         end)
     end)
 end
+
+task.spawn(function()
+    local pg = (plr or Players.LocalPlayer):WaitForChild("PlayerGui", 5)
+    if pg then
+        pg.ChildAdded:Connect(function(child)
+            if rafting.autoDismissRewardGui and (child.Name == "RewardBoxReveal" or child.Name:find("Reveal") or child.Name:find("Reward")) then
+                task.wait(0.2)
+                rafting.dismissChestRewardGui()
+            end
+        end)
+    end
+end)
 
 function rafting.lootSingleSite(targetSite)
     if not root or not targetSite then return false end
@@ -10358,11 +10518,12 @@ function rafting.handleSnapshot(payload)
         local posZ = payload.Frame.Position.Z
         local speed = payload.Speed or 0
 
-        -- Auto-mark clearing as visited once past its downriver exit or unreachable from current channel
-        for _, site in ipairs(clearingSites) do
+        -- Auto-mark clearing as visited once past its downriver exit
+        local sitesToScan = rafting.allSites or clearingSites
+        for _, site in ipairs(sitesToScan) do
             if not rafting.visitedSites[site.Id] and rafting.status ~= "Docked" then
                 local inCove = (site.BankSide == "North" and posZ < -70.0) or (site.BankSide == "South" and posZ > 35.0)
-                if (posX > site.MaxX + 25 and not inCove) or (not rafting.isSiteReachable(site, posX, posZ)) then
+                if posX > (site.MaxX + 25) and not inCove then
                     rafting.visitedSites[site.Id] = true
                 end
             end
@@ -10387,10 +10548,10 @@ function rafting.handleSnapshot(payload)
             if (site or isServerDocked) and isSelectedSite and ((site and not rafting.visitedSites[site.Id]) or isServerDocked) then
                 local distToMouth = site and site.Mouth and (Vector3.new(posX, 700.5, posZ) - site.Mouth).Magnitude or math.huge
                 local distToLand = site and site.LandPos and (Vector3.new(posX, 700.5, posZ) - site.LandPos).Magnitude or math.huge
-                local inSiteX = site and posX >= (site.MinX - 15) and posX <= (site.MaxX + 25)
-                local inSiteZ = site and ((site.BankSide == "North" and posZ <= (site.MaxZ + 15)) or (site.BankSide == "South" and posZ >= (site.MinZ - 15)))
+                local inSiteX = site and posX >= (site.MinX - 25) and posX <= (site.MaxX + 25)
+                local inSiteZ = site and ((site.BankSide == "North" and posZ <= (site.MaxZ + 25)) or (site.BankSide == "South" and posZ >= (site.MinZ - 25)))
 
-                local reachedShore = isServerDocked or distToMouth < 55 or distToLand < 60 or (inSiteX and inSiteZ and (distToMouth < 85 or (speed or 16) < 14))
+                local reachedShore = isServerDocked or distToMouth < 75 or distToLand < 75 or (inSiteX and inSiteZ and (distToMouth < 95 or (speed or 16) < 14))
 
                 if reachedShore then
                     local siteId = (site and site.Id) or payload.SiteId or "Clearing_Dock"
@@ -10520,12 +10681,12 @@ function rafting.stepSteering(dt)
         return
     end
 
-    -- Adaptive lookahead: use 50 studs in channels, but short 20 studs when approaching an unvisited cove opening
-    -- so the raft does not turn towards the bank before the opening arrives
+    -- Adaptive lookahead: use 50 studs in channels, but short 15 studs when approaching or inside cove
+    -- so lookAheadX does not overshoot the cove into the downriver channel
     local lookAhead = 50
-    local nextSite = (rafting.route == "Clearing & Chest Explorer" or rafting.route == "Hybrid Dynamic Explorer") and rafting.getNextTargetClearing(posX, posZ)
-    if nextSite and posX >= (nextSite.MinX - 80) and posX < nextSite.MinX then
-        lookAhead = 20
+    local nextSite = rafting.getNextTargetClearing(posX, posZ)
+    if nextSite and posX >= (nextSite.MinX - 100) and posX <= (nextSite.MaxX + 25) then
+        lookAhead = 15
     end
     local lookAheadX = posX + lookAhead
 
@@ -10564,27 +10725,26 @@ function rafting.stepSteering(dt)
     local rightMinDist = math.min(rightLateralDist, rightObliqueDist)
     local forwardDist = math.min(clearances.Forward or 110, clearances.ForwardLeft or 95, clearances.ForwardRight or 95)
 
-    local nextSite = (rafting.route == "Clearing & Chest Explorer" or rafting.route == "Hybrid Dynamic Explorer") and rafting.getNextTargetClearing(posX, posZ)
     local minX = nextSite and nextSite.MinX or 0
     local mouthX = nextSite and nextSite.Mouth and nextSite.Mouth.X or ((minX + (nextSite and nextSite.MaxX or 0)) * 0.5)
     local isDeparting = (os.clock() - (rafting.lastCastOffTime or 0)) < 6.0
-    local inCoveZone = nextSite and (posX >= nextSite.MinX and posX <= (nextSite.MaxX + 20))
-    local isHeadingToNorthCove = (not isDeparting) and nextSite and nextSite.BankSide == "North" and posX >= (mouthX - 120) and posX <= (nextSite.MaxX + 20)
-    local isHeadingToSouthCove = (not isDeparting) and nextSite and nextSite.BankSide == "South" and posX >= (mouthX - 120) and posX <= (nextSite.MaxX + 20)
+    local inCoveZone = nextSite and (posX >= (nextSite.MinX - 50) and posX <= (nextSite.MaxX + 25))
+    local isHeadingToNorthCove = (not isDeparting) and nextSite and nextSite.BankSide == "North" and posX >= (mouthX - 120) and posX <= (nextSite.MaxX + 25)
+    local isHeadingToSouthCove = (not isDeparting) and nextSite and nextSite.BankSide == "South" and posX >= (mouthX - 120) and posX <= (nextSite.MaxX + 25)
 
     -- Stand-Off Buffer: deck half-width is 7.0 studs.
     -- Begin repelling when wall is closer than 32 studs from center (25 studs from railing).
     -- Full lock repel when closer than 18 studs from center (11 studs from railing).
     if leftMinDist < 32.0 then
         local push = math.clamp((32.0 - leftMinDist) / 14.0, 0, 1)
-        if leftMinDist < 20.0 or not isHeadingToNorthCove then
-            whiskerRepulsion = whiskerRepulsion + (if leftMinDist < 18.0 then 5.8 else push * 5.8)
+        if leftMinDist < 16.0 or not isHeadingToNorthCove then
+            whiskerRepulsion = whiskerRepulsion + (if leftMinDist < 14.0 then 5.8 else push * 5.8)
         end
     end
     if rightMinDist < 32.0 then
         local push = math.clamp((32.0 - rightMinDist) / 14.0, 0, 1)
-        if rightMinDist < 20.0 or not isHeadingToSouthCove then
-            whiskerRepulsion = whiskerRepulsion - (if rightMinDist < 18.0 then 5.8 else push * 5.8)
+        if rightMinDist < 16.0 or not isHeadingToSouthCove then
+            whiskerRepulsion = whiskerRepulsion - (if rightMinDist < 14.0 then 5.8 else push * 5.8)
         end
     end
 
@@ -11448,74 +11608,126 @@ RaftingTab:CreateSection({ Name = "Route Navigation Settings" })
 RaftingTab:CreateDropdown({
     Name = "Rafting Route Profile",
     Options = {
-        "Hybrid Dynamic Explorer",
-        "Clearing & Chest Explorer",
-        "Fast Sea Run (Center/Direct)",
+        "Leftmost Clearings & Caves (Far-North / Left-Left-Forward)",
+        "Hybrid Dynamic Explorer (Custom Selection)",
+        "Clearing & Chest Explorer (All Clearings)",
         "North Channels (Caves & Drops)",
-        "South Channels (Scenic & Clearings)"
+        "South Channels (Scenic & Clearings)",
+        "Fast Sea Run (Center/Direct)"
     },
-    CurrentOption = {"Hybrid Dynamic Explorer"},
+    CurrentOption = {"Hybrid Dynamic Explorer (Custom Selection)"},
     Flag = "Dropdown_Rafting_Route",
     Callback = function(Option)
         local chosen = type(Option) == "table" and Option[1] or Option
-        rafting.route = chosen or "Hybrid Dynamic Explorer"
+        rafting.route = chosen or "Hybrid Dynamic Explorer (Custom Selection)"
         rafting.updateCards()
+    end,
+})
+
+RaftingTab:CreateSection({ Name = "Target Sites Selection by Level & River Bank" })
+
+RaftingTab:CreateDropdown({
+    Name = "Zone 1: Level 1 & 2 Sites (Upper Fjord - Reach 1)",
+    Options = {
+        "[Left] Clearing 01 (Level 1, North Bank)",
+        "[Left] Cubby 01 Cave (Level 2, North Bank)",
+        "[Right] Cubby 02 Cave (Level 1, South Bank)",
+        "[Right] Clearing 02 (Level 2, South Bank)"
+    },
+    CurrentOption = {
+        "[Right] Clearing 02 (Level 2, South Bank)"
+    },
+    MultipleOptions = true,
+    Flag = "Dropdown_Rafting_Zone1",
+    Callback = function(Options)
+        rafting.updateZoneSites(1, Options)
     end,
 })
 
 RaftingTab:CreateDropdown({
-    Name = "Target Sites to Visit (Clearings & Cubbies)",
+    Name = "Zone 2: Level 3 Sites (Mid-Fjord Canyon - Reach 3)",
     Options = {
-        "Clearing 01 (Level 1, Reach 1 North)",
-        "Cubby 02 Cave (Level 1, Reach 1 South)",
-        "Clearing 02 (Level 2, Reach 1 South)",
-        "Cubby 01 Cave (Level 2, Reach 1 North)",
-        "Clearing 03 (Level 3, Reach 3 North)",
-        "Cubby 03 Cave (Level 3, Reach 3 South)",
-        "Clearing 04 (Level 3, Reach 3 South)",
-        "Clearing 05 (Level 4, Reach 5 North)",
-        "Clearing 06 (Level 4, Reach 5 North-Center)",
-        "Cubby 04 Cave (Level 4, Reach 5 North)",
-        "Clearing 07 (Level 4, Reach 5 South-Center)",
-        "Clearing 08 (Level 4, Reach 5 South)",
-        "Cave 11 (Level 4, Reach 7 South)",
-        "Clearing 09 (Level 4, Reach 7 South)",
-        "Clearing 10 (Level 4, Reach 7 North)",
-        "Cubby 05 Cave (Level 4, Reach 7 North)",
-        "Cave 12 (Level 4, Reach 7 South)",
-        "Manatite Cave (Level 4, North Terminus)"
+        "[Left] Clearing 03 (Level 3, North Bank)",
+        "[Center] Cubby 03 Cave (Level 3, Center/South Bank)",
+        "[Right] Clearing 04 (Level 3, South Bank)"
     },
     CurrentOption = {
-        "Clearing 02 (Level 2, Reach 1 South)",
-        "Clearing 03 (Level 3, Reach 3 North)",
-        "Clearing 04 (Level 3, Reach 3 South)",
-        "Clearing 05 (Level 4, Reach 5 North)",
-        "Clearing 06 (Level 4, Reach 5 North-Center)",
-        "Clearing 07 (Level 4, Reach 5 South-Center)",
-        "Clearing 08 (Level 4, Reach 5 South)",
-        "Clearing 09 (Level 4, Reach 7 South)",
-        "Clearing 10 (Level 4, Reach 7 North)",
+        "[Left] Clearing 03 (Level 3, North Bank)",
+        "[Right] Clearing 04 (Level 3, South Bank)"
     },
     MultipleOptions = true,
-    Flag = "Dropdown_Rafting_TargetClearings",
+    Flag = "Dropdown_Rafting_Zone2",
     Callback = function(Options)
-        rafting.updateTargetClearings(Options)
+        rafting.updateZoneSites(2, Options)
+    end,
+})
+
+RaftingTab:CreateDropdown({
+    Name = "Zone 3: Level 4 Delta Sites (Lower Fjord - Reach 5)",
+    Options = {
+        "[Far-Left] Clearing 05 (Level 4, North 1 Channel)",
+        "[Left] Cubby 04 Cave (Level 4, North 2 Channel)",
+        "[Mid-Left] Clearing 06 (Level 4, North-Center Channel)",
+        "[Mid-Right] Clearing 07 (Level 4, South-Center Channel)",
+        "[Far-Right] Clearing 08 (Level 4, South 1 Channel)"
+    },
+    CurrentOption = {
+        "[Far-Left] Clearing 05 (Level 4, North 1 Channel)",
+        "[Mid-Left] Clearing 06 (Level 4, North-Center Channel)",
+        "[Mid-Right] Clearing 07 (Level 4, South-Center Channel)",
+        "[Far-Right] Clearing 08 (Level 4, South 1 Channel)"
+    },
+    MultipleOptions = true,
+    Flag = "Dropdown_Rafting_Zone3",
+    Callback = function(Options)
+        rafting.updateZoneSites(3, Options)
+    end,
+})
+
+RaftingTab:CreateDropdown({
+    Name = "Zone 4: Level 4 Terminus Sites (Delta Terminus - Reach 7 & Caves)",
+    Options = {
+        "[Far-Left] Manatite Fjord Cave (Level 4, North Terminus)",
+        "[Left] Cubby 05 Cave (Level 4, North 1 Channel)",
+        "[Mid-Left] Clearing 09 (Level 4, North 2 Channel)",
+        "[Mid-Left] Clearing 10 (Level 4, North 2 Channel)",
+        "[Mid-Right] Cave 11 (Level 4, South 2 Channel)",
+        "[Far-Right] Cave 12 (Level 4, South Terminus)"
+    },
+    CurrentOption = {
+        "[Mid-Left] Clearing 09 (Level 4, North 2 Channel)",
+        "[Mid-Left] Clearing 10 (Level 4, North 2 Channel)"
+    },
+    MultipleOptions = true,
+    Flag = "Dropdown_Rafting_Zone4",
+    Callback = function(Options)
+        rafting.updateZoneSites(4, Options)
+    end,
+})
+
+RaftingTab:CreateButton({
+    Name = "Select All Sites (All 4 Zones)",
+    Callback = function()
+        rafting.selectAllSites = true
+        rafting.selectAllClearings = false
+        if rafting.allSites then
+            local combined = {}
+            for _, s in ipairs(rafting.allSites) do
+                combined[s.Id] = true
+            end
+            rafting.selectedClearings = combined
+        end
         rafting.updateCards()
     end,
 })
 
 RaftingTab:CreateButton({
-    Name = "Select All Sites",
+    Name = "Clear All Sites (All 4 Zones)",
     Callback = function()
-        rafting.updateTargetClearings("All Sites")
-        rafting.updateCards()
-    end,
-})
-
-RaftingTab:CreateButton({
-    Name = "Clear All Sites",
-    Callback = function()
-        rafting.updateTargetClearings({})
+        rafting.selectAllSites = false
+        rafting.selectAllClearings = false
+        rafting.selectedClearings = {}
+        rafting.selectedByZone = { [1] = {}, [2] = {}, [3] = {}, [4] = {} }
         rafting.updateCards()
     end,
 })
@@ -11533,7 +11745,7 @@ RaftingTab:CreateToggle({
 RaftingTab:CreateButton({
     Name = "Dismiss Reward GUI Now",
     Callback = function()
-        local didDismiss = rafting.dismissChestRewardGui()
+        local didDismiss = rafting.dismissChestRewardGui(true)
         if didDismiss then
             Window:Notify({ Title = "Chest GUI", Content = "Dismissed reward popup.", Duration = 2 })
         else
