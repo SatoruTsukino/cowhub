@@ -8704,7 +8704,6 @@ local rafting = {
     naturalMode = false,
     route = "Hybrid Dynamic Explorer", -- "Hybrid Dynamic Explorer", "Clearing & Chest Explorer", "Fast Sea Run (Center/Direct)", "North Channels (Caves & Drops)", "South Channels (Scenic & Clearings)"
     selectedClearings = {
-        ["Clearing_01"] = true,
         ["Clearing_02"] = true,
         ["Clearing_03"] = true,
         ["Clearing_04"] = true,
@@ -8822,16 +8821,38 @@ function rafting.getRaftDeck()
         end
     end
     local sessionId = rafting.sessionId or (rafting.currentSnapshot and rafting.currentSnapshot.Id)
-    if sessionId then
-        local raftName = "TeamRaft_" .. tostring(sessionId)
-        local fjordFolder = workspace:FindFirstChild("FjordRafting") or (workspace:FindFirstChild("CowWorld") and workspace.CowWorld:FindFirstChild("FjordRafting"))
-        local model = (fjordFolder and fjordFolder:FindFirstChild(raftName)) or workspace:FindFirstChild(raftName)
-        if model then
-            local deck = model:FindFirstChild("Deck")
+    local fjordFolder = workspace:FindFirstChild("FjordRafting") or (workspace:FindFirstChild("CowWorld") and workspace.CowWorld:FindFirstChild("FjordRafting"))
+    if fjordFolder then
+        if sessionId then
+            local raftName = "TeamRaft_" .. tostring(sessionId)
+            local model = fjordFolder:FindFirstChild(raftName) or workspace:FindFirstChild(raftName)
+            if model then
+                local deck = model:FindFirstChild("Deck")
+                if deck and deck:IsA("BasePart") then
+                    rafting.raftModel = model
+                    rafting.deckPart = deck
+                    return deck, model
+                end
+            end
+        end
+        for _, child in ipairs(fjordFolder:GetChildren()) do
+            if child:IsA("Model") and (child.Name:sub(1, 9) == "TeamRaft_" or child:FindFirstChild("Deck")) then
+                local deck = child:FindFirstChild("Deck")
+                if deck and deck:IsA("BasePart") then
+                    rafting.raftModel = child
+                    rafting.deckPart = deck
+                    return deck, child
+                end
+            end
+        end
+    end
+    for _, child in ipairs(workspace:GetChildren()) do
+        if child:IsA("Model") and child.Name:sub(1, 9) == "TeamRaft_" then
+            local deck = child:FindFirstChild("Deck")
             if deck and deck:IsA("BasePart") then
-                rafting.raftModel = model
+                rafting.raftModel = child
                 rafting.deckPart = deck
-                return deck, model
+                return deck, child
             end
         end
     end
@@ -9276,8 +9297,12 @@ function rafting.updateTargetClearings(options)
     end
 
     if type(options) == "table" then
-        for _, opt in ipairs(options) do
-            parseOption(opt)
+        for k, v in pairs(options) do
+            if type(k) == "number" and type(v) == "string" then
+                parseOption(v)
+            elseif type(k) == "string" and v == true then
+                parseOption(k)
+            end
         end
     elseif type(options) == "string" then
         parseOption(options)
@@ -9673,17 +9698,28 @@ local function triggerRaftingCommand(cmd)
         sendRaftKey(Enum.KeyCode.H, 0.25)
     end
 
+    local candidateNames = { cmd, cmd .. "Button" }
+    if cmd == "Sail" or cmd == "Start" or cmd == "Vote" then
+        table.insert(candidateNames, "Continue")
+        table.insert(candidateNames, "ContinueButton")
+    end
+
     local playerGui = localPlayer and localPlayer:FindFirstChildWhichIsA("PlayerGui")
     if playerGui then
         for _, gui in ipairs(playerGui:GetChildren()) do
             if string.find(gui.Name, "Raft", 1, true) then
-                local btn = gui:FindFirstChild(cmd, true) or gui:FindFirstChild(cmd .. "Button", true)
-                if btn and btn:IsA("GuiButton") and btn.Visible then
-                    if getconnections then
-                        local conns = getconnections(btn.Activated)
-                        if conns and #conns > 0 then
-                            for _, c in ipairs(conns) do
-                                if c.Function then pcall(c.Function); return true end
+                for _, name in ipairs(candidateNames) do
+                    local btn = gui:FindFirstChild(name, true)
+                    if btn and btn:IsA("GuiButton") and btn.Visible then
+                        if firesignal then
+                            pcall(function() firesignal(btn.Activated) end)
+                        end
+                        if getconnections then
+                            local conns = getconnections(btn.Activated)
+                            if conns and #conns > 0 then
+                                for _, c in ipairs(conns) do
+                                    if c.Function then pcall(c.Function); return true end
+                                end
                             end
                         end
                     end
@@ -10805,7 +10841,7 @@ function rafting.startVoyage()
         local launchPos = part and part.Position or Vector3.new(-240.12, 703.99, 12.35)
         local dist = (root.Position - launchPos).Magnitude
         if dist > 14 then
-            if rafting.naturalMode then
+            if rafting.naturalMode and dist <= 120 then
                 naturalWalkTo(launchPos, 12.0, 6.0)
             else
                 stopCharacterVelocity()
@@ -10817,12 +10853,24 @@ function rafting.startVoyage()
 
     -- 1. Fire server from the dock to create/start voyage session (N and H do not work until on deck)
     rafting.fireRemoteSafely("Start", nil, 1.0)
-    if prompt and prompt.Enabled and fireproximityprompt then
-        pcall(fireproximityprompt, prompt)
+    if prompt and prompt.Enabled then
+        if fireproximityprompt then
+            pcall(fireproximityprompt, prompt)
+        end
+        if getconnections then
+            local conns = getconnections(prompt.Triggered)
+            if conns and #conns > 0 then
+                for _, c in ipairs(conns) do
+                    if c.Function then pcall(c.Function) end
+                end
+            end
+        end
     end
 
     rafting.enabled = true
     rafting.sessionId = nil
+    rafting.deckPart = nil
+    rafting.raftModel = nil
     rafting.isCastingOff = false
     rafting.lastCastOffTime = nil
     rafting.visitedSites = {}
@@ -10854,7 +10902,10 @@ function rafting.startVoyage()
         while (os.clock() - waitDeckStart) < 8.0 and rafting.enabled do
             deck = rafting.getRaftDeck()
             if deck then break end
-            task.wait(0.2)
+            if rafting.naturalMode and naturalWalkTo and root then
+                naturalWalkTo(Vector3.new(-225.27, 703.5, -29.41), 1.5, 3.0)
+            end
+            task.wait(0.25)
         end
 
         -- Ensure cow is physically in bounds and on/above the deck
@@ -10883,15 +10934,18 @@ function rafting.startVoyage()
                 if isCowOnDeck(currentDeck) then
                     -- ONLY pulse Key N when verified on deck in bounds!
                     sendRaftKey(Enum.KeyCode.N, 0.25)
+                    triggerRaftingCommand("Sail")
+                    triggerRaftingCommand("Continue")
                 else
                     -- Player is off-deck or separated: re-board first, DO NOT press N while off deck
                     ensureCowOnDeck(currentDeck, 2.0)
                 end
             end
 
-            -- Single debounced fallback only if 6+ seconds have elapsed without moving
-            if (os.clock() - waitStart) > 6.0 then
-                rafting.fireRemoteSafely("Sail", nil, 2.5)
+            -- Single debounced fallback after 4.0 seconds without moving
+            if (os.clock() - waitStart) > 4.0 then
+                rafting.fireRemoteSafely("Sail", nil, 2.0)
+                rafting.fireRemoteSafely("Vote", nil, 2.0)
             end
 
             task.wait(1.5)
@@ -10916,6 +10970,8 @@ function rafting.onSessionEnded(reason)
     rafting.isUnsticking = false
     rafting.unstickDirection = 0
     rafting.unstickStartTime = 0
+    rafting.deckPart = nil
+    rafting.raftModel = nil
     if not (rafting.autoLoop and rafting.enabled) then
         rafting.stopSteeringLoop()
     end
@@ -10932,6 +10988,7 @@ end
 
 function rafting.endVoyage()
     sendRaftKey(Enum.KeyCode.H, 0.25)
+    triggerRaftingCommand("Return")
     task.wait(0.2)
     rafting.fireRemoteSafely("Return", nil, 1.0)
     rafting.onSessionEnded("Voyage ended. Returned to shore.")
@@ -11261,7 +11318,6 @@ RaftingTab:CreateDropdown({
         "Manatite Cave (Level 4, North Terminus)"
     },
     CurrentOption = {
-        "Clearing 01 (Level 1, Reach 1 North)",
         "Clearing 02 (Level 2, Reach 1 South)",
         "Clearing 03 (Level 3, Reach 3 North)",
         "Clearing 04 (Level 3, Reach 3 South)",
