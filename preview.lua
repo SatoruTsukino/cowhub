@@ -8896,6 +8896,16 @@ local function placeCowAboveDeck(deck)
     end
 end
 
+local function isCowOnDeck(deck)
+    if not deck or not root then return false end
+    local cowRel = deck.CFrame:PointToObjectSpace(root.Position)
+    local onDeckX = math.abs(cowRel.X) <= 5.8
+    local onDeckZ = math.abs(cowRel.Z) <= 14.0
+    local onDeckY = cowRel.Y >= -0.5 and cowRel.Y <= 8.5
+    return onDeckX and onDeckZ and onDeckY
+end
+rafting.isCowOnDeck = isCowOnDeck
+
 function rafting.ensureDynamicSites()
     if rafting.sitesInitialized and #clearingSites > 0 then return end
     if not FjordZones then
@@ -9600,6 +9610,30 @@ local function naturalWalkTo(targetWorldPos, timeout, stopDistance)
 end
 rafting.naturalWalkTo = naturalWalkTo
 
+local function ensureCowOnDeck(deck, timeoutSecs)
+    if not deck or not root then return false end
+    timeoutSecs = timeoutSecs or 5.0
+    local startT = os.clock()
+    while (os.clock() - startT) < timeoutSecs and rafting.enabled do
+        if isCowOnDeck(deck) then
+            return true
+        end
+        if rafting.naturalMode and naturalWalkTo then
+            local deckTarget = deck.CFrame:PointToWorldSpace(Vector3.new(0, 3.45, 0))
+            naturalWalkTo(deckTarget, 2.5, 2.5)
+            local rel = deck.CFrame:PointToObjectSpace(root.Position)
+            if math.abs(rel.X) > 5.8 or math.abs(rel.Z) > 14.0 or rel.Y < -0.5 then
+                if humanoid then humanoid.Jump = true end
+            end
+        else
+            placeCowAboveDeck(deck)
+        end
+        task.wait(0.2)
+    end
+    return isCowOnDeck(deck)
+end
+rafting.ensureCowOnDeck = ensureCowOnDeck
+
 local function triggerChestNatively(chestModel)
     local prompt = chestModel and chestModel:FindFirstChildWhichIsA("ProximityPrompt", true)
     if prompt and prompt.Enabled then
@@ -9678,59 +9712,14 @@ function rafting.castOff()
 
     task.spawn(function()
         local deck = rafting.getRaftDeck()
-        if root and deck and humanoid then
-            local cowPos = root.Position
-            local deckPos = deck.Position
-            local dist = (cowPos - deckPos).Magnitude
-
-            if rafting.naturalMode then
-                local deckTarget = deck.CFrame:PointToWorldSpace(Vector3.new(0, 3.45, 0))
-                naturalWalkTo(deckTarget, 6.0, 3.0)
-                local rel = deck.CFrame:PointToObjectSpace(root.Position)
-                if math.abs(rel.X) > 5.5 or math.abs(rel.Z) > 14.0 or rel.Y < -0.5 then
-                    humanoid.Jump = true
-                    naturalWalkTo(deckTarget, 3.0, 2.5)
-                end
-            else
-                -- If close to deck on dry land, attempt natural walk first
-                local canWalk = dist <= 16 and cowPos.Y >= 698
-                if canWalk then
-                    humanoid.WalkSpeed = 24
-                    humanoid.AutoRotate = true
-                    if root then pcall(function() root.Anchored = false end) end
-                    local deckTarget = deck.CFrame:PointToWorldSpace(Vector3.new(0, 3.45, 0))
-                    humanoid:MoveTo(deckTarget)
-
-                    local walkStart = os.clock()
-                    while os.clock() - walkStart < 2.0 do
-                        if not root or not deck then break end
-                        local rel = deck.CFrame:PointToObjectSpace(root.Position)
-                        if math.abs(rel.X) <= 5.5 and math.abs(rel.Z) <= 14.0 then
-                            break
-                        end
-                        humanoid:MoveTo(deckTarget)
-                        task.wait(0.1)
-                    end
-                    humanoid:Move(Vector3.zero, false)
-                end
-
-                -- Ensure character lands cleanly on deck by placing above deck and allowing physics contact
-                local rel = deck.CFrame:PointToObjectSpace(root.Position)
-                if math.abs(rel.X) > 5.5 or math.abs(rel.Z) > 14.0 or rel.Y < -0.5 then
-                    root.CFrame = deck.CFrame * CFrame.new(0, 6.5, 0)
-                    stopCharacterVelocity()
-                    task.wait(0.25)
-                end
+        local onDeck = ensureCowOnDeck(deck, 6.0)
+        if onDeck then
+            task.wait(0.3) -- Allow native _stepDeckMotion to register and bind Key N
+            -- Dispatch departure via native Key N (FjordRafting_Continue)
+            sendRaftKey(Enum.KeyCode.N, 0.25)
+            if wasDocked then
+                triggerRaftingCommand("Continue")
             end
-        end
-
-        -- 1. Confirm boarding: walking onto raft triggers RaftingController:_stepDeckMotion natively
-        task.wait(0.2)
-
-        -- 2. Dispatch departure via native Key N (FjordRafting_Continue)
-        sendRaftKey(Enum.KeyCode.N, 0.25)
-        if wasDocked then
-            triggerRaftingCommand("Continue")
         end
 
         task.delay(1.5, function()
@@ -9739,7 +9728,7 @@ function rafting.castOff()
             end
         end)
 
-        -- 3. Resume sailing state
+        -- Resume sailing state
         rafting.status = "Travelling"
         rafting.isDockedState = false
         rafting.currentDockSite = nil
@@ -10857,28 +10846,29 @@ function rafting.startVoyage()
     if root then pcall(function() root.Anchored = false end) end
     rafting.updateCards()
 
-    -- 2. Position character directly on raft deck at Harbour berth
-    local deck = rafting.getRaftDeck()
-    if deck and root then
-        if rafting.naturalMode then
-            local deckTarget = deck.CFrame:PointToWorldSpace(Vector3.new(0, 3.45, 0))
-            naturalWalkTo(deckTarget, 8.0, 3.0)
-        else
-            placeCowAboveDeck(deck)
-        end
-    elseif root then
-        if not rafting.naturalMode then
-            root.CFrame = CFrame.new(-241.77, 705.5, -29.41)
-            stopCharacterVelocity()
-        end
-    end
-
-    Window:Notify({ Title = "Rafting Started", Content = "Boarded raft. Activating Key N / Harbour departure...", Duration = 3 })
-
-    -- 3. On-deck departure: Key N is active on deck; native client controller handles castoff
+    -- 2. Boarding & Departure Sequence: ONLY pulse N once character is confirmed in bounds on deck
     task.spawn(function()
+        -- Wait for raft deck instance to stream in
+        local deck = nil
+        local waitDeckStart = os.clock()
+        while (os.clock() - waitDeckStart) < 8.0 and rafting.enabled do
+            deck = rafting.getRaftDeck()
+            if deck then break end
+            task.wait(0.2)
+        end
+
+        -- Ensure cow is physically in bounds and on/above the deck
+        local onDeck = ensureCowOnDeck(deck, 6.0)
+        if onDeck then
+            Window:Notify({ Title = "Rafting Started", Content = "Boarded raft. Activating Key N / Harbour departure...", Duration = 3 })
+            task.wait(0.4) -- Allow RaftingController to register deck contact and bind Key N
+        else
+            rafting.statusText = "Boarding raft deck..."
+            rafting.updateCards()
+        end
+
         local waitStart = os.clock()
-        while (os.clock() - waitStart) < 20.0 and rafting.enabled do
+        while (os.clock() - waitStart) < 25.0 and rafting.enabled do
             local snap = rafting.currentSnapshot
             if snap and (snap.Status == "Travelling" or (snap.Speed and snap.Speed > 5)) then
                 rafting.status = "Travelling"
@@ -10888,26 +10878,20 @@ function rafting.startVoyage()
                 break
             end
 
-            -- Ensure character stays safely centered on raft deck (guarantees harbour presence timer fallback)
-            local currentDeck = rafting.getRaftDeck()
+            local currentDeck = rafting.getRaftDeck() or deck
             if currentDeck and root then
-                local cowRel = currentDeck.CFrame:PointToObjectSpace(root.Position)
-                if math.abs(cowRel.X) > 5.5 or math.abs(cowRel.Z) > 13.0 or cowRel.Y < -0.5 then
-                    if rafting.naturalMode then
-                        local deckCenter = currentDeck.CFrame:PointToWorldSpace(Vector3.new(0, 3.45, 0))
-                        naturalWalkTo(deckCenter, 3.0, 2.0)
-                    else
-                        placeCowAboveDeck(currentDeck)
-                    end
+                if isCowOnDeck(currentDeck) then
+                    -- ONLY pulse Key N when verified on deck in bounds!
+                    sendRaftKey(Enum.KeyCode.N, 0.25)
+                else
+                    -- Player is off-deck or separated: re-board first, DO NOT press N while off deck
+                    ensureCowOnDeck(currentDeck, 2.0)
                 end
             end
 
-            -- Pulse Key N to trigger native client bootstrap castoff / start
-            sendRaftKey(Enum.KeyCode.N, 0.25)
-
-            -- Single debounced fallback only if 5+ seconds have elapsed without moving
-            if (os.clock() - waitStart) > 5.0 then
-                rafting.fireRemoteSafely("Sail", nil, 2.0)
+            -- Single debounced fallback only if 6+ seconds have elapsed without moving
+            if (os.clock() - waitStart) > 6.0 then
+                rafting.fireRemoteSafely("Sail", nil, 2.5)
             end
 
             task.wait(1.5)
