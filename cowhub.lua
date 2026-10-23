@@ -9343,6 +9343,30 @@ local function parseSiteId(opt)
     return nil
 end
 
+local zone1Sites = { ["Clearing_01"] = true, ["Cave_Cubby01"] = true, ["Cave_Cubby02"] = true, ["Clearing_02"] = true }
+local zone2Sites = { ["Clearing_03"] = true, ["Cave_Cubby03"] = true, ["Clearing_04"] = true }
+local zone3Sites = { ["Clearing_05"] = true, ["Cave_Cubby04"] = true, ["Clearing_06"] = true, ["Clearing_07"] = true, ["Clearing_08"] = true }
+local zone4Sites = { ["ManatiteFjordCave"] = true, ["Cave_Cubby05"] = true, ["Clearing_09"] = true, ["Clearing_10"] = true, ["Cave_11"] = true, ["Cave_12"] = true }
+
+function rafting.getSiteZone(siteOrId)
+    local sid = type(siteOrId) == "table" and siteOrId.Id or siteOrId
+    if not sid then return 1 end
+    if zone1Sites[sid] then return 1 end
+    if zone2Sites[sid] then return 2 end
+    if zone3Sites[sid] then return 3 end
+    if zone4Sites[sid] then return 4 end
+
+    -- Fallback by X coordinate
+    local x = type(siteOrId) == "table" and ((siteOrId.MinX + siteOrId.MaxX) * 0.5) or 0
+    if x > 0 then
+        if x < 2000 then return 1
+        elseif x < 3600 then return 2
+        elseif x < 5400 then return 3
+        else return 4 end
+    end
+    return 1
+end
+
 function rafting.updateZoneSites(zoneIdx, options)
     rafting.ensureDynamicSites()
     if not rafting.selectedByZone then
@@ -9520,8 +9544,8 @@ function rafting.getWhiskerClearances(deck)
 end
 
 function rafting.getTargetZ(posX, currentZ, clearances)
-    -- In Harbour (Dock at -241 to Delta Entrance at 1094.58), follow official canal ribbon
-    if posX <= 1094.58 then
+    -- In Harbour canal (Dock at -241 to Reach 1 Canyon entrance at 200), follow official canal ribbon
+    if posX <= 200 then
         if FjordZones and FjordZones.RibbonAt then
             local z = FjordZones.RibbonAt(posX)
             if z then return z end
@@ -9715,7 +9739,8 @@ local function ensureCowOnDeck(deck, timeoutSecs)
         if isCowOnDeck(deck) then
             return true
         end
-        if rafting.naturalMode and naturalWalkTo then
+        local elapsed = os.clock() - startT
+        if naturalWalkTo and elapsed <= 3.0 then
             local deckTarget = deck.CFrame:PointToWorldSpace(Vector3.new(0, 3.45, 0))
             naturalWalkTo(deckTarget, 2.5, 2.5)
             local rel = deck.CFrame:PointToObjectSpace(root.Position)
@@ -10258,7 +10283,7 @@ function rafting.lootSingleSite(targetSite)
 
     if rafting.naturalMode then
         -- Natural mode: debark and walk from raft deck onto shore landing
-        naturalWalkTo(landPos, 6.0, 3.5)
+        naturalWalkTo(landPos, 8.0, 3.5)
     else
         -- Teleport onto landing ground: triggers client/server to spawn LocalTeamChest
         stopCharacterVelocity()
@@ -10268,12 +10293,14 @@ function rafting.lootSingleSite(targetSite)
             humanoid:MoveTo(root.Position)
         end
     end
+    -- Paced landing settle: allows server physics to register touchdown and stream TeamChestSnapshot
+    task.wait(0.7)
 
     -- Poll for LocalTeamChest to spawn on ground
     local targetChest = nil
     local targetModel = nil
     local pollStart = os.clock()
-    while (os.clock() - pollStart) < 2.5 do
+    while (os.clock() - pollStart) < 3.0 do
         local localChest = workspace:FindFirstChild("LocalTeamChest", true)
         if localChest and localChest:IsA("Model") and not localChest:GetAttribute("Opened") then
             local chestPos = localChest:GetPivot().Position
@@ -10298,11 +10325,11 @@ function rafting.lootSingleSite(targetSite)
     if targetChest and targetChest.CFrame then
         local approachPos = (targetChest.CFrame * CFrame.new(0, 1.5, 3.5)).Position
         if rafting.naturalMode then
-            naturalWalkTo(approachPos, 6.0, 3.5)
+            naturalWalkTo(approachPos, 8.0, 3.0)
         else
             local distToChest = (root.Position - approachPos).Magnitude
             local walkedToChest = false
-            if distToChest <= 30 then
+            if distToChest <= 25 then
                 walkedToChest = walkToPosition(approachPos, 2.0, 3.0)
             end
             if not walkedToChest then
@@ -10314,7 +10341,8 @@ function rafting.lootSingleSite(targetSite)
                 end
             end
         end
-        task.wait(0.2)
+        -- Paced chest settle: guarantees server receives character position packet inside 12-stud prompt radius before trigger
+        task.wait(0.7)
 
         -- Hooked native trigger via ProximityPrompt from CowGameClient.Bootstrap
         local triggeredNatively = false
@@ -10337,10 +10365,11 @@ function rafting.lootSingleSite(targetSite)
 
         rafting.lastLootedChestId = targetChest.Id
         targetChest.Opened = true
-        task.wait(0.3)
+        task.wait(0.8) -- Wait for chest celebration / hat animation
 
         -- Automatically poll and dismiss Accept or Okay on teamchest reward GUI until dismissed
         rafting.pollRewardGuiUntilDismissed(8.0)
+        task.wait(0.4)
     end
 
     rafting.lootedChestSites[targetSite.Id] = true
@@ -10355,35 +10384,40 @@ function rafting.lootReachChests(dockSite, deck)
     rafting.isLootingChest = true
 
     task.spawn(function()
-        local reachNum = dockSite.Reach or (getReachIndex and getReachIndex((dockSite.MinX + dockSite.MaxX) * 0.5)) or 1
-        local reachSites = {}
+        local zoneNum = rafting.getSiteZone(dockSite)
+        local zoneSites = {}
         if rafting.naturalMode then
             -- In natural mode: physical reach limit (only loot the clearing currently docked at)
-            table.insert(reachSites, dockSite)
+            table.insert(zoneSites, dockSite)
         elseif rafting.allSites then
             for _, s in ipairs(rafting.allSites) do
-                local sReach = s.Reach or (getReachIndex and getReachIndex((s.MinX + s.MaxX) * 0.5)) or 1
-                if sReach == reachNum then
-                    table.insert(reachSites, s)
+                local sZone = rafting.getSiteZone(s)
+                if sZone == zoneNum then
+                    local isSelected = (rafting.selectAllSites or rafting.collectAllLootChests)
+                        or (rafting.selectedClearings and rafting.selectedClearings[s.Id] == true)
+                        or (s.Id == dockSite.Id)
+                    if isSelected then
+                        table.insert(zoneSites, s)
+                    end
                 end
             end
         else
-            table.insert(reachSites, dockSite)
+            table.insert(zoneSites, dockSite)
         end
 
-        -- Sort: visit docked site first, then remaining sites in reach
-        table.sort(reachSites, function(a, b)
+        -- Sort: visit docked site first (already adjacent!), then remaining sites in zone in order of MinX
+        table.sort(zoneSites, function(a, b)
             if a.Id == dockSite.Id then return true end
             if b.Id == dockSite.Id then return false end
             return a.MinX < b.MinX
         end)
 
-        for _, site in ipairs(reachSites) do
+        for _, site in ipairs(zoneSites) do
             if not rafting.lootedChestSites[site.Id] then
                 rafting.statusText = string.format("Looting %s...", site.Name or site.Id)
                 rafting.updateCards()
                 rafting.lootSingleSite(site)
-                task.wait(0.25)
+                task.wait(0.5)
             end
         end
 
@@ -10548,10 +10582,13 @@ function rafting.handleSnapshot(payload)
             if (site or isServerDocked) and isSelectedSite and ((site and not rafting.visitedSites[site.Id]) or isServerDocked) then
                 local distToMouth = site and site.Mouth and (Vector3.new(posX, 700.5, posZ) - site.Mouth).Magnitude or math.huge
                 local distToLand = site and site.LandPos and (Vector3.new(posX, 700.5, posZ) - site.LandPos).Magnitude or math.huge
-                local inSiteX = site and posX >= (site.MinX - 25) and posX <= (site.MaxX + 25)
-                local inSiteZ = site and ((site.BankSide == "North" and posZ <= (site.MaxZ + 25)) or (site.BankSide == "South" and posZ >= (site.MinZ - 25)))
+                local inSiteX = site and posX >= (site.MinX - 35) and posX <= (site.MaxX + 35)
+                local inSiteZ = site and ((site.BankSide == "North" and posZ <= (site.MaxZ + 35)) or (site.BankSide == "South" and posZ >= (site.MinZ - 35)))
 
-                local reachedShore = isServerDocked or distToMouth < 75 or distToLand < 75 or (inSiteX and inSiteZ and (distToMouth < 95 or (speed or 16) < 14))
+                local reachedShore = isServerDocked
+                    or distToMouth < 85
+                    or distToLand < 85
+                    or (inSiteX and inSiteZ and (distToMouth < 110 or (speed or 16) < 18))
 
                 if reachedShore then
                     local siteId = (site and site.Id) or payload.SiteId or "Clearing_Dock"
@@ -10748,49 +10785,54 @@ function rafting.stepSteering(dt)
         end
     end
 
-    -- Forward Facade & Divider Headwall Deflection
-    if forwardDist < 60.0 then
-        local steerAway = 5.8
-        if leftMinDist > rightMinDist + 2.0 then
-            steerAway = -5.8
-        elseif rightMinDist > leftMinDist + 2.0 then
-            steerAway = 5.8
-        else
-            steerAway = if (errorZ < 0) then -5.8 else 5.8
+    -- Forward Facade & Divider Headwall Deflection (suppressed when actively tracking into a clearing cove)
+    local isHeadingToCove = isHeadingToNorthCove or isHeadingToSouthCove
+    if not isHeadingToCove then
+        if forwardDist < 60.0 then
+            local steerAway = 5.8
+            if leftMinDist > rightMinDist + 2.0 then
+                steerAway = -5.8
+            elseif rightMinDist > leftMinDist + 2.0 then
+                steerAway = 5.8
+            else
+                steerAway = if (errorZ < 0) then -5.8 else 5.8
+            end
+            whiskerRepulsion = steerAway
+            rafting.statusText = "FACADE CRITICAL! Hard lock deflection..."
+        elseif forwardDist < 85.0 then
+            local pushT = (85.0 - forwardDist) / 25.0
+            local steerSign = 1
+            if leftMinDist > rightMinDist + 1.5 then
+                steerSign = -1
+            elseif rightMinDist > leftMinDist + 1.5 then
+                steerSign = 1
+            else
+                steerSign = if (errorZ < 0) then -1 else 1
+            end
+            local forwardDeflection = steerSign * (2.5 + pushT * 3.3)
+            if math.abs(forwardDeflection) > math.abs(whiskerRepulsion) then
+                whiskerRepulsion = forwardDeflection
+            end
+            rafting.statusText = "FACADE AHEAD! Raycast whiskers early deflection..."
+        elseif math.abs(whiskerRepulsion) > 1.0 then
+            rafting.statusText = "WALL PROXIMITY! Raycast whiskers maintaining clearance..."
         end
-        whiskerRepulsion = steerAway
-        rafting.statusText = "FACADE CRITICAL! Hard lock deflection..."
-    elseif forwardDist < 85.0 then
-        local pushT = (85.0 - forwardDist) / 25.0
-        local steerSign = 1
-        if leftMinDist > rightMinDist + 1.5 then
-            steerSign = -1
-        elseif rightMinDist > leftMinDist + 1.5 then
-            steerSign = 1
-        else
-            steerSign = if (errorZ < 0) then -1 else 1
-        end
-        local forwardDeflection = steerSign * (2.5 + pushT * 3.3)
-        if math.abs(forwardDeflection) > math.abs(whiskerRepulsion) then
-            whiskerRepulsion = forwardDeflection
-        end
-        rafting.statusText = "FACADE AHEAD! Raycast whiskers early deflection..."
     elseif math.abs(whiskerRepulsion) > 1.0 then
-        rafting.statusText = "WALL PROXIMITY! Raycast whiskers maintaining clearance..."
+        rafting.statusText = "COVE APPROACH! Guiding into cove landing..."
     end
 
     -- Directional flow suppression: never allow flow bias to steer towards a detected wall
-    if whiskerRepulsion > 0.5 and flowBias < 0 then
+    if whiskerRepulsion > 0.5 and flowBias < 0 and not isHeadingToCove then
         flowBias = 0
-    elseif whiskerRepulsion < -0.5 and flowBias > 0 then
+    elseif whiskerRepulsion < -0.5 and flowBias > 0 and not isHeadingToCove then
         flowBias = 0
     end
 
     -- 5. Blend Flow Bias with Whisker Repulsion
     local targetDeckX = 0
     if isHeadingToNorthCove then
-        -- Priority 1: Steer into North clearing cove along smooth curve while avoiding rock facade collisions
-        if forwardDist < 60.0 or leftMinDist < 20.0 or math.abs(whiskerRepulsion) > 1.5 then
+        -- Priority 1: Steer into North clearing cove along smooth curve while avoiding outer rock corner collisions
+        if leftMinDist < 12.0 or (whiskerRepulsion > 2.2 and not inCoveZone) then
             targetDeckX = whiskerRepulsion
             rafting.statusText = "OBSTACLE NEAR COVE! Whiskers steering clear..."
         else
@@ -10798,8 +10840,8 @@ function rafting.stepSteering(dt)
             rafting.statusText = string.format("Approaching %s! Tracking cove entry curve...", nextSite.Id)
         end
     elseif isHeadingToSouthCove then
-        -- Priority 1: Steer into South clearing cove along smooth curve while avoiding rock facade collisions
-        if forwardDist < 60.0 or rightMinDist < 20.0 or math.abs(whiskerRepulsion) > 1.5 then
+        -- Priority 1: Steer into South clearing cove along smooth curve while avoiding outer rock corner collisions
+        if rightMinDist < 12.0 or (whiskerRepulsion < -2.2 and not inCoveZone) then
             targetDeckX = whiskerRepulsion
             rafting.statusText = "OBSTACLE NEAR COVE! Whiskers steering clear..."
         else
@@ -11119,19 +11161,27 @@ function rafting.startVoyage()
 
     local part, prompt, targetCF = rafting.getLaunchTarget()
 
-    -- Enforce Launch Distance Check: verify player is within 14 studs of the Launch part
+    -- Enforce Launch Distance Check: walk naturally to the Launch prompt in all modes
     if root then
         local launchPos = part and part.Position or Vector3.new(-240.12, 703.99, 12.35)
         local dist = (root.Position - launchPos).Magnitude
-        if dist > 14 then
-            if rafting.naturalMode and dist <= 120 then
-                naturalWalkTo(launchPos, 12.0, 6.0)
+        if dist > 5.0 then
+            if dist <= 250 then
+                rafting.statusText = "Walking to Harbour launch..."
+                rafting.updateCards()
+                naturalWalkTo(launchPos, 15.0, 4.0)
             else
                 stopCharacterVelocity()
-                root.CFrame = targetCF or CFrame.new(-240.12, 705.5, 12.35)
-                task.wait(0.3)
+                root.CFrame = (targetCF or CFrame.new(-240.12, 705.5, 12.35)) * CFrame.new(0, 0, 20)
+                task.wait(0.2)
+                naturalWalkTo(launchPos, 8.0, 4.0)
             end
         end
+        -- Face the launch prompt / part naturally
+        stopCharacterVelocity()
+        local lookTarget = Vector3.new(launchPos.X, root.Position.Y, launchPos.Z)
+        root.CFrame = CFrame.new(root.Position, lookTarget)
+        task.wait(0.4)
     end
 
     -- 1. Fire server from the dock to create/start voyage session (N and H do not work until on deck)
