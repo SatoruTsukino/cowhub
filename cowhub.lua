@@ -10150,31 +10150,11 @@ function rafting.stepSteering(dt)
     -- Adaptive lookahead: use 50 studs in channels, but short 20 studs when approaching an unvisited cove opening
     -- so the raft does not turn towards the bank before the opening arrives
     local lookAhead = 50
-    if rafting.route == "Clearing & Chest Explorer" or rafting.route == "Hybrid Dynamic Explorer" then
-        local nextSite = rafting.getNextTargetClearing(posX, posZ)
-        if nextSite and posX >= (nextSite.MinX - 80) and posX < nextSite.MinX then
-            lookAhead = 20
-        end
+    local nextSite = (rafting.route == "Clearing & Chest Explorer" or rafting.route == "Hybrid Dynamic Explorer") and rafting.getNextTargetClearing(posX, posZ)
+    if nextSite and posX >= (nextSite.MinX - 80) and posX < nextSite.MinX then
+        lookAhead = 20
     end
     local lookAheadX = posX + lookAhead
-
-    -- End of Fjord Cave Landing Check
-    local isEndCave = nextSite and nextSite.Kind == "Cave" and (nextSite.MaxX or nextSite.MinX) >= 5800
-    if isEndCave and posX >= (nextSite.MinX or 6350) then
-        if rafting.status == "Travelling" then
-            rafting.status = "Docked"
-            rafting.isDockedState = true
-            rafting.isSailing = false
-            rafting.statusText = string.format("Voyage Complete: Safely landed at %s!", nextSite.Name)
-            if rafting.autoLoop then
-                task.delay(rafting.dockMaxWaitSeconds or 6, function()
-                    if rafting.enabled and rafting.status == "Docked" then
-                        rafting.castOff()
-                    end
-                end)
-            end
-        end
-    end
 
     -- 1. Compute Whisker Clearances via Raycasts
     local clearances = rafting.getWhiskerClearances(deck)
@@ -10281,9 +10261,12 @@ function rafting.stepSteering(dt)
         targetDeckX = flowBias
     end
 
-    -- 5b. Wall Contact / Progress Watchdog & Active Dislodge Maneuver
+    -- 5b. Wall Scraping / Contact Watchdog & Active Dislodge Maneuver
     local now = os.clock()
     local currentPos2D = Vector3.new(posX, 0, posZ)
+    local isScrapingLeft = (leftMinDist < 14.0)
+    local isScrapingRight = (rightMinDist < 14.0)
+    local isScrapingWall = isScrapingLeft or isScrapingRight
 
     if not rafting.lastProgressPos then
         rafting.lastProgressPos = currentPos2D
@@ -10292,13 +10275,13 @@ function rafting.stepSteering(dt)
         rafting.isUnsticking = false
     else
         local timeSinceCheck = now - (rafting.lastProgressTime or now)
-        if timeSinceCheck >= 0.5 then
+        if timeSinceCheck >= 0.4 then
             local distMoved = (currentPos2D - rafting.lastProgressPos).Magnitude
-            if distMoved < 2.5 and (snap.Status == "Travelling" or snap.Status == "Departing") then
+            if (distMoved < 2.5 or isScrapingWall) and (snap.Status == "Travelling" or snap.Status == "Departing") then
                 rafting.stuckDuration = (rafting.stuckDuration or 0) + timeSinceCheck
             else
                 rafting.stuckDuration = math.max(0, (rafting.stuckDuration or 0) - timeSinceCheck * 1.5)
-                if rafting.isUnsticking and distMoved >= 4.0 then
+                if rafting.isUnsticking and distMoved >= 4.0 and not isScrapingWall then
                     rafting.isUnsticking = false
                     rafting.unstickDirection = 0
                 end
@@ -10308,14 +10291,20 @@ function rafting.stepSteering(dt)
         end
     end
 
-    local isWallStuck = (rafting.stuckDuration or 0) >= 0.8
+    local isWallStuck = (rafting.stuckDuration or 0) >= 0.6
     if isWallStuck then
         if not rafting.isUnsticking then
             rafting.isUnsticking = true
             rafting.unstickStartTime = now
-            -- Hard counter-steer away from contact side: if previously steering negative (into North wall), counter-steer +5.8 (South)
-            local prevSteer = rafting.targetDeckX or 0
-            rafting.unstickDirection = if (prevSteer <= 0) then 5.8 else -5.8
+            -- Hard counter-steer away from contact side:
+            if isScrapingLeft then
+                rafting.unstickDirection = 5.8
+            elseif isScrapingRight then
+                rafting.unstickDirection = -5.8
+            else
+                local prevSteer = rafting.targetDeckX or 0
+                rafting.unstickDirection = if (prevSteer <= 0) then 5.8 else -5.8
+            end
         else
             -- Alternate counter-steer (wiggle) every 1.2s if still wedged
             local elapsed = now - (rafting.unstickStartTime or now)
@@ -10326,7 +10315,7 @@ function rafting.stepSteering(dt)
         end
 
         targetDeckX = rafting.unstickDirection
-        rafting.statusText = string.format("WALL STUCK! Dislodging: hard counter-steer (%+.1f)...", targetDeckX)
+        rafting.statusText = string.format("WALL SCRAPING! Dislodging: hard counter-steer (%+.1f)...", targetDeckX)
     end
 
     -- 6. Check Hobgoblin Rock Threat (Prioritize landing at clearing over dodging)
@@ -10429,7 +10418,8 @@ function rafting.stepSteering(dt)
 
             humanoid.WalkSpeed = 24
             humanoid.AutoRotate = true
-            local targetWorldPos = deck.CFrame:PointToWorldSpace(Vector3.new(rafting.targetDeckX, 3.45, 0))
+            local targetZOffset = if isWallStuck then 7.0 else 0.0
+            local targetWorldPos = deck.CFrame:PointToWorldSpace(Vector3.new(rafting.targetDeckX, 3.45, targetZOffset))
             humanoid:MoveTo(targetWorldPos)
         end
     end
@@ -10521,36 +10511,13 @@ function rafting.stepSteeringAnimation(dt)
         end
     end
 
-    -- 2. VirtualInput Key Simulation: Hold A/D keys for maximum engine turning torque
-    if VirtualInput and VirtualInput.SendKeyEvent then
+    -- 2. VirtualInput Key Safety: Ensure steering keys never remain stuck down
+    if VirtualInput and VirtualInput.SendKeyEvent and rafting.lastSteerKey then
         pcall(function()
-            if targetDeckX < -1.0 then
-                if rafting.lastSteerKey ~= "A" then
-                    if rafting.lastSteerKey == "D" then
-                        VirtualInput:SendKeyEvent(false, Enum.KeyCode.D, false, game)
-                    end
-                    VirtualInput:SendKeyEvent(true, Enum.KeyCode.A, false, game)
-                    rafting.lastSteerKey = "A"
-                end
-            elseif targetDeckX > 1.0 then
-                if rafting.lastSteerKey ~= "D" then
-                    if rafting.lastSteerKey == "A" then
-                        VirtualInput:SendKeyEvent(false, Enum.KeyCode.A, false, game)
-                    end
-                    VirtualInput:SendKeyEvent(true, Enum.KeyCode.D, false, game)
-                    rafting.lastSteerKey = "D"
-                end
-            else
-                if rafting.lastSteerKey then
-                    if rafting.lastSteerKey == "A" then
-                        VirtualInput:SendKeyEvent(false, Enum.KeyCode.A, false, game)
-                    elseif rafting.lastSteerKey == "D" then
-                        VirtualInput:SendKeyEvent(false, Enum.KeyCode.D, false, game)
-                    end
-                    rafting.lastSteerKey = nil
-                end
-            end
+            VirtualInput:SendKeyEvent(false, Enum.KeyCode.A, false, game)
+            VirtualInput:SendKeyEvent(false, Enum.KeyCode.D, false, game)
         end)
+        rafting.lastSteerKey = nil
     end
 end
 
@@ -10592,6 +10559,9 @@ function rafting.startVoyage()
     end
 
     rafting.enabled = true
+    rafting.sessionId = nil
+    rafting.isCastingOff = false
+    rafting.lastCastOffTime = nil
     rafting.visitedSites = {}
     rafting.isDockedState = false
     rafting.currentDockSite = nil
@@ -10650,7 +10620,9 @@ function rafting.onSessionEnded(reason)
     rafting.isUnsticking = false
     rafting.unstickDirection = 0
     rafting.unstickStartTime = 0
-    rafting.stopSteeringLoop()
+    if not (rafting.autoLoop and rafting.enabled) then
+        rafting.stopSteeringLoop()
+    end
     if reason then
         rafting.statusText = reason
         pcall(function()
