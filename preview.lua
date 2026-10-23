@@ -8742,6 +8742,8 @@ local rafting = {
     targetDeckX = 0,
     errorZ = 0,
     whiskerClearances = {},
+    lastSensorAt = 0,
+    lastRemoteCalls = {},
     lastProgressPos = nil,
     lastProgressTime = 0,
     stuckDuration = 0,
@@ -8785,6 +8787,26 @@ function rafting.getRemote()
         end)
     end
     return rafting.remote
+end
+
+function rafting.fireRemoteSafely(action, arg, debounceSec)
+    local rem = rafting.getRemote()
+    if not rem then return false end
+    debounceSec = debounceSec or 0.4
+    local now = os.clock()
+    local lastCall = rafting.lastRemoteCalls[action] or 0
+    if (now - lastCall) < debounceSec then
+        return false
+    end
+    rafting.lastRemoteCalls[action] = now
+    local success = pcall(function()
+        if arg ~= nil then
+            rem:FireServer(action, arg)
+        else
+            rem:FireServer(action)
+        end
+    end)
+    return success
 end
 
 function rafting.getRaftDeck()
@@ -9276,6 +9298,12 @@ whiskerRayParams.FilterType = Enum.RaycastFilterType.Exclude
 whiskerRayParams.IgnoreWater = true
 
 function rafting.getWhiskerClearances(deck)
+    local now = os.clock()
+    if (now - (rafting.lastSensorAt or 0)) < 0.08 and rafting.whiskerClearances and next(rafting.whiskerClearances) then
+        return rafting.whiskerClearances
+    end
+    rafting.lastSensorAt = now
+
     local filterList = {}
     if char then table.insert(filterList, char) end
     if rafting.raftModel then table.insert(filterList, rafting.raftModel) end
@@ -9629,8 +9657,6 @@ local function triggerRaftingCommand(cmd)
             end
         end
     end
-    local rem = rafting.getRemote()
-    if rem then pcall(function() rem:FireServer(cmd) end) end
     return false
 end
 
@@ -9699,18 +9725,19 @@ function rafting.castOff()
         end
 
         -- 1. Confirm boarding: walking onto raft triggers RaftingController:_stepDeckMotion natively
-        if not rafting.isBoardedState and rem then
-            pcall(function() rem:FireServer("Boarded") end)
-        end
         task.wait(0.2)
 
-        -- 2. Dispatch departure via native Key N (bootstrap handler) and fallback remotes
-        sendRaftKey(Enum.KeyCode.N, 0.3)
+        -- 2. Dispatch departure via native Key N (FjordRafting_Continue)
+        sendRaftKey(Enum.KeyCode.N, 0.25)
         if wasDocked then
             triggerRaftingCommand("Continue")
         end
-        triggerRaftingCommand("Sail")
-        triggerRaftingCommand("Vote")
+
+        task.delay(1.5, function()
+            if rafting.enabled and rafting.isDockedState then
+                rafting.fireRemoteSafely("Continue", nil, 2.0)
+            end
+        end)
 
         -- 3. Resume sailing state
         rafting.status = "Travelling"
@@ -10666,7 +10693,7 @@ function rafting.stepSteering(dt)
     local nearFacade = (forwardDist < 75.0) or (leftMinDist < 22.0) or (rightMinDist < 22.0)
     local suppressBoost = inCoveZone or approachingCove or approachingFork or nearFacade or isWallStuck or rafting.isUnsticking
 
-    if rafting.autoBoost and rem and not suppressBoost then
+    if rafting.autoBoost and not suppressBoost then
         local energy = snap.Energy or 0
         local maxEnergy = snap.MaxEnergy or 100
         local energyPct = (energy / math.max(maxEnergy, 1)) * 100
@@ -10677,21 +10704,21 @@ function rafting.stepSteering(dt)
         if shouldBoost then
             if not rafting.isBoosting or os.clock() >= (rafting.nextBoostAt or 0) then
                 rafting.isBoosting = true
-                rafting.nextBoostAt = os.clock() + 0.2 -- RaftingConfig.BoostHeartbeatSeconds
-                rem:FireServer("BoostHeld")
+                rafting.nextBoostAt = os.clock() + 0.25
+                rafting.fireRemoteSafely("BoostHeld", nil, 0.2)
             end
         else
             if rafting.isBoosting then
                 rafting.isBoosting = false
                 rafting.nextBoostAt = 0
-                rem:FireServer("BoostRelease")
+                rafting.fireRemoteSafely("BoostRelease", nil, 0.2)
             end
         end
     else
-        if rafting.isBoosting and rem then
+        if rafting.isBoosting then
             rafting.isBoosting = false
             rafting.nextBoostAt = 0
-            pcall(function() rem:FireServer("BoostRelease") end)
+            rafting.fireRemoteSafely("BoostRelease", nil, 0.2)
         end
     end
 
@@ -10799,6 +10826,12 @@ function rafting.startVoyage()
         end
     end
 
+    -- 1. Fire server from the dock to create/start voyage session (N and H do not work until on deck)
+    rafting.fireRemoteSafely("Start", nil, 1.0)
+    if prompt and prompt.Enabled and fireproximityprompt then
+        pcall(fireproximityprompt, prompt)
+    end
+
     rafting.enabled = true
     rafting.sessionId = nil
     rafting.isCastingOff = false
@@ -10824,7 +10857,7 @@ function rafting.startVoyage()
     if root then pcall(function() root.Anchored = false end) end
     rafting.updateCards()
 
-    -- Position character directly on raft deck at Harbour berth
+    -- 2. Position character directly on raft deck at Harbour berth
     local deck = rafting.getRaftDeck()
     if deck and root then
         if rafting.naturalMode then
@@ -10842,6 +10875,7 @@ function rafting.startVoyage()
 
     Window:Notify({ Title = "Rafting Started", Content = "Boarded raft. Activating Key N / Harbour departure...", Duration = 3 })
 
+    -- 3. On-deck departure: Key N is active on deck; native client controller handles castoff
     task.spawn(function()
         local waitStart = os.clock()
         while (os.clock() - waitStart) < 20.0 and rafting.enabled do
@@ -10869,16 +10903,14 @@ function rafting.startVoyage()
             end
 
             -- Pulse Key N to trigger native client bootstrap castoff / start
-            sendRaftKey(Enum.KeyCode.N, 0.3)
+            sendRaftKey(Enum.KeyCode.N, 0.25)
 
-            -- Dispatch remotes as backup
-            if rem then
-                pcall(function() rem:FireServer("Start") end)
-                pcall(function() rem:FireServer("Boarded") end)
-                pcall(function() rem:FireServer("Sail") end)
+            -- Single debounced fallback only if 5+ seconds have elapsed without moving
+            if (os.clock() - waitStart) > 5.0 then
+                rafting.fireRemoteSafely("Sail", nil, 2.0)
             end
 
-            task.wait(1.2)
+            task.wait(1.5)
         end
     end)
 end
@@ -10915,11 +10947,9 @@ function rafting.onSessionEnded(reason)
 end
 
 function rafting.endVoyage()
-    sendRaftKey(Enum.KeyCode.H, 0.3)
-    local rem = rafting.getRemote()
-    if rem then
-        pcall(function() rem:FireServer("Return", nil) end)
-    end
+    sendRaftKey(Enum.KeyCode.H, 0.25)
+    task.wait(0.2)
+    rafting.fireRemoteSafely("Return", nil, 1.0)
     rafting.onSessionEnded("Voyage ended. Returned to shore.")
 
     if rafting.autoLoop and rafting.enabled then
