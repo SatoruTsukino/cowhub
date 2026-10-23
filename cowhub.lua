@@ -9072,6 +9072,18 @@ function rafting.isSiteReachable(site, posX, currentZ)
         return false
     end
 
+    -- Branch Commitment Constraints:
+    -- Once past Fork 1 (posX > 1844.58), boat in North (currentZ < -100) cannot reach South (shoreZ > 50), and vice versa
+    if posX > 1844.58 then
+        if currentZ < -100 and shoreZ > 50 then return false end
+        if currentZ > 50 and shoreZ < -100 then return false end
+    end
+    -- Once past Fork 3 (posX > 3294.58), North channels stay < -250, South channels stay > 200
+    if posX > 3294.58 then
+        if currentZ < -250 and shoreZ > -100 then return false end
+        if currentZ > 200 and shoreZ < 100 then return false end
+    end
+
     -- Channel & Fork Connectivity: verify unbroken channel path to target reach
     local rd = getReachData()
     local curR = getReachIndex(posX)
@@ -9091,7 +9103,7 @@ function rafting.isSiteReachable(site, posX, currentZ)
                         local chZ = ch[2]
                         local chReachable = true
                         if r > 1 then
-                            if math.abs(chZ - checkZ) > 300 and not ch[8] then chReachable = false end
+                            if math.abs(chZ - checkZ) > 280 and not ch[8] then chReachable = false end
                             if checkZ > 50 and chZ < -100 then chReachable = false end
                             if checkZ < -100 and chZ > 50 then chReachable = false end
                         end
@@ -9177,10 +9189,8 @@ function rafting.getNextTargetClearing(posX, currentZ)
         end
     end
 
-    -- If no further unvisited clearings downriver or near end of fjord: target End Cave
-    local rd = getReachData()
-    local terminusForkX = rd.forkX[6] or 5844.58
-    if not bestSite or posX >= terminusForkX then
+    -- If no further unvisited clearings downriver: target End Cave
+    if not bestSite then
         return getEndCaveSite(currentZ)
     end
 
@@ -9279,10 +9289,38 @@ function rafting.getWhiskerClearances(deck)
     for name, w in pairs(whiskers) do
         local worldDir = deck.CFrame:VectorToWorldSpace(w.dir)
         local result = workspace:Raycast(w.origin, worldDir * w.range, whiskerRayParams)
-        if result and result.Instance and result.Instance.CanCollide then
+        local isSolid = false
+        if result and result.Instance then
+            if result.Instance:IsA("Terrain") then
+                isSolid = (result.Material ~= Enum.Material.Water)
+            elseif result.Instance.CanCollide then
+                isSolid = true
+            end
+        end
+        if isSolid then
             distances[name] = (result.Position - w.origin).Magnitude
         else
             distances[name] = w.range
+        end
+    end
+
+    -- Mathematical Canal Boundary Enclosure (Harbour: Dock to Delta Entrance)
+    if deck and FjordZones and FjordZones.RibbonAt then
+        local posX = deck.Position.X
+        local posZ = deck.Position.Z
+        if posX <= 1094.58 then
+            local cz, hw = FjordZones.RibbonAt(posX)
+            if cz and hw then
+                -- Left/North bank: cz - hw. Right/South bank: cz + hw.
+                local distToNorthBank = math.max(0, posZ - (cz - hw))
+                local distToSouthBank = math.max(0, (cz + hw) - posZ)
+                distances.LeftLateral = math.min(distances.LeftLateral, distToNorthBank)
+                distances.LeftOblique = math.min(distances.LeftOblique, distToNorthBank * 1.25)
+                distances.LeftStern = math.min(distances.LeftStern, distToNorthBank)
+                distances.RightLateral = math.min(distances.RightLateral, distToSouthBank)
+                distances.RightOblique = math.min(distances.RightOblique, distToSouthBank * 1.25)
+                distances.RightStern = math.min(distances.RightStern, distToSouthBank)
+            end
         end
     end
 
@@ -9349,54 +9387,73 @@ function rafting.getTargetZ(posX, currentZ, clearances)
 
     -- Find next upcoming selected, unvisited, and reachable clearing
     local targetSite = rafting.getNextTargetClearing(posX, currentZ)
+    local rd = getReachData()
+    local reachIdx = getReachIndex(posX)
+
     if not targetSite then
-        -- All selected clearings visited or unreachable: stay in main river channel directly to the Sea
-        return -37.81
+        -- All selected clearings visited or unreachable: stay in current branch channel
+        local chs = rd.channelsByReach[reachIdx]
+        local bestFallbackZ = -37.81
+        if chs and #chs > 0 then
+            local minDiff = math.huge
+            for _, ch in ipairs(chs) do
+                local diff = math.abs(ch[2] - (currentZ or -37.81))
+                if diff < minDiff then
+                    minDiff = diff
+                    bestFallbackZ = ch[2]
+                end
+            end
+        end
+        return bestFallbackZ
     end
 
     local minX = targetSite.MinX
     local maxX = targetSite.MaxX
     local mouthX = targetSite.Mouth and targetSite.Mouth.X or ((minX + maxX) * 0.5)
     local mouthZ = targetSite.Mouth and targetSite.Mouth.Z or (targetSite.ShoreZ or -37.81)
-    local chZ = rafting.getSiteChannelZ(targetSite)
+    local goalChZ = rafting.getSiteChannelZ(targetSite)
 
     if posX >= (mouthX - 45) and posX <= (maxX + 25) then
         local t = math.clamp((posX - (mouthX - 45)) / 45, 0, 1)
-        return chZ + t * (mouthZ - chZ)
+        return goalChZ + t * (mouthZ - goalChZ)
     end
-
-    local rd = getReachData()
-    local reachIdx = getReachIndex(posX)
 
     local function findBestCh(rIdx, fromZ)
         local chs = rd.channelsByReach[rIdx]
-        if not chs or #chs == 0 then return -37.81 end
-        local bestZ = -37.81
+        if not chs or #chs == 0 then return fromZ or -37.81 end
+        local bestZ = nil
         local minDiff = math.huge
+        local closestToFromZ = chs[1][2]
+        local minFromDiff = math.huge
         for _, ch in ipairs(chs) do
-            local chZ = ch[2]
+            local candZ = ch[2]
+            local fromDiff = math.abs(candZ - (fromZ or candZ))
+            if fromDiff < minFromDiff then
+                minFromDiff = fromDiff
+                closestToFromZ = candZ
+            end
             local reachable = true
             if fromZ ~= nil and rIdx > 1 then
-                if math.abs(chZ - fromZ) > 300 and not ch[8] then reachable = false end
-                if fromZ > 50 and chZ < -100 then reachable = false end
-                if fromZ < -100 and chZ > 50 then reachable = false end
+                if fromDiff > 280 and not ch[8] then reachable = false end
+                if fromZ > 50 and candZ < -100 then reachable = false end
+                if fromZ < -100 and candZ > 50 then reachable = false end
             end
             if reachable then
-                local diff = math.abs(chZ - targetZ)
+                local diff = math.abs(candZ - goalChZ)
                 if diff < minDiff then
                     minDiff = diff
-                    bestZ = chZ
+                    bestZ = candZ
                 end
             end
         end
-        return bestZ
+        return bestZ or closestToFromZ
     end
 
     local currentChZ = findBestCh(reachIdx, currentZ)
     local forkX = rd.forkX[reachIdx]
 
     if forkX and posX >= (forkX - 250) and posX <= forkX then
-        local nextReach = reachIdx + 1
+        local nextReach = math.min(reachIdx + 1, rd.maxReach)
         local nextChZ = findBestCh(nextReach, currentChZ)
         local t = math.clamp((posX - (forkX - 250)) / 250, 0, 1)
         return currentChZ + t * (nextChZ - currentChZ)
@@ -9878,6 +9935,13 @@ function rafting.handleSnapshot(payload)
     if not payload or type(payload) ~= "table" then return end
     rafting.lastSnapshotTime = os.clock()
 
+    -- Auto-rearm steering loop whenever enabled
+    if rafting.enabled then
+        if not rafting.heartbeatConn or not rafting.renderSteppedConn then
+            rafting.startSteeringLoop()
+        end
+    end
+
     -- Detect new session
     if payload.Id and payload.Id ~= rafting.sessionId then
         rafting.sessionId = payload.Id
@@ -9888,6 +9952,15 @@ function rafting.handleSnapshot(payload)
         rafting.isDockedState = false
         rafting.currentDockSite = nil
         rafting.lastLootedSite = nil
+        rafting.lastProgressPos = nil
+        rafting.lastProgressTime = 0
+        rafting.stuckDuration = 0
+        rafting.isUnsticking = false
+        rafting.unstickDirection = 0
+        if rafting.enabled then
+            rafting.isSailing = true
+            rafting.startSteeringLoop()
+        end
     end
 
     rafting.currentSnapshot = payload
@@ -9905,11 +9978,17 @@ function rafting.handleSnapshot(payload)
     elseif payload.Status == "Departing" then
         rafting.status = "Departing"
         rafting.isSailing = true
+        if rafting.enabled and (not rafting.heartbeatConn or not rafting.renderSteppedConn) then
+            rafting.startSteeringLoop()
+        end
         rafting.statusText = "Departing dock..."
     elseif payload.Status == "Travelling" and (rafting.status ~= "Docked" or (payload.Speed and payload.Speed > 8.0)) then
         rafting.status = "Travelling"
         rafting.isDockedState = false
         rafting.isSailing = true
+        if rafting.enabled and (not rafting.heartbeatConn or not rafting.renderSteppedConn) then
+            rafting.startSteeringLoop()
+        end
         if not rafting.isEvadingRock then
             rafting.statusText = "Travelling down river..."
         end
