@@ -8946,6 +8946,8 @@ function rafting.ensureDynamicSites()
     rafting.allSites = sitesList
     rafting.sitesById = byId
     rafting.sitesInitialized = true
+    reachData = nil
+    getReachData()
 end
 
 function rafting.getSiteChannelZ(site)
@@ -8983,63 +8985,133 @@ function rafting.getNearbyClearing(posX, posZ)
     return nil
 end
 
+local reachData = nil
+local function getReachData()
+    if reachData then return reachData end
+    reachData = {
+        maxReach = 7,
+        forkX = { 1844.58, 2844.58, 3294.58, 4294.58, 4744.58, 5844.58, 6594.58 },
+        channelsByReach = {},
+    }
+    for r = 1, 7 do
+        reachData.channelsByReach[r] = {}
+    end
+    if FjordZones and FjordZones.Channels then
+        local maxR = 1
+        for _, ch in ipairs(FjordZones.Channels) do
+            local rIdx = ch[7] or 1
+            if rIdx > maxR then maxR = rIdx end
+            if not reachData.channelsByReach[rIdx] then
+                reachData.channelsByReach[rIdx] = {}
+            end
+            table.insert(reachData.channelsByReach[rIdx], ch)
+            local endX = ch[1] + ch[5]
+            if not reachData.forkX[rIdx] or endX > reachData.forkX[rIdx] then
+                reachData.forkX[rIdx] = endX
+            end
+        end
+        reachData.maxReach = maxR
+    end
+    return reachData
+end
+
 local function getReachIndex(posX)
-    if posX <= 1845 then return 1
-    elseif posX <= 2845 then return 2
-    elseif posX <= 3295 then return 3
-    elseif posX <= 4295 then return 4
-    elseif posX <= 4745 then return 5
-    elseif posX <= 5845 then return 6
-    else return 7 end
+    local rd = getReachData()
+    for r = 1, rd.maxReach do
+        if posX <= rd.forkX[r] then
+            return r
+        end
+    end
+    return rd.maxReach
 end
 
 function rafting.isSiteReachable(site, posX, currentZ)
     if not site then return false end
-    if posX > (site.MaxX + 25) then
+    local maxX = site.MaxX or site.MinX
+    if posX > (maxX + 20) then
         return false
     end
-    -- Cannot cross across Reach 1 bank to opposite clearing once first clearing is visited
-    if site.Id == "Clearing_02" and rafting.visitedSites["Clearing_01"] then
-        return false
-    end
-    if site.Id == "Clearing_01" and rafting.visitedSites["Clearing_02"] then
-        return false
-    end
-    if posX <= 1845 then
+    if currentZ == nil then
         return true
     end
+
+    local mouthX = site.Mouth and site.Mouth.X or ((site.MinX + site.MaxX) * 0.5)
     local shoreZ = site.ShoreZ or ((site.MinZ + site.MaxZ) * 0.5)
-    if currentZ ~= nil then
-        if currentZ > 50 then
-            -- South branch: cannot reach far North sites
-            if shoreZ < -100 then
-                return false
-            end
-        elseif currentZ < -100 then
-            -- North branch: cannot reach far South sites
-            if shoreZ > 50 then
-                return false
-            end
-        else
-            -- Center branch: cannot reach extreme outer wings
-            if posX > 2400 and (shoreZ < -600 or shoreZ > 600) then
-                return false
+    local distForward = mouthX - posX
+    local distLateral = math.abs(shoreZ - currentZ)
+
+    -- Kinematic Cone Constraint:
+    -- Raft cannot steer steeper than MaxTurnSlope (0.72) relative to forward travel
+    if distForward <= 0 then
+        return false
+    end
+    if (distLateral / distForward) > 0.72 then
+        return false
+    end
+
+    -- Channel & Fork Connectivity: verify unbroken channel path to target reach
+    local rd = getReachData()
+    local curR = getReachIndex(posX)
+    local siteR = getReachIndex(mouthX)
+
+    if siteR > curR then
+        local checkZ = currentZ
+        for r = curR, siteR - 1 do
+            local forkX = rd.forkX[r]
+            if forkX and posX < forkX then
+                local distToFork = forkX - posX
+                local nextChZ = nil
+                local minDiff = math.huge
+                local nextChs = rd.channelsByReach[r + 1]
+                if nextChs then
+                    for _, ch in ipairs(nextChs) do
+                        local chZ = ch[2]
+                        local chReachable = true
+                        if r > 1 then
+                            if math.abs(chZ - checkZ) > 300 and not ch[8] then chReachable = false end
+                            if checkZ > 50 and chZ < -100 then chReachable = false end
+                            if checkZ < -100 and chZ > 50 then chReachable = false end
+                        end
+                        if chReachable then
+                            local diff = math.abs(chZ - shoreZ)
+                            if diff < minDiff then
+                                minDiff = diff
+                                nextChZ = chZ
+                            end
+                        end
+                    end
+                end
+                if not nextChZ then
+                    return false
+                end
+                if distToFork > 0 and (math.abs(nextChZ - checkZ) / distToFork) > 0.72 then
+                    return false
+                end
+                checkZ = nextChZ
             end
         end
     end
+
     return true
 end
 
 local function getEndCaveSite(currentZ)
     rafting.ensureDynamicSites()
     local z = currentZ or -37.81
-    if z < -100 then
-        return rafting.sitesById["ManatiteFjordCave"] or rafting.sitesById["Cave_Cubby05"]
-    elseif z > 100 then
-        return rafting.sitesById["Cave_12"] or rafting.sitesById["Cave_11"]
-    else
-        return rafting.sitesById["Cave_Cubby05"] or rafting.sitesById["Clearing_10"]
+    local bestCave = nil
+    local minDiff = math.huge
+    if rafting.allSites then
+        for _, s in ipairs(rafting.allSites) do
+            if s.Kind == "Cave" and (s.MaxX or s.MinX) >= 5800 then
+                local diff = math.abs((s.ShoreZ or -37.81) - z)
+                if diff < minDiff then
+                    minDiff = diff
+                    bestCave = s
+                end
+            end
+        end
     end
+    return bestCave or rafting.sitesById["ManatiteFjordCave"] or rafting.sitesById["Cave_Cubby05"]
 end
 
 function rafting.getNextTargetClearing(posX, currentZ)
@@ -9077,7 +9149,9 @@ function rafting.getNextTargetClearing(posX, currentZ)
     end
 
     -- If no further unvisited clearings downriver or near end of fjord: target End Cave
-    if not bestSite or posX > 5845 then
+    local rd = getReachData()
+    local terminusForkX = rd.forkX[6] or 5844.58
+    if not bestSite or posX >= terminusForkX then
         return getEndCaveSite(currentZ)
     end
 
@@ -9236,61 +9310,32 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     local minX = targetSite.MinX
     local maxX = targetSite.MaxX
 
-    local forkXByReach = {
-        [1] = 1844.58,
-        [2] = 2844.58,
-        [3] = 3294.58,
-        [4] = 4294.58,
-        [5] = 4744.58,
-        [6] = 5844.58,
-    }
-
     local targetZ = targetSite.ShoreZ or -37.81
     if posX >= minX - 30 and posX <= maxX + 40 then
         return targetZ
     end
 
+    local rd = getReachData()
     local reachIdx = getReachIndex(posX)
 
-    if reachIdx == 1 then
-        if targetZ < -100 then
-            if posX <= 1600 then
-                return -55.0
-            else
-                local t = math.clamp((posX - 1600) / 244.58, 0, 1)
-                return -55.0 + t * (-262.81 - (-55.0))
-            end
-        elseif targetZ > 50 then
-            if posX <= 1600 then
-                return -20.0
-            else
-                local t = math.clamp((posX - 1600) / 244.58, 0, 1)
-                return -20.0 + t * (187.19 - (-20.0))
-            end
-        else
-            return -37.81
-        end
-    end
-
     local function findBestCh(rIdx, fromZ)
-        if not (FjordZones and FjordZones.Channels) then return -37.81 end
+        local chs = rd.channelsByReach[rIdx]
+        if not chs or #chs == 0 then return -37.81 end
         local bestZ = -37.81
         local minDiff = math.huge
-        for _, ch in ipairs(FjordZones.Channels) do
-            if ch[7] == rIdx then
-                local chZ = ch[2]
-                local reachable = true
-                if fromZ ~= nil and rIdx > 1 then
-                    if math.abs(chZ - fromZ) > 300 and not ch[8] then reachable = false end
-                    if fromZ > 50 and chZ < -100 then reachable = false end
-                    if fromZ < -100 and chZ > 50 then reachable = false end
-                end
-                if reachable then
-                    local diff = math.abs(chZ - targetZ)
-                    if diff < minDiff then
-                        minDiff = diff
-                        bestZ = chZ
-                    end
+        for _, ch in ipairs(chs) do
+            local chZ = ch[2]
+            local reachable = true
+            if fromZ ~= nil and rIdx > 1 then
+                if math.abs(chZ - fromZ) > 300 and not ch[8] then reachable = false end
+                if fromZ > 50 and chZ < -100 then reachable = false end
+                if fromZ < -100 and chZ > 50 then reachable = false end
+            end
+            if reachable then
+                local diff = math.abs(chZ - targetZ)
+                if diff < minDiff then
+                    minDiff = diff
+                    bestZ = chZ
                 end
             end
         end
@@ -9298,7 +9343,7 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     end
 
     local currentChZ = findBestCh(reachIdx, currentZ)
-    local forkX = forkXByReach[reachIdx]
+    local forkX = rd.forkX[reachIdx]
 
     if forkX and posX >= (forkX - 250) and posX <= forkX then
         local nextReach = reachIdx + 1
@@ -9856,7 +9901,8 @@ function rafting.stepSteering(dt)
     end
 
     -- End of Fjord Cave Landing Check
-    if posX >= 6480 and nextSite and nextSite.Kind == "Cave" then
+    local isEndCave = nextSite and nextSite.Kind == "Cave" and (nextSite.MaxX or nextSite.MinX) >= 5800
+    if isEndCave and posX >= (nextSite.MinX or 6350) then
         if rafting.status == "Travelling" then
             rafting.status = "Docked"
             rafting.isDockedState = true
