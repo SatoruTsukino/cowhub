@@ -8836,6 +8836,19 @@ rafting.allSites = {}
 rafting.sitesById = {}
 rafting.sitesInitialized = false
 rafting.collectAllLootChests = true
+rafting.lootedChestSites = {}
+rafting.isLootingChest = false
+
+local function placeCowAboveDeck(deck)
+    if not deck or not root then return end
+    stopCharacterVelocity()
+    local deckTopY = (deck.Size and deck.Size.Y * 0.5) or 1.0
+    root.CFrame = deck.CFrame * CFrame.new(0, deckTopY + 5.5, 0)
+    if humanoid then
+        humanoid:Move(Vector3.zero, false)
+        humanoid:MoveTo(root.Position)
+    end
+end
 
 function rafting.ensureDynamicSites()
     if rafting.sitesInitialized and #clearingSites > 0 then return end
@@ -8905,6 +8918,25 @@ function rafting.ensureDynamicSites()
         byId[sid] = siteData
     end
 
+    if not byId["ManatiteFjordCave"] then
+        local manatiteSite = {
+            Id = "ManatiteFjordCave",
+            Kind = "Cave",
+            Name = "Manatite Cave (North Terminus)",
+            BankSide = "North",
+            Mouth = Vector3.new(6594.58, 700.5, -1267.81),
+            MinX = 6356.58,
+            MaxX = 6594.58,
+            MinZ = -1299.81,
+            MaxZ = -1035.81,
+            FloorY = 700.7,
+            LandPos = Vector3.new(6475.0, 702.5, -1167.0),
+            ShoreZ = -1267.81,
+        }
+        table.insert(sitesList, manatiteSite)
+        byId["ManatiteFjordCave"] = manatiteSite
+    end
+
     table.sort(sitesList, function(a, b) return a.MinX < b.MinX end)
     table.sort(clearingsList, function(a, b) return a.MinX < b.MinX end)
     for i, s in ipairs(clearingsList) do
@@ -8963,28 +8995,51 @@ end
 
 function rafting.isSiteReachable(site, posX, currentZ)
     if not site then return false end
-    if posX > site.MaxX + 15 then
+    if posX > (site.MaxX + 25) then
+        return false
+    end
+    -- Cannot cross across Reach 1 bank to opposite clearing once first clearing is visited
+    if site.Id == "Clearing_02" and rafting.visitedSites["Clearing_01"] then
+        return false
+    end
+    if site.Id == "Clearing_01" and rafting.visitedSites["Clearing_02"] then
         return false
     end
     if posX <= 1845 then
         return true
     end
+    local shoreZ = site.ShoreZ or ((site.MinZ + site.MaxZ) * 0.5)
     if currentZ ~= nil then
         if currentZ > 50 then
-            if site.BankSide == "North" then
+            -- South branch: cannot reach far North sites
+            if shoreZ < -100 then
                 return false
             end
         elseif currentZ < -100 then
-            if site.BankSide == "South" then
+            -- North branch: cannot reach far South sites
+            if shoreZ > 50 then
                 return false
             end
         else
-            if posX > 2400 and (site.ShoreZ < -400 or site.ShoreZ > 400) then
+            -- Center branch: cannot reach extreme outer wings
+            if posX > 2400 and (shoreZ < -600 or shoreZ > 600) then
                 return false
             end
         end
     end
     return true
+end
+
+local function getEndCaveSite(currentZ)
+    rafting.ensureDynamicSites()
+    local z = currentZ or -37.81
+    if z < -100 then
+        return rafting.sitesById["ManatiteFjordCave"] or rafting.sitesById["Cave_Cubby05"]
+    elseif z > 100 then
+        return rafting.sitesById["Cave_12"] or rafting.sitesById["Cave_11"]
+    else
+        return rafting.sitesById["Cave_Cubby05"] or rafting.sitesById["Clearing_10"]
+    end
 end
 
 function rafting.getNextTargetClearing(posX, currentZ)
@@ -8995,7 +9050,7 @@ function rafting.getNextTargetClearing(posX, currentZ)
     for _, site in ipairs(clearingSites) do
         if site.Kind == "Clearing" then
             local isCandidate = false
-            if rafting.collectAllLootChests or not rafting.selectedClearings or rafting.selectedClearings[site.Id] then
+            if not rafting.selectedClearings or rafting.selectedClearings[site.Id] then
                 isCandidate = true
             end
 
@@ -9004,7 +9059,7 @@ function rafting.getNextTargetClearing(posX, currentZ)
                     if currentZ == nil or rafting.isSiteReachable(site, posX, currentZ) then
                         local dx = math.max(0, (site.Mouth and site.Mouth.X or site.MinX) - posX)
                         local dz = math.abs((site.ShoreZ or -37.81) - (currentZ or -37.81))
-                        local cost = dz + 0.35 * dx
+                        local cost = dz * 1.5 + dx
                         if cost < bestCost then
                             bestCost = cost
                             bestSite = site
@@ -9020,6 +9075,12 @@ function rafting.getNextTargetClearing(posX, currentZ)
             end
         end
     end
+
+    -- If no further unvisited clearings downriver or near end of fjord: target End Cave
+    if not bestSite or posX > 5845 then
+        return getEndCaveSite(currentZ)
+    end
+
     return bestSite
 end
 
@@ -9175,62 +9236,78 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     local minX = targetSite.MinX
     local maxX = targetSite.MaxX
 
-    if posX < minX - 30 then
-        -- Navigating downriver towards target docking area
-        if targetSite.Id == "Clearing_03" then
+    local forkXByReach = {
+        [1] = 1844.58,
+        [2] = 2844.58,
+        [3] = 3294.58,
+        [4] = 4294.58,
+        [5] = 4744.58,
+        [6] = 5844.58,
+    }
+
+    local targetZ = targetSite.ShoreZ or -37.81
+    if posX >= minX - 30 and posX <= maxX + 40 then
+        return targetZ
+    end
+
+    local reachIdx = getReachIndex(posX)
+
+    if reachIdx == 1 then
+        if targetZ < -100 then
             if posX <= 1600 then
-                return -55.0 -- Align with North side of Reach 1 channel before fork
-            elseif posX <= 2344.58 then
-                local t = math.clamp((posX - 1600) / 744.58, 0, 1)
-                return -55.0 + t * (-262.81 - (-55.0)) -- Smooth transition into Reach 2 North
+                return -55.0
             else
-                local t = math.clamp((posX - 2344.58) / 500.0, 0, 1)
-                return -262.81 + t * (-487.81 - (-262.81)) -- Sloping to Reach 3 Far North
+                local t = math.clamp((posX - 1600) / 244.58, 0, 1)
+                return -55.0 + t * (-262.81 - (-55.0))
             end
-        elseif targetSite.Id == "Clearing_04" then
+        elseif targetZ > 50 then
             if posX <= 1600 then
-                return -20.0 -- Align with South side of Reach 1 channel before fork
-            elseif posX <= 2344.58 then
-                local t = math.clamp((posX - 1600) / 744.58, 0, 1)
-                return -20.0 + t * (187.19 - (-20.0)) -- Smooth transition into Reach 2 South
+                return -20.0
             else
-                local t = math.clamp((posX - 2344.58) / 500.0, 0, 1)
-                return 187.19 + t * (412.19 - 187.19) -- Sloping to Reach 3 South
+                local t = math.clamp((posX - 1600) / 244.58, 0, 1)
+                return -20.0 + t * (187.19 - (-20.0))
             end
         else
-            local targetZ = targetSite.ShoreZ or -37.81
-            if FjordZones and FjordZones.Channels then
-                local reachIdx = getReachIndex(posX)
-                local bestChZ = -37.81
-                local minChDiff = math.huge
-                for _, ch in ipairs(FjordZones.Channels) do
-                    if ch[7] == reachIdx then
-                        local chZ = ch[2]
-                        local chReachable = true
-                        if currentZ and posX > 1845 then
-                            if currentZ > 50 and chZ < -100 then chReachable = false end
-                            if currentZ < -100 and chZ > 50 then chReachable = false end
-                        end
-                        if chReachable then
-                            local diff = math.abs(chZ - targetZ)
-                            if diff < minChDiff then
-                                minChDiff = diff
-                                bestChZ = chZ
-                            end
-                        end
+            return -37.81
+        end
+    end
+
+    local function findBestCh(rIdx, fromZ)
+        if not (FjordZones and FjordZones.Channels) then return -37.81 end
+        local bestZ = -37.81
+        local minDiff = math.huge
+        for _, ch in ipairs(FjordZones.Channels) do
+            if ch[7] == rIdx then
+                local chZ = ch[2]
+                local reachable = true
+                if fromZ ~= nil and rIdx > 1 then
+                    if math.abs(chZ - fromZ) > 300 and not ch[8] then reachable = false end
+                    if fromZ > 50 and chZ < -100 then reachable = false end
+                    if fromZ < -100 and chZ > 50 then reachable = false end
+                end
+                if reachable then
+                    local diff = math.abs(chZ - targetZ)
+                    if diff < minDiff then
+                        minDiff = diff
+                        bestZ = chZ
                     end
                 end
-                return bestChZ
-            else
-                return targetZ
             end
         end
-    elseif posX <= maxX + 20 then
-        -- At cove mouth opening or inside cove: steer directly towards shoreline!
-        return targetSite.ShoreZ
-    else
-        return -37.81
+        return bestZ
     end
+
+    local currentChZ = findBestCh(reachIdx, currentZ)
+    local forkX = forkXByReach[reachIdx]
+
+    if forkX and posX >= (forkX - 250) and posX <= forkX then
+        local nextReach = reachIdx + 1
+        local nextChZ = findBestCh(nextReach, currentChZ)
+        local t = math.clamp((posX - (forkX - 250)) / 250, 0, 1)
+        return currentChZ + t * (nextChZ - currentChZ)
+    end
+
+    return currentChZ
 end
 
 function rafting.castOff()
@@ -9484,6 +9561,69 @@ end
 
 rafting.getHobgoblinEvasionOffset = rafting.getThreatEvasionOffset
 
+function rafting.lootSiteChest(site, deck)
+    if rafting.isLootingChest or not root then return end
+    if not deck then deck = rafting.getRaftDeck() end
+    if not deck then return end
+
+    rafting.isLootingChest = true
+    rafting.lootedChestSites[site.Id] = true
+
+    task.spawn(function()
+        local sitePos = site.LandPos or Vector3.new((site.MinX + site.MaxX) * 0.5, site.FloorY + 2.5, (site.MinZ + site.MaxZ) * 0.5)
+        stopCharacterVelocity()
+        root.CFrame = CFrame.new(sitePos)
+        if humanoid then
+            humanoid:Move(Vector3.zero, false)
+            humanoid:MoveTo(root.Position)
+        end
+
+        local targetChest = nil
+        local pollStart = os.clock()
+        while (os.clock() - pollStart) < 1.5 do
+            if rafting.teamChests and type(rafting.teamChests) == "table" then
+                for _, chest in ipairs(rafting.teamChests) do
+                    if not chest.Opened and chest.Id ~= rafting.lastLootedChestId then
+                        targetChest = chest
+                        break
+                    end
+                end
+            end
+            if targetChest then break end
+            local localChest = workspace:FindFirstChild("LocalTeamChest", true)
+            if localChest and localChest:IsA("Model") and not localChest:GetAttribute("Opened") then
+                targetChest = { Id = localChest.Name, CFrame = localChest:GetPivot(), Opened = false }
+                break
+            end
+            task.wait(0.1)
+        end
+
+        if targetChest and targetChest.CFrame then
+            stopCharacterVelocity()
+            root.CFrame = targetChest.CFrame * CFrame.new(0, 1.5, 3.5) * CFrame.Angles(0, math.pi, 0)
+            if humanoid then
+                humanoid:Move(Vector3.zero, false)
+                humanoid:MoveTo(root.Position)
+            end
+            task.wait(0.2)
+            local remotes = cowRemotes or (game:GetService("ReplicatedStorage"):FindFirstChild("CowGame") and game.ReplicatedStorage.CowGame:FindFirstChild("Remotes"))
+            local teamChestReq = remotes and remotes:FindFirstChild("TeamChestRequest")
+            if teamChestReq then
+                rafting.lastLootedChestId = targetChest.Id
+                targetChest.Opened = true
+                pcall(function() teamChestReq:FireServer(targetChest.Id) end)
+                task.wait(0.35)
+            end
+        end
+
+        local curDeck = rafting.getRaftDeck() or deck
+        if curDeck and root then
+            placeCowAboveDeck(curDeck)
+        end
+        rafting.isLootingChest = false
+    end)
+end
+
 function rafting.handleSnapshot(payload)
     if not payload or type(payload) ~= "table" then return end
     rafting.lastSnapshotTime = os.clock()
@@ -9492,6 +9632,8 @@ function rafting.handleSnapshot(payload)
     if payload.Id and payload.Id ~= rafting.sessionId then
         rafting.sessionId = payload.Id
         rafting.visitedSites = {}
+        rafting.lootedChestSites = {}
+        rafting.isLootingChest = false
         rafting.incomingRocks = {}
         rafting.isDockedState = false
         rafting.currentDockSite = nil
@@ -9596,63 +9738,12 @@ function rafting.handleSnapshot(payload)
                     end
                     stopCharacterVelocity()
 
-                    -- Find unopened chest from TeamChestSnapshot
-                    local targetChest = nil
-                    if rafting.teamChests and type(rafting.teamChests) == "table" then
-                        for _, chest in ipairs(rafting.teamChests) do
-                            if not chest.Opened and chest.Id ~= rafting.lastLootedChestId then
-                                targetChest = chest
-                                break
-                            end
-                        end
+                    local curDeck = rafting.getRaftDeck()
+                    if site and curDeck then
+                        rafting.lootSiteChest(site, curDeck)
+                    elseif curDeck then
+                        placeCowAboveDeck(curDeck)
                     end
-
-                    -- Safe dry-land placement & chest looting: move character directly in front of the chest!
-                    task.spawn(function()
-                        task.wait(0.2)
-                        if rafting.status == "Docked" and root then
-                            if targetChest and targetChest.CFrame then
-                                -- Position character directly in front of the chest (3.5 studs facing chest)
-                                stopCharacterVelocity()
-                                root.CFrame = targetChest.CFrame * CFrame.new(0, 1.5, 3.5) * CFrame.Angles(0, math.pi, 0)
-                                if humanoid then
-                                    humanoid.AutoRotate = true
-                                    humanoid:Move(Vector3.zero, false)
-                                    humanoid:MoveTo(root.Position)
-                                end
-                                if root then pcall(function() root.Anchored = false end) end
-                                task.wait(0.35)
-                                local remotes = cowRemotes or (game:GetService("ReplicatedStorage"):FindFirstChild("CowGame") and game.ReplicatedStorage.CowGame:FindFirstChild("Remotes"))
-                                local teamChestReq = remotes and remotes:FindFirstChild("TeamChestRequest")
-                                if teamChestReq then
-                                    rafting.lastLootedChestId = targetChest.Id
-                                    targetChest.Opened = true
-                                    pcall(function() teamChestReq:FireServer(targetChest.Id) end)
-                                    task.wait(0.4)
-                                    local deck = rafting.getRaftDeck()
-                                    if deck and root then
-                                        stopCharacterVelocity()
-                                        root.CFrame = deck.CFrame * CFrame.new(0, 3.5, 0)
-                                        if humanoid then
-                                            humanoid:Move(Vector3.zero, false)
-                                            humanoid:MoveTo(root.Position)
-                                        end
-                                    end
-                                end
-                            else
-                                -- No chest: keep character safely standing on raft deck center
-                                local deck = rafting.getRaftDeck()
-                                if deck and root then
-                                    stopCharacterVelocity()
-                                    root.CFrame = deck.CFrame * CFrame.new(0, 3.5, 0)
-                                    if humanoid then
-                                        humanoid:Move(Vector3.zero, false)
-                                        humanoid:MoveTo(root.Position)
-                                    end
-                                end
-                            end
-                        end
-                    end)
 
                     -- Auto-departure delay or manual
                     if rafting.autoContinueFromDock or rafting.autoLoop then
@@ -9670,19 +9761,14 @@ function rafting.handleSnapshot(payload)
             end
         end
 
-        -- Water recovery check: If character touches water or is away from deck, instantly return to deck +3.5 studs
+        -- Water recovery check: If character touches water or is away from deck, instantly return to deck (+5.5 studs hoof clearance)
         if rafting.status == "Docked" and root then
             local deck = rafting.getRaftDeck()
             if deck then
                 local distFromDeck = (root.Position - deck.Position).Magnitude
                 local inWater = (root.Position.Y < 700.5 and distFromDeck > 6.0) or (root.Position.Y < 698.0) or (humanoid and humanoid.FloorMaterial == Enum.Material.Water)
                 if inWater then
-                    stopCharacterVelocity()
-                    root.CFrame = deck.CFrame * CFrame.new(0, 3.5, 0)
-                    if humanoid then
-                        humanoid:Move(Vector3.zero, false)
-                        humanoid:MoveTo(root.Position)
-                    end
+                    placeCowAboveDeck(deck)
                 end
             end
         end
@@ -9751,6 +9837,40 @@ function rafting.stepSteering(dt)
         end
     end
     local lookAheadX = posX + lookAhead
+
+    -- Collect All Loot Chests while navigating: loot upcoming clearings and caves
+    if rafting.collectAllLootChests and not rafting.isLootingChest and root then
+        local curDeck = rafting.getRaftDeck()
+        if curDeck and rafting.allSites then
+            for _, s in ipairs(rafting.allSites) do
+                if not rafting.lootedChestSites[s.Id] then
+                    local mouthX = s.Mouth and s.Mouth.X or ((s.MinX + s.MaxX) * 0.5)
+                    local distForward = mouthX - posX
+                    if distForward >= -50 and distForward <= 150 then
+                        rafting.lootSiteChest(s, curDeck)
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    -- End of Fjord Cave Landing Check
+    if posX >= 6480 and nextSite and nextSite.Kind == "Cave" then
+        if rafting.status == "Travelling" then
+            rafting.status = "Docked"
+            rafting.isDockedState = true
+            rafting.isSailing = false
+            rafting.statusText = string.format("Voyage Complete: Safely landed at %s!", nextSite.Name)
+            if rafting.autoLoop then
+                task.delay(rafting.dockMaxWaitSeconds or 6, function()
+                    if rafting.enabled and rafting.status == "Docked" then
+                        rafting.castOff()
+                    end
+                end)
+            end
+        end
+    end
 
     -- 1. Compute Whisker Clearances via Raycasts
     local clearances = rafting.getWhiskerClearances(deck)
@@ -9963,9 +10083,8 @@ function rafting.stepSteering(dt)
         -- If character is separated from the raft (jumped off, thrown, or fell in water)
         if distFromDeck > 30.0 then
             if rafting.autoRecoverOverboard then
-                -- Auto-recover character back onto raft deck ~3 studs above deck!
-                root.CFrame = deck.CFrame * CFrame.new(0, 6.5, 0)
-                stopCharacterVelocity()
+                -- Auto-recover character back onto raft deck (+5.5 studs hoof clearance)
+                placeCowAboveDeck(deck)
                 local rem = rafting.getRemote()
                 if rem then pcall(function() rem:FireServer("Boarded") end) end
                 return
@@ -9984,8 +10103,7 @@ function rafting.stepSteering(dt)
             if not rafting.overboardStartTime then
                 rafting.overboardStartTime = os.clock()
             elseif os.clock() - rafting.overboardStartTime > 0.35 then
-                root.CFrame = deck.CFrame * CFrame.new(0, 6.5, 0)
-                stopCharacterVelocity()
+                placeCowAboveDeck(deck)
                 rafting.overboardStartTime = nil
                 local rem = rafting.getRemote()
                 if rem then pcall(function() rem:FireServer("Boarded") end) end
@@ -10265,8 +10383,7 @@ end
 function rafting.teleportToDeck()
     local deck = rafting.getRaftDeck()
     if root and deck then
-        stopCharacterVelocity()
-        root.CFrame = deck.CFrame * CFrame.new(0, 6.5, 0)
+        placeCowAboveDeck(deck)
         local rem = rafting.getRemote()
         if rem then
             pcall(function() rem:FireServer("Boarded") end)
