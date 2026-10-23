@@ -8723,6 +8723,10 @@ local rafting = {
     nextBoostAt = 0,
     autoRepair = true,
     emergencyReturnHp = 25,
+    emergencyDocked = false,
+    isEndingVoyage = false,
+    isEndingVoyageInProgress = false,
+    lastSessionEndNotify = 0,
     autoEvadeHobgoblins = true,
     autoRecoverOverboard = true,
     incomingRocks = {},
@@ -9691,6 +9695,71 @@ local function sendRaftKey(keyCode, holdSec)
     end
 end
 
+local function getContinueButton()
+    local playerGui = localPlayer and localPlayer:FindFirstChildWhichIsA("PlayerGui")
+    if not playerGui then return nil end
+    local hud = playerGui:FindFirstChild("FjordRaftingHUD")
+    if hud then
+        local btn = hud:FindFirstChild("Continue", true)
+        if btn and btn:IsA("GuiButton") then return btn end
+    end
+    for _, gui in ipairs(playerGui:GetChildren()) do
+        if string.find(gui.Name, "Raft", 1, true) then
+            local btn = gui:FindFirstChild("Continue", true)
+            if btn and btn:IsA("GuiButton") then return btn end
+        end
+    end
+    return nil
+end
+rafting.getContinueButton = getContinueButton
+
+local function isContinueButtonActive()
+    local btn = getContinueButton()
+    return btn and btn.Visible and btn.Active or false
+end
+rafting.isContinueButtonActive = isContinueButtonActive
+
+local function isBoardingAnimationActive()
+    if isContinueButtonActive() then
+        return false
+    end
+    local char = character or (localPlayer and localPlayer.Character)
+    if char then
+        local cowDeck = char:FindFirstChild("CowRaftingDeck")
+        if cowDeck and cowDeck:GetAttribute("RaftBoarding") == true then
+            return true
+        end
+        if char:GetAttribute("CowMoofCutscene") == true then
+            return true
+        end
+    end
+    if localPlayer and localPlayer:GetAttribute("CowMoofCutscene") == true then
+        return true
+    end
+    local hum = humanoid or (char and char:FindFirstChildOfClass("Humanoid"))
+    if hum then
+        local ok, tracks = pcall(function() return hum:GetPlayingAnimationTracks() end)
+        if ok and tracks then
+            for _, t in ipairs(tracks) do
+                if t.IsPlaying then
+                    local anim = t.Animation
+                    local aName = anim and anim.Name and anim.Name:lower() or ""
+                    local tName = t.Name and t.Name:lower() or ""
+                    if aName:find("board") or tName:find("board") or aName:find("cutscene") or tName:find("cutscene") then
+                        return true
+                    end
+                end
+            end
+        end
+    end
+    local snap = rafting.currentSnapshot
+    if snap and snap.AllAboard == false and snap.Status ~= "Travelling" then
+        return true
+    end
+    return false
+end
+rafting.isBoardingAnimationActive = isBoardingAnimationActive
+
 local function triggerRaftingCommand(cmd)
     if cmd == "Sail" or cmd == "Continue" or cmd == "Start" or cmd == "Vote" then
         sendRaftKey(Enum.KeyCode.N, 0.25)
@@ -9710,7 +9779,7 @@ local function triggerRaftingCommand(cmd)
             if string.find(gui.Name, "Raft", 1, true) then
                 for _, name in ipairs(candidateNames) do
                     local btn = gui:FindFirstChild(name, true)
-                    if btn and btn:IsA("GuiButton") and btn.Visible then
+                    if btn and btn:IsA("GuiButton") and btn.Visible and btn.Active then
                         if firesignal then
                             pcall(function() firesignal(btn.Activated) end)
                         end
@@ -9750,6 +9819,10 @@ function rafting.castOff()
         local deck = rafting.getRaftDeck()
         local onDeck = ensureCowOnDeck(deck, 6.0)
         if onDeck then
+            local waitAnimStart = os.clock()
+            while isBoardingAnimationActive() and (os.clock() - waitAnimStart) < 6.0 and rafting.enabled do
+                task.wait(0.2)
+            end
             task.wait(0.3) -- Allow native _stepDeckMotion to register and bind Key N
             -- Dispatch departure via native Key N (FjordRafting_Continue)
             sendRaftKey(Enum.KeyCode.N, 0.25)
@@ -10177,6 +10250,26 @@ function rafting.lootReachChests(dockSite, deck)
 
         rafting.isLootingChest = false
 
+        -- Check emergency docked: if health low or adrift, return to shore now that chests are looted
+        local snap = rafting.currentSnapshot
+        local isEmergency = rafting.emergencyDocked
+            or (snap and snap.Health and snap.Health <= rafting.emergencyReturnHp and snap.Health > 0)
+            or (snap and snap.Adrift == true)
+
+        if isEmergency then
+            rafting.emergencyDocked = false
+            rafting.statusText = string.format("Emergency docked at %s: chests looted! Returning to shore...", dockSite.Id or "Clearing")
+            rafting.updateCards()
+            Window:Notify({
+                Title = "Rafting Emergency",
+                Content = "Emergency docked: chests looted! Returning to shore...",
+                Duration = 4
+            })
+            task.wait(0.6)
+            rafting.endVoyage()
+            return
+        end
+
         -- Resume voyage
         if rafting.autoContinueFromDock or rafting.autoLoop then
             local waitSecs = rafting.dockMaxWaitSeconds or 4
@@ -10308,6 +10401,11 @@ function rafting.handleSnapshot(payload)
                     rafting.lastDepartSite = siteId
                     rafting.isSailing = false
 
+                    local hp = payload.Health or 100
+                    if (hp <= rafting.emergencyReturnHp and hp > 0) or payload.Adrift then
+                        rafting.emergencyDocked = true
+                    end
+
                     -- Stop any active boost immediately
                     if rafting.isBoosting then
                         rafting.isBoosting = false
@@ -10341,6 +10439,12 @@ function rafting.handleSnapshot(payload)
                         rafting.lootReachChests(site, curDeck)
                     elseif curDeck then
                         placeCowAboveDeck(curDeck)
+                        if rafting.emergencyDocked then
+                            rafting.emergencyDocked = false
+                            Window:Notify({ Title = "Rafting Emergency", Content = "Emergency dock: returning to shore...", Duration = 4 })
+                            task.wait(0.6)
+                            rafting.endVoyage()
+                        end
                     end
                 end
             end
@@ -10405,10 +10509,14 @@ function rafting.stepSteering(dt)
     local posZ = frame.Position.Z
 
     -- Reached the Sea? (SeaStartX = 6594.58)
-    if posX >= 6590 then
+    if posX >= 6590 and not rafting.isEndingVoyage then
+        rafting.isEndingVoyage = true
+        rafting.isSailing = false
+        rafting.status = "Idle"
         rafting.statusText = "Reached The Sea! Ending voyage..."
+        rafting.updateCards()
         Window:Notify({ Title = "Voyage Finished", Content = "Reached The Sea! Returning to shore.", Duration = 4 })
-        rafting.endVoyage()
+        task.spawn(rafting.endVoyage)
         return
     end
 
@@ -10761,11 +10869,26 @@ function rafting.stepSteering(dt)
         end
     end
 
-    -- Emergency Health Return
+    -- Emergency Health Return (Debounced & Single-Trigger)
     local hp = snap.Health or 100
-    if (hp <= rafting.emergencyReturnHp and hp > 0) or snap.Adrift then
+    if ((hp <= rafting.emergencyReturnHp and hp > 0) or snap.Adrift) and not rafting.isEndingVoyage then
+        if rafting.status == "Docked" or rafting.isDockedState or rafting.isLootingChest then
+            if not rafting.emergencyDocked then
+                rafting.emergencyDocked = true
+                rafting.statusText = "Emergency: low health / adrift while docked! Looting chests first..."
+                rafting.updateCards()
+            end
+            return
+        end
+
+        rafting.isEndingVoyage = true
+        rafting.isSailing = false
+        rafting.status = "Idle"
+        rafting.statusText = "Emergency return to shore (low health / adrift)..."
+        rafting.updateCards()
         Window:Notify({ Title = "Rafting Emergency", Content = "Low health or adrift! Returning to shore...", Duration = 4 })
-        rafting.endVoyage()
+        task.spawn(rafting.endVoyage)
+        return
     end
 end
 
@@ -10887,6 +11010,9 @@ function rafting.startVoyage()
     rafting.isUnsticking = false
     rafting.unstickDirection = 0
     rafting.unstickStartTime = 0
+    rafting.isEndingVoyage = false
+    rafting.isEndingVoyageInProgress = false
+    rafting.emergencyDocked = false
     rafting.initClientListener()
     rafting.startSteeringLoop()
     rafting.statusText = "Boarding raft at Harbour berth..."
@@ -10894,7 +11020,7 @@ function rafting.startVoyage()
     if root then pcall(function() root.Anchored = false end) end
     rafting.updateCards()
 
-    -- 2. Boarding & Departure Sequence: ONLY pulse N once character is confirmed in bounds on deck
+    -- 2. Boarding & Departure Sequence: wait for boarding animation to end before pressing N
     task.spawn(function()
         -- Wait for raft deck instance to stream in
         local deck = nil
@@ -10902,16 +11028,46 @@ function rafting.startVoyage()
         while (os.clock() - waitDeckStart) < 8.0 and rafting.enabled do
             deck = rafting.getRaftDeck()
             if deck then break end
-            if rafting.naturalMode and naturalWalkTo and root then
-                naturalWalkTo(Vector3.new(-225.27, 703.5, -29.41), 1.5, 3.0)
-            end
             task.wait(0.25)
         end
 
-        -- Ensure cow is physically in bounds and on/above the deck
-        local onDeck = ensureCowOnDeck(deck, 6.0)
+        -- Let native boarding animation/cutscene play naturally without interference!
+        rafting.statusText = "Boarding cutscene playing..."
+        rafting.updateCards()
+
+        -- Brief initial delay to ensure cutscene starts and attributes/HUD mount
+        task.wait(0.6)
+
+        local animWaitStart = os.clock()
+        while (os.clock() - animWaitStart) < 12.0 and rafting.enabled do
+            local snap = rafting.currentSnapshot
+            if snap and (snap.Status == "Travelling" or (snap.Speed and snap.Speed > 5)) then
+                break
+            end
+
+            -- If Continue button is already visible and active, animation has 100% finished!
+            if isContinueButtonActive() then
+                break
+            end
+
+            -- Check if boarding animation or cutscene attributes are still active
+            if not isBoardingAnimationActive() and (os.clock() - animWaitStart) > 2.5 then
+                -- Animation has stopped and minimum buffer has elapsed
+                break
+            end
+
+            task.wait(0.25)
+        end
+
+        -- Confirm cow is physically in bounds and on/above the deck now that animation finished
+        local currentDeck = rafting.getRaftDeck() or deck
+        local onDeck = isCowOnDeck(currentDeck)
+        if not onDeck then
+            onDeck = ensureCowOnDeck(currentDeck, 4.0)
+        end
+
         if onDeck then
-            Window:Notify({ Title = "Rafting Started", Content = "Boarded raft. Activating Key N / Harbour departure...", Duration = 3 })
+            Window:Notify({ Title = "Rafting Started", Content = "Boarding complete. Activating Key N / Harbour departure...", Duration = 3 })
             task.wait(0.4) -- Allow RaftingController to register deck contact and bind Key N
         else
             rafting.statusText = "Boarding raft deck..."
@@ -10929,12 +11085,11 @@ function rafting.startVoyage()
                 break
             end
 
-            local currentDeck = rafting.getRaftDeck() or deck
+            currentDeck = rafting.getRaftDeck() or deck
             if currentDeck and root then
                 if isCowOnDeck(currentDeck) then
-                    -- ONLY pulse Key N when verified on deck in bounds!
+                    -- ONLY pulse Key N & Continue button when verified on deck in bounds and animation finished!
                     sendRaftKey(Enum.KeyCode.N, 0.25)
-                    triggerRaftingCommand("Sail")
                     triggerRaftingCommand("Continue")
                 else
                     -- Player is off-deck or separated: re-board first, DO NOT press N while off deck
@@ -10942,8 +11097,8 @@ function rafting.startVoyage()
                 end
             end
 
-            -- Single debounced fallback after 4.0 seconds without moving
-            if (os.clock() - waitStart) > 4.0 then
+            -- Single debounced fallback after 5.0 seconds without moving
+            if (os.clock() - waitStart) > 5.0 then
                 rafting.fireRemoteSafely("Sail", nil, 2.0)
                 rafting.fireRemoteSafely("Vote", nil, 2.0)
             end
@@ -10955,6 +11110,9 @@ end
 
 function rafting.onSessionEnded(reason)
     rafting.isSailing = false
+    rafting.isEndingVoyage = false
+    rafting.isEndingVoyageInProgress = false
+    rafting.emergencyDocked = false
     rafting.currentSnapshot = nil
     rafting.status = "Idle"
     rafting.visitedSites = {}
@@ -10977,9 +11135,13 @@ function rafting.onSessionEnded(reason)
     end
     if reason then
         rafting.statusText = reason
-        pcall(function()
-            Window:Notify({ Title = "Rafting Stopped", Content = reason, Duration = 4 })
-        end)
+        local now = os.clock()
+        if (now - (rafting.lastSessionEndNotify or 0)) > 3.0 then
+            rafting.lastSessionEndNotify = now
+            pcall(function()
+                Window:Notify({ Title = "Rafting Stopped", Content = reason, Duration = 4 })
+            end)
+        end
     else
         rafting.statusText = "Rafting session ended."
     end
@@ -10987,6 +11149,12 @@ function rafting.onSessionEnded(reason)
 end
 
 function rafting.endVoyage()
+    if rafting.isEndingVoyageInProgress then return end
+    rafting.isEndingVoyageInProgress = true
+    rafting.isEndingVoyage = true
+    rafting.isSailing = false
+    rafting.status = "Idle"
+
     sendRaftKey(Enum.KeyCode.H, 0.25)
     triggerRaftingCommand("Return")
     task.wait(0.2)
