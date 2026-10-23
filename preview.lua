@@ -8813,6 +8813,7 @@ function rafting.getRaftDeck()
 end
 
 local FjordZones
+local FjordContentConfig
 pcall(function()
     local cg = game:GetService("ReplicatedStorage"):FindFirstChild("CowGame")
     local shared = cg and cg:FindFirstChild("Shared")
@@ -8820,7 +8821,22 @@ pcall(function()
     if fzMod and fzMod:IsA("ModuleScript") then
         FjordZones = require(fzMod)
     end
+    local fccMod = shared and shared:FindFirstChild("FjordContentConfig")
+    if fccMod and fccMod:IsA("ModuleScript") then
+        FjordContentConfig = require(fccMod)
+    end
 end)
+
+local function getFjordLevel(posX)
+    if FjordContentConfig and FjordContentConfig.Level then
+        local lvl = FjordContentConfig.Level(posX)
+        if lvl then return lvl end
+    end
+    if posX < 1350 then return 1
+    elseif posX < 2650 then return 2
+    elseif posX < 4100 then return 3
+    else return 4 end
+end
 
 local function getHarbourZ(posX)
     if FjordZones and FjordZones.RibbonAt then
@@ -8910,6 +8926,7 @@ function rafting.ensureDynamicSites()
             FloorY = floorY,
             LandPos = landPos,
             ShoreZ = coveZ,
+            FjordLevel = getFjordLevel(coveX),
         }
         table.insert(sitesList, siteData)
         if kind == "Clearing" then
@@ -8932,6 +8949,7 @@ function rafting.ensureDynamicSites()
             FloorY = 700.7,
             LandPos = Vector3.new(6475.0, 702.5, -1167.0),
             ShoreZ = -1267.81,
+            FjordLevel = getFjordLevel(6475.0),
         }
         table.insert(sitesList, manatiteSite)
         byId["ManatiteFjordCave"] = manatiteSite
@@ -9114,36 +9132,42 @@ local function getEndCaveSite(currentZ)
     return bestCave or rafting.sitesById["ManatiteFjordCave"] or rafting.sitesById["Cave_Cubby05"]
 end
 
+function rafting.isSiteSelected(site)
+    if not site then return false end
+    if rafting.selectAllSites then return true end
+    if rafting.selectAllClearings then return site.Kind == "Clearing" end
+    if rafting.selectedClearings and next(rafting.selectedClearings) then
+        return rafting.selectedClearings[site.Id] == true
+    end
+    return true
+end
+
 function rafting.getNextTargetClearing(posX, currentZ)
     rafting.ensureDynamicSites()
     local bestSite = nil
     local bestCost = math.huge
 
-    for _, site in ipairs(clearingSites) do
-        if site.Kind == "Clearing" then
-            local isCandidate = false
-            if not rafting.selectedClearings or rafting.selectedClearings[site.Id] then
-                isCandidate = true
-            end
+    local sitesToScan = rafting.allSites or clearingSites
+    for _, site in ipairs(sitesToScan) do
+        local isCandidate = rafting.isSiteSelected(site)
 
-            if isCandidate and not rafting.visitedSites[site.Id] then
-                if posX <= site.MaxX + 20 then
-                    if currentZ == nil or rafting.isSiteReachable(site, posX, currentZ) then
-                        local dx = math.max(0, (site.Mouth and site.Mouth.X or site.MinX) - posX)
-                        local dz = math.abs((site.ShoreZ or -37.81) - (currentZ or -37.81))
-                        local cost = dz * 1.5 + dx
-                        if cost < bestCost then
-                            bestCost = cost
-                            bestSite = site
-                        end
-                    else
-                        if posX > (site.MinX - 80) then
-                            rafting.visitedSites[site.Id] = true
-                        end
+        if isCandidate and not rafting.visitedSites[site.Id] then
+            if posX <= site.MaxX + 20 then
+                if currentZ == nil or rafting.isSiteReachable(site, posX, currentZ) then
+                    local dx = math.max(0, (site.Mouth and site.Mouth.X or site.MinX) - posX)
+                    local dz = math.abs((site.ShoreZ or -37.81) - (currentZ or -37.81))
+                    local cost = dz * 1.5 + dx
+                    if cost < bestCost then
+                        bestCost = cost
+                        bestSite = site
                     end
                 else
-                    rafting.visitedSites[site.Id] = true
+                    if posX > (site.MinX - 80) then
+                        rafting.visitedSites[site.Id] = true
+                    end
                 end
+            else
+                rafting.visitedSites[site.Id] = true
             end
         end
     end
@@ -9161,38 +9185,55 @@ end
 function rafting.updateTargetClearings(options)
     rafting.ensureDynamicSites()
     local selected = {}
-    local isAll = false
-    if type(options) == "table" then
-        for _, opt in ipairs(options) do
-            if opt == "All Clearings" then
-                isAll = true
-            else
-                local idMatch = string.match(opt, "Clearing%s*(%d+)")
-                if idMatch then
-                    selected[string.format("Clearing_%02d", tonumber(idMatch))] = true
-                end
-                local caveMatch = string.match(opt, "Cave%s*([%w_]+)")
-                if caveMatch then
-                    selected["Cave_" .. caveMatch] = true
-                end
-            end
+    local selectAllSites = false
+    local selectAllClearings = false
+
+    local function parseOption(opt)
+        if not opt or type(opt) ~= "string" then return end
+        if string.find(opt, "All Sites", 1, true) then
+            selectAllSites = true
+            return
         end
-    elseif type(options) == "string" then
-        if options == "All Clearings" then
-            isAll = true
-        else
-            local idMatch = string.match(options, "Clearing%s*(%d+)")
-            if idMatch then
-                selected[string.format("Clearing_%02d", tonumber(idMatch))] = true
-            end
-            local caveMatch = string.match(options, "Cave%s*([%w_]+)")
-            if caveMatch then
-                selected["Cave_" .. caveMatch] = true
-            end
+        if opt == "All Clearings" or string.find(opt, "All Clearings", 1, true) then
+            selectAllClearings = true
+            return
+        end
+        local clearingMatch = string.match(opt, "Clearing%s*(%d+)")
+        if clearingMatch then
+            selected[string.format("Clearing_%02d", tonumber(clearingMatch))] = true
+            return
+        end
+        local cubbyMatch = string.match(opt, "Cubby%s*(%d+)")
+        if cubbyMatch then
+            selected[string.format("Cave_Cubby%02d", tonumber(cubbyMatch))] = true
+            return
+        end
+        local caveMatch = string.match(opt, "Cave%s*(%d+)")
+        if caveMatch then
+            selected["Cave_" .. caveMatch] = true
+            return
+        end
+        if string.find(opt, "Manatite", 1, true) then
+            selected["ManatiteFjordCave"] = true
+            return
         end
     end
 
-    if isAll then
+    if type(options) == "table" then
+        for _, opt in ipairs(options) do
+            parseOption(opt)
+        end
+    elseif type(options) == "string" then
+        parseOption(options)
+    end
+
+    rafting.selectAllSites = selectAllSites
+    rafting.selectAllClearings = selectAllClearings
+    if selectAllSites and rafting.allSites then
+        for _, s in ipairs(rafting.allSites) do
+            selected[s.Id] = true
+        end
+    elseif selectAllClearings and rafting.allSites then
         for _, s in ipairs(rafting.allSites) do
             if s.Kind == "Clearing" then
                 selected[s.Id] = true
@@ -9355,6 +9396,83 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     return currentChZ
 end
 
+local function walkToPosition(targetPos, timeout, stopDistance)
+    if not humanoid or not root then return false end
+    timeout = timeout or 3.5
+    stopDistance = stopDistance or 3.5
+    humanoid.WalkSpeed = 24
+    humanoid.AutoRotate = true
+    if root then pcall(function() root.Anchored = false end) end
+    humanoid:MoveTo(targetPos)
+
+    local start = os.clock()
+    local lastPos = root.Position
+    local lastMoveTime = os.clock()
+
+    while (os.clock() - start) < timeout do
+        if not root or not humanoid then return false end
+        local d = (Vector3.new(root.Position.X, 0, root.Position.Z) - Vector3.new(targetPos.X, 0, targetPos.Z)).Magnitude
+        if d <= stopDistance then
+            humanoid:Move(Vector3.zero, false)
+            return true
+        end
+        if (root.Position - lastPos).Magnitude > 0.5 then
+            lastPos = root.Position
+            lastMoveTime = os.clock()
+        elseif (os.clock() - lastMoveTime) > 1.2 then
+            break
+        end
+        task.wait(0.1)
+    end
+    return false
+end
+
+local function triggerChestNatively(chestModel)
+    local prompt = chestModel and chestModel:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if prompt and prompt.Enabled then
+        if fireproximityprompt then
+            pcall(fireproximityprompt, prompt)
+            return true
+        end
+        if getconnections then
+            local conns = getconnections(prompt.Triggered)
+            if conns and #conns > 0 then
+                for _, conn in ipairs(conns) do
+                    if conn.Function then
+                        pcall(conn.Function)
+                        return true
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
+local function triggerRaftingCommand(cmd)
+    local playerGui = localPlayer and localPlayer:FindFirstChildWhichIsA("PlayerGui")
+    if playerGui then
+        for _, gui in ipairs(playerGui:GetChildren()) do
+            if string.find(gui.Name, "Raft", 1, true) then
+                local btn = gui:FindFirstChild(cmd, true) or gui:FindFirstChild(cmd .. "Button", true)
+                if btn and btn:IsA("GuiButton") and btn.Visible then
+                    if getconnections then
+                        local conns = getconnections(btn.Activated)
+                        if conns and #conns > 0 then
+                            for _, c in ipairs(conns) do
+                                if c.Function then pcall(c.Function); return true end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    local rem = rafting.getRemote()
+    if rem then pcall(function() rem:FireServer(cmd) end) end
+    return false
+end
+
 function rafting.castOff()
     local rem = rafting.getRemote()
     if not rem then return end
@@ -9409,25 +9527,18 @@ function rafting.castOff()
             end
         end
 
-        -- 1. Confirm boarding with server so crew requirement is satisfied
-        if rem then
+        -- 1. Confirm boarding: walking onto raft triggers RaftingController:_stepDeckMotion natively
+        if not rafting.isBoardedState and rem then
             pcall(function() rem:FireServer("Boarded") end)
         end
         task.wait(0.2)
-        if rem then
-            pcall(function() rem:FireServer("Boarded") end)
-        end
 
-        -- 2. Dispatch departure remotes once safely aboard
-        if wasDocked and rem then
-            pcall(function() rem:FireServer("Continue") end)
+        -- 2. Dispatch departure via native UI trigger or fallback remote
+        if wasDocked then
+            triggerRaftingCommand("Continue")
         end
-        if rem then
-            pcall(function()
-                rem:FireServer("Sail", nil)
-                rem:FireServer("Vote", true)
-            end)
-        end
+        triggerRaftingCommand("Sail")
+        triggerRaftingCommand("Vote")
 
         -- 3. Resume sailing state
         rafting.status = "Travelling"
@@ -9607,25 +9718,47 @@ end
 rafting.getHobgoblinEvasionOffset = rafting.getThreatEvasionOffset
 
 function rafting.lootSiteChest(site, deck)
-    if rafting.isLootingChest or not root then return end
-    if not deck then deck = rafting.getRaftDeck() end
-    if not deck then return end
+    if rafting.isLootingChest or not root or not site then return end
+    local curDeck = deck or rafting.getRaftDeck()
+    if not curDeck then return end
+
+    -- Strict FjordLevel validation: only loot sites in current FjordLevel
+    local curLevel = getFjordLevel(curDeck.Position.X)
+    if site.FjordLevel and site.FjordLevel ~= curLevel then
+        return
+    end
 
     rafting.isLootingChest = true
     rafting.lootedChestSites[site.Id] = true
 
     task.spawn(function()
         local sitePos = site.LandPos or Vector3.new((site.MinX + site.MaxX) * 0.5, site.FloorY + 2.5, (site.MinZ + site.MaxZ) * 0.5)
-        stopCharacterVelocity()
-        root.CFrame = CFrame.new(sitePos)
-        if humanoid then
-            humanoid:Move(Vector3.zero, false)
-            humanoid:MoveTo(root.Position)
+
+        -- Walk to dry land if close (< 35 studs) and dry ground
+        local distToLand = (root.Position - sitePos).Magnitude
+        local walked = false
+        if distToLand <= 35 and root.Position.Y >= 699.0 then
+            walked = walkToPosition(sitePos, 2.5, 5.0)
+        end
+        if not walked then
+            stopCharacterVelocity()
+            root.CFrame = CFrame.new(sitePos)
+            if humanoid then
+                humanoid:Move(Vector3.zero, false)
+                humanoid:MoveTo(root.Position)
+            end
         end
 
         local targetChest = nil
+        local targetModel = nil
         local pollStart = os.clock()
         while (os.clock() - pollStart) < 1.5 do
+            local localChest = workspace:FindFirstChild("LocalTeamChest", true)
+            if localChest and localChest:IsA("Model") and not localChest:GetAttribute("Opened") then
+                targetChest = { Id = localChest.Name, CFrame = localChest:GetPivot(), Opened = false }
+                targetModel = localChest
+                break
+            end
             if rafting.teamChests and type(rafting.teamChests) == "table" then
                 for _, chest in ipairs(rafting.teamChests) do
                     if not chest.Opened and chest.Id ~= rafting.lastLootedChestId then
@@ -9635,35 +9768,62 @@ function rafting.lootSiteChest(site, deck)
                 end
             end
             if targetChest then break end
-            local localChest = workspace:FindFirstChild("LocalTeamChest", true)
-            if localChest and localChest:IsA("Model") and not localChest:GetAttribute("Opened") then
-                targetChest = { Id = localChest.Name, CFrame = localChest:GetPivot(), Opened = false }
-                break
-            end
             task.wait(0.1)
         end
 
         if targetChest and targetChest.CFrame then
-            stopCharacterVelocity()
-            root.CFrame = targetChest.CFrame * CFrame.new(0, 1.5, 3.5) * CFrame.Angles(0, math.pi, 0)
-            if humanoid then
-                humanoid:Move(Vector3.zero, false)
-                humanoid:MoveTo(root.Position)
+            local approachPos = (targetChest.CFrame * CFrame.new(0, 1.5, 3.5)).Position
+            local distToChest = (root.Position - approachPos).Magnitude
+            local walkedToChest = false
+            if distToChest <= 30 then
+                walkedToChest = walkToPosition(approachPos, 2.0, 3.0)
+            end
+            if not walkedToChest then
+                stopCharacterVelocity()
+                root.CFrame = targetChest.CFrame * CFrame.new(0, 1.5, 3.5) * CFrame.Angles(0, math.pi, 0)
+                if humanoid then
+                    humanoid:Move(Vector3.zero, false)
+                    humanoid:MoveTo(root.Position)
+                end
             end
             task.wait(0.2)
-            local remotes = cowRemotes or (game:GetService("ReplicatedStorage"):FindFirstChild("CowGame") and game.ReplicatedStorage.CowGame:FindFirstChild("Remotes"))
-            local teamChestReq = remotes and remotes:FindFirstChild("TeamChestRequest")
-            if teamChestReq then
-                rafting.lastLootedChestId = targetChest.Id
-                targetChest.Opened = true
-                pcall(function() teamChestReq:FireServer(targetChest.Id) end)
-                task.wait(0.35)
+
+            -- Hooked native trigger via ProximityPrompt from CowGameClient.Bootstrap
+            local triggeredNatively = false
+            if targetModel then
+                triggeredNatively = triggerChestNatively(targetModel)
+            else
+                local foundModel = workspace:FindFirstChild("LocalTeamChest", true)
+                if foundModel then
+                    triggeredNatively = triggerChestNatively(foundModel)
+                end
             end
+
+            -- Fallback remote fire only if prompt trigger unavailable
+            if not triggeredNatively then
+                local remotes = cowRemotes or (game:GetService("ReplicatedStorage"):FindFirstChild("CowGame") and game.ReplicatedStorage.CowGame:FindFirstChild("Remotes"))
+                local teamChestReq = remotes and remotes:FindFirstChild("TeamChestRequest")
+                if teamChestReq then
+                    pcall(function() teamChestReq:FireServer(targetChest.Id) end)
+                end
+            end
+
+            rafting.lastLootedChestId = targetChest.Id
+            targetChest.Opened = true
+            task.wait(0.35)
         end
 
-        local curDeck = rafting.getRaftDeck() or deck
-        if curDeck and root then
-            placeCowAboveDeck(curDeck)
+        -- Walk back towards deck if near, else elevated safe placement
+        local deckRef = rafting.getRaftDeck() or curDeck
+        if deckRef and root then
+            local distBack = (root.Position - deckRef.Position).Magnitude
+            local walkedBack = false
+            if distBack <= 35 and root.Position.Y >= 699.5 then
+                walkedBack = walkToPosition(deckRef.Position, 2.5, 4.0)
+            end
+            if not walkedBack or root.Position.Y < 700.0 then
+                placeCowAboveDeck(deckRef)
+            end
         end
         rafting.isLootingChest = false
     end)
@@ -9883,12 +10043,13 @@ function rafting.stepSteering(dt)
     end
     local lookAheadX = posX + lookAhead
 
-    -- Collect All Loot Chests while navigating: loot upcoming clearings and caves
+    -- Collect All Loot Chests while navigating: loot upcoming clearings and caves in same FjordLevel
     if rafting.collectAllLootChests and not rafting.isLootingChest and root then
         local curDeck = rafting.getRaftDeck()
         if curDeck and rafting.allSites then
+            local curLevel = getFjordLevel(posX)
             for _, s in ipairs(rafting.allSites) do
-                if not rafting.lootedChestSites[s.Id] then
+                if s.FjordLevel == curLevel and rafting.isSiteSelected(s) and not rafting.lootedChestSites[s.Id] then
                     local mouthX = s.Mouth and s.Mouth.X or ((s.MinX + s.MaxX) * 0.5)
                     local distForward = mouthX - posX
                     if distForward >= -50 and distForward <= 150 then
@@ -10430,10 +10591,6 @@ function rafting.teleportToDeck()
     local deck = rafting.getRaftDeck()
     if root and deck then
         placeCowAboveDeck(deck)
-        local rem = rafting.getRemote()
-        if rem then
-            pcall(function() rem:FireServer("Boarded") end)
-        end
         Window:Notify({ Title = "Teleported", Content = "Placed safely ~3 studs above raft deck.", Duration = 3 })
     else
         Window:Notify({ Title = "Teleport Failed", Content = "Raft deck not found.", Duration = 3 })
@@ -10713,21 +10870,30 @@ RaftingTab:CreateDropdown({
 })
 
 RaftingTab:CreateDropdown({
-    Name = "Target Clearings to Visit",
+    Name = "Target Sites to Visit (Clearings & Cubbies)",
     Options = {
-        "All Clearings",
-        "Clearing 01 (North, Reach 1)",
-        "Clearing 02 (South, Reach 1)",
-        "Clearing 03 (North, Reach 3)",
-        "Clearing 04 (South, Reach 3)",
-        "Clearing 05 (North, Reach 5)",
-        "Clearing 06 (South, Reach 5)",
-        "Clearing 07 (North, Reach 5)",
-        "Clearing 08 (South, Reach 5)",
-        "Clearing 09 (South, Reach 7)",
-        "Clearing 10 (North, Reach 7)"
+        "All Sites (Clearings & Cubbies)",
+        "All Clearings Only",
+        "Clearing 01 (Level 1, Reach 1 North)",
+        "Cubby 02 Cave (Level 1, Reach 1 South)",
+        "Clearing 02 (Level 2, Reach 1 South)",
+        "Cubby 01 Cave (Level 2, Reach 1 North)",
+        "Clearing 03 (Level 3, Reach 3 North)",
+        "Cubby 03 Cave (Level 3, Reach 3 South)",
+        "Clearing 04 (Level 3, Reach 3 South)",
+        "Clearing 05 (Level 4, Reach 5 North)",
+        "Clearing 06 (Level 4, Reach 5 North-Center)",
+        "Cubby 04 Cave (Level 4, Reach 5 North)",
+        "Clearing 07 (Level 4, Reach 5 South-Center)",
+        "Clearing 08 (Level 4, Reach 5 South)",
+        "Cave 11 (Level 4, Reach 7 South)",
+        "Clearing 09 (Level 4, Reach 7 South)",
+        "Clearing 10 (Level 4, Reach 7 North)",
+        "Cubby 05 Cave (Level 4, Reach 7 North)",
+        "Cave 12 (Level 4, Reach 7 South)",
+        "Manatite Cave (Level 4, North Terminus)"
     },
-    CurrentOption = {"All Clearings"},
+    CurrentOption = {"All Sites (Clearings & Cubbies)"},
     MultipleOptions = true,
     Flag = "Dropdown_Rafting_TargetClearings",
     Callback = function(Options)
