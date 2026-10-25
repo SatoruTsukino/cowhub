@@ -891,9 +891,12 @@ function trickOrTreat.getHousesFolder()
     local now = os.clock()
     if not trickOrTreat.lastDeepSearch or (now - trickOrTreat.lastDeepSearch >= 3.0) then
         trickOrTreat.lastDeepSearch = now
-        local fhDeep = (cowWorld and (cowWorld:FindFirstChild("FarmerHouses", true) or cowWorld:FindFirstChild("Houses", true)))
-            or workspace:FindFirstChild("FarmerHouses", true)
-            or workspace:FindFirstChild("Houses", true)
+        local fhDeep = nil
+        pcall(function()
+            fhDeep = (cowWorld and (cowWorld:FindFirstChild("FarmerHouses", true) or cowWorld:FindFirstChild("Houses", true)))
+                or workspace:FindFirstChild("FarmerHouses", true)
+                or workspace:FindFirstChild("Houses", true)
+        end)
         if fhDeep then
             trickOrTreat.cachedHousesFolder = fhDeep
             return fhDeep
@@ -1157,24 +1160,31 @@ function trickOrTreat.getTargetCFrame(houseModel)
     if insidePart then table.insert(filter, insidePart) end
     if houseModel then
         -- Exclude roof, ceiling, and interior zone boundaries so raycast never hits the roof!
-        for _, part in ipairs(houseModel:GetDescendants()) do
-            if part:IsA("BasePart") then
-                local pName = part.Name:lower()
-                if pName:find("roof") or pName:find("ceiling") or pName:find("chimney") or pName:find("eave") or pName == "inside" or pName == "interior" then
-                    table.insert(filter, part)
+        pcall(function()
+            for _, part in ipairs(houseModel:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    local pName = part.Name:lower()
+                    if pName:find("roof") or pName:find("ceiling") or pName:find("chimney") or pName:find("eave") or pName == "inside" or pName == "interior" then
+                        table.insert(filter, part)
+                    end
                 end
             end
-        end
+        end)
     end
-    rayParams.FilterDescendantsInstances = filter
-    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    pcall(function()
+        rayParams.FilterDescendantsInstances = filter
+        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    end)
 
     -- Raycast downward from chest height (baseFloorY + 1.0) so it's always underneath roof/ceiling
     local knockFloorY = nil
-    local rayResult = workspace:Raycast(Vector3.new(knockX, baseFloorY + 1.0, knockZ), Vector3.new(0, -8, 0), rayParams)
-    if rayResult then
-        knockFloorY = rayResult.Position.Y + 2.5
-    else
+    pcall(function()
+        local rayResult = workspace:Raycast(Vector3.new(knockX, baseFloorY + 1.0, knockZ), Vector3.new(0, -8, 0), rayParams)
+        if rayResult then
+            knockFloorY = rayResult.Position.Y + 2.5
+        end
+    end)
+    if not knockFloorY then
         knockFloorY = baseFloorY
     end
     knockFloorY = knockFloorY + (trickOrTreat.doorHeightOffset or 0.0)
@@ -1191,10 +1201,13 @@ function trickOrTreat.getTargetCFrame(houseModel)
     -- 2. Approach start position for walking up
     if trickOrTreat.walkUpEnabled and (trickOrTreat.walkDistance or 0) > 0 then
         local appFloorY = nil
-        local appRay = workspace:Raycast(Vector3.new(appX, baseFloorY + 1.0, appZ), Vector3.new(0, -8, 0), rayParams)
-        if appRay then
-            appFloorY = appRay.Position.Y + 2.5
-        else
+        pcall(function()
+            local appRay = workspace:Raycast(Vector3.new(appX, baseFloorY + 1.0, appZ), Vector3.new(0, -8, 0), rayParams)
+            if appRay then
+                appFloorY = appRay.Position.Y + 2.5
+            end
+        end)
+        if not appFloorY then
             appFloorY = knockFloorY
         end
         appFloorY = appFloorY + (trickOrTreat.doorHeightOffset or 0.0)
@@ -1259,7 +1272,8 @@ end
 function trickOrTreat.dismissRewardGui(force)
     if not force and trickOrTreat.autoDismissRewardGui == false and trickOrTreat.autoAcceptRewards == false then return false end
     local p = plr or Players.LocalPlayer or localPlayer
-    local pg = p and p:FindFirstChildWhichIsA("PlayerGui")
+    local pg = nil
+    pcall(function() pg = p and p:FindFirstChildWhichIsA("PlayerGui") end)
     if not pg then return false end
     local dismissed = false
     local vi = VirtualInput
@@ -1271,41 +1285,54 @@ function trickOrTreat.dismissRewardGui(force)
         "TrickOrTreatModal", "TreatReveal", "CandyPailReveal"
     }
     for _, tName in ipairs(targetGuiNames) do
-        local rGui = pg:FindFirstChild(tName)
-        if rGui and rGui:IsA("ScreenGui") and rGui.Enabled then
-            for _, desc in ipairs(rGui:GetDescendants()) do
-                if desc:IsA("GuiButton") and desc.Visible then
-                    local dName = desc.Name:lower()
-                    local dText = (desc:IsA("TextButton") and desc.Text:lower()) or ""
-                    if dName == "primary" or dName == "secondary" or dName == "wearit" or dName == "keepraiding" or dName == "notnow"
-                        or dName:find("close") or dName:find("done") or dName:find("claim") or dName:find("accept") or dName:find("okay")
-                        or dText == "done" or dText:find("done") or dText:find("open another") or dText:find("wear") or dText:find("keep")
-                        or dText:find("not now") or dText:find("close") or dText:find("claim") or dText:find("accept") or dText:find("okay")
-                        or dText == "ok" or dText:find("thank") or dText:find("sweet") or dText:find("treat") then
-                        if firesignal then
-                            pcall(function() firesignal(desc.Activated) end)
-                            pcall(function() firesignal(desc.MouseButton1Click) end)
-                        end
-                        if getconnections then
-                            pcall(function()
-                                for _, c in ipairs(getconnections(desc.Activated)) do
-                                    if c.Function then pcall(c.Function) end
+        local rGui = nil
+        pcall(function() rGui = pg:FindFirstChild(tName) end)
+        local isTargetActive = false
+        pcall(function()
+            if rGui and rGui:IsA("ScreenGui") and rGui.Enabled then
+                isTargetActive = true
+            end
+        end)
+        if isTargetActive then
+            local descs = nil
+            pcall(function() descs = rGui:GetDescendants() end)
+            if descs then
+                for _, desc in ipairs(descs) do
+                    pcall(function()
+                        if desc:IsA("GuiButton") and desc.Visible then
+                            local dName = desc.Name:lower()
+                            local dText = (desc:IsA("TextButton") and desc.Text:lower()) or ""
+                            if dName == "primary" or dName == "secondary" or dName == "wearit" or dName == "keepraiding" or dName == "notnow"
+                                or dName:find("close") or dName:find("done") or dName:find("claim") or dName:find("accept") or dName:find("okay")
+                                or dText == "done" or dText:find("done") or dText:find("open another") or dText:find("wear") or dText:find("keep")
+                                or dText:find("not now") or dText:find("close") or dText:find("claim") or dText:find("accept") or dText:find("okay")
+                                or dText == "ok" or dText:find("thank") or dText:find("sweet") or dText:find("treat") then
+                                if firesignal then
+                                    pcall(function() firesignal(desc.Activated) end)
+                                    pcall(function() firesignal(desc.MouseButton1Click) end)
                                 end
-                                for _, c in ipairs(getconnections(desc.MouseButton1Click)) do
-                                    if c.Function then pcall(c.Function) end
+                                if getconnections then
+                                    pcall(function()
+                                        for _, c in ipairs(getconnections(desc.Activated)) do
+                                            if c.Function then pcall(c.Function) end
+                                        end
+                                        for _, c in ipairs(getconnections(desc.MouseButton1Click)) do
+                                            if c.Function then pcall(c.Function) end
+                                        end
+                                    end)
                                 end
-                            end)
+                                if vi and vi.SendMouseButtonEvent then
+                                    pcall(function()
+                                        local abs = desc.AbsolutePosition + (desc.AbsoluteSize * 0.5)
+                                        vi:SendMouseButtonEvent(abs.X, abs.Y, 0, true, game, 1)
+                                        task.wait(0.04)
+                                        vi:SendMouseButtonEvent(abs.X, abs.Y, 0, false, game, 1)
+                                    end)
+                                end
+                                dismissed = true
+                            end
                         end
-                        if vi and vi.SendMouseButtonEvent then
-                            pcall(function()
-                                local abs = desc.AbsolutePosition + (desc.AbsoluteSize * 0.5)
-                                vi:SendMouseButtonEvent(abs.X, abs.Y, 0, true, game, 1)
-                                task.wait(0.04)
-                                vi:SendMouseButtonEvent(abs.X, abs.Y, 0, false, game, 1)
-                            end)
-                        end
-                        dismissed = true
-                    end
+                    end)
                 end
             end
             if vi and vi.SendKeyEvent then
@@ -1321,48 +1348,65 @@ function trickOrTreat.dismissRewardGui(force)
     end
 
     -- 2. General recursive search across all active ScreenGuis and BillboardGuis
-    for _, gui in ipairs(pg:GetChildren()) do
-        if (gui:IsA("ScreenGui") or gui:IsA("BillboardGui")) and gui.Enabled then
-            local gName = gui.Name:lower()
-            if not gName:find("rayfield") and not gName:find("cowhub") and not gName:find("fjordraftinghud") and gName ~= "trickortreatsign" then
-                for _, desc in ipairs(gui:GetDescendants()) do
-                    if desc:IsA("GuiButton") and desc.Visible then
-                        local name = desc.Name:lower()
-                        local text = (desc:IsA("TextButton") and desc.Text:lower()) or ""
-                        local attrLabel = desc:GetAttribute("AccessibilityLabel")
-                        local labelText = (typeof(attrLabel) == "string" and attrLabel:lower()) or ""
+    local children = nil
+    pcall(function() children = pg:GetChildren() end)
+    if children then
+        for _, gui in ipairs(children) do
+            local canCheck = false
+            local gName = ""
+            pcall(function()
+                if (gui:IsA("ScreenGui") or gui:IsA("BillboardGui")) and gui.Enabled then
+                    gName = gui.Name:lower()
+                    if not gName:find("rayfield") and not gName:find("cowhub") and not gName:find("fjordraftinghud") and gName ~= "trickortreatsign" then
+                        canCheck = true
+                    end
+                end
+            end)
+            if canCheck then
+                local descs = nil
+                pcall(function() descs = gui:GetDescendants() end)
+                if descs then
+                    for _, desc in ipairs(descs) do
+                        pcall(function()
+                            if desc:IsA("GuiButton") and desc.Visible then
+                                local name = desc.Name:lower()
+                                local text = (desc:IsA("TextButton") and desc.Text:lower()) or ""
+                                local attrLabel = desc:GetAttribute("AccessibilityLabel")
+                                local labelText = (typeof(attrLabel) == "string" and attrLabel:lower()) or ""
 
-                        local isRewardBtn = name == "primary" or name == "secondary" or name == "wearit" or name == "keepraiding" or name == "notnow"
-                            or name:find("accept") or name:find("okay") or name == "ok" or name:find("claim") or name:find("confirm") or name:find("close") or name:find("dismiss") or name:find("done")
-                            or text == "done" or text:find("done") or text:find("accept") or text:find("okay") or text == "ok" or text:find("claim") or text:find("confirm") or text:find("close") or text:find("great")
-                            or text:find("open another") or text:find("wear it") or text:find("keep raiding") or text:find("keep knocking") or text:find("not now") or text:find("thank you") or text:find("sweet") or text:find("treat")
-                            or labelText:find("done") or labelText:find("close") or labelText:find("accept") or labelText:find("okay")
+                                local isRewardBtn = name == "primary" or name == "secondary" or name == "wearit" or name == "keepraiding" or name == "notnow"
+                                    or name:find("accept") or name:find("okay") or name == "ok" or name:find("claim") or name:find("confirm") or name:find("close") or name:find("dismiss") or name:find("done")
+                                    or text == "done" or text:find("done") or text:find("accept") or text:find("okay") or text == "ok" or text:find("claim") or text:find("confirm") or text:find("close") or text:find("great")
+                                    or text:find("open another") or text:find("wear it") or text:find("keep raiding") or text:find("keep knocking") or text:find("not now") or text:find("thank you") or text:find("sweet") or text:find("treat")
+                                    or labelText:find("done") or labelText:find("close") or labelText:find("accept") or labelText:find("okay")
 
-                        if isRewardBtn then
-                            if firesignal then
-                                pcall(function() firesignal(desc.Activated) end)
-                                pcall(function() firesignal(desc.MouseButton1Click) end)
-                            end
-                            if getconnections then
-                                pcall(function()
-                                    for _, c in ipairs(getconnections(desc.Activated)) do
-                                        if c.Function then pcall(c.Function) end
+                                if isRewardBtn then
+                                    if firesignal then
+                                        pcall(function() firesignal(desc.Activated) end)
+                                        pcall(function() firesignal(desc.MouseButton1Click) end)
                                     end
-                                    for _, c in ipairs(getconnections(desc.MouseButton1Click)) do
-                                        if c.Function then pcall(c.Function) end
+                                    if getconnections then
+                                        pcall(function()
+                                            for _, c in ipairs(getconnections(desc.Activated)) do
+                                                if c.Function then pcall(c.Function) end
+                                            end
+                                            for _, c in ipairs(getconnections(desc.MouseButton1Click)) do
+                                                if c.Function then pcall(c.Function) end
+                                            end
+                                        end)
                                     end
-                                end)
+                                    if vi and vi.SendMouseButtonEvent then
+                                        pcall(function()
+                                            local abs = desc.AbsolutePosition + (desc.AbsoluteSize * 0.5)
+                                            vi:SendMouseButtonEvent(abs.X, abs.Y, 0, true, game, 1)
+                                            task.wait(0.04)
+                                            vi:SendMouseButtonEvent(abs.X, abs.Y, 0, false, game, 1)
+                                        end)
+                                    end
+                                    dismissed = true
+                                end
                             end
-                            if vi and vi.SendMouseButtonEvent then
-                                pcall(function()
-                                    local abs = desc.AbsolutePosition + (desc.AbsoluteSize * 0.5)
-                                    vi:SendMouseButtonEvent(abs.X, abs.Y, 0, true, game, 1)
-                                    task.wait(0.04)
-                                    vi:SendMouseButtonEvent(abs.X, abs.Y, 0, false, game, 1)
-                                end)
-                            end
-                            dismissed = true
-                        end
+                        end)
                     end
                 end
             end
@@ -1566,8 +1610,14 @@ function trickOrTreat.runCycle()
 
         currentHouseInteracting = house
 
-        local approachCF, knockPos = trickOrTreat.getTargetCFrame(house)
-        if approachCF and knockPos then
+        local approachCF, knockPos, knockCF = nil, nil, nil
+        local okTarget, errTarget = pcall(function()
+            approachCF, knockPos, knockCF = trickOrTreat.getTargetCFrame(house)
+        end)
+        if not okTarget then
+            warn("[CowHub TrickOrTreat] Failed to get target CFrame for house:", errTarget)
+        end
+        if okTarget and approachCF and knockPos then
             local originLabel = trickOrTreat.approachOrigin or "Inside House"
             trickOrTreat.statusText = string.format("Approaching [%d/%d] (%s): %s", i, #houses, originLabel, house.Name)
             trickOrTreat.lastHouseName = house.Name
@@ -1668,7 +1718,7 @@ function trickOrTreat.runCycle()
         end)
         task.wait(0.2)
         if trickOrTreat.autoDismissRewardGui then
-            trickOrTreat.dismissRewardGui()
+            pcall(trickOrTreat.dismissRewardGui)
         end
         stopCharacterVelocity()
     end
@@ -1703,9 +1753,11 @@ function trickOrTreat.startLoop()
             if trickOrTreat.auto and not trickOrTreat.isCycling then
                 local now = os.clock()
                 if now >= trickOrTreat.nextCycleTime then
-                    local success, err = pcall(trickOrTreat.runCycle)
+                    local success, err = xpcall(trickOrTreat.runCycle, function(e)
+                        return debug.traceback(tostring(e), 2)
+                    end)
                     if not success then
-                        warn("[CowHub TrickOrTreat] Error during cycle:", err)
+                        warn("[CowHub TrickOrTreat] Error during cycle:\n" .. tostring(err))
                         trickOrTreat.isCycling = false
                         trickOrTreat.isSingleRun = false
                         trickOrTreat.statusText = "Cycle Error (retrying in 20s)"
@@ -7457,6 +7509,94 @@ function auction.executeBid(lotName, customAmount, isManual)
     end
 end
 
+function auction.parseAmount(input)
+    if not input then return nil end
+    local str = type(input) == "table" and (input.CurrentValue or input.Text or input[1]) or tostring(input)
+    str = str:gsub("%$", ""):gsub(",", ""):gsub("_", ""):gsub("%s+", "")
+    if str == "" then return nil end
+
+    local mult = 1
+    local lower = str:lower()
+    if lower:sub(-1) == "k" then
+        mult = 1000
+        str = str:sub(1, -2)
+    elseif lower:sub(-1) == "m" then
+        mult = 1000000
+        str = str:sub(1, -2)
+    elseif lower:sub(-1) == "b" then
+        mult = 1000000000
+        str = str:sub(1, -2)
+    end
+
+    local num = tonumber(str)
+    if num and num > 0 then
+        return math.floor(num * mult)
+    end
+    return nil
+end
+
+function auction.findTextBox(lotName)
+    local parent = nil
+    if gethui then
+        pcall(function() parent = gethui() end)
+    end
+    if not parent then
+        pcall(function() parent = game:GetService("CoreGui") end)
+    end
+    if not parent and plr then
+        pcall(function() parent = plr:FindFirstChild("PlayerGui") end)
+    end
+    if not parent then return nil end
+
+    local searchPattern = "Bid Amount (" .. lotName .. ")"
+    for _, desc in ipairs(parent:GetDescendants()) do
+        if desc:IsA("TextBox") then
+            local p = desc.Parent
+            while p and p ~= parent do
+                local title = p:FindFirstChild("Title")
+                if title and title:IsA("TextLabel") and title.Text == searchPattern then
+                    return desc
+                end
+                p = p.Parent
+            end
+        end
+    end
+    return nil
+end
+
+function auction.resolveCustomAmount(lotName)
+    local val = auction.customBidAmounts[lotName]
+    if val and val > 0 then return val end
+
+    local flagName = "Input_SkinBid_" .. lotName
+    if Window and Window.Flags and Window.Flags[flagName] ~= nil then
+        val = auction.parseAmount(Window.Flags[flagName])
+        if val and val > 0 then
+            auction.customBidAmounts[lotName] = val
+            return val
+        end
+    end
+
+    if Rayfield and Rayfield.Flags and Rayfield.Flags[flagName] ~= nil then
+        val = auction.parseAmount(Rayfield.Flags[flagName])
+        if val and val > 0 then
+            auction.customBidAmounts[lotName] = val
+            return val
+        end
+    end
+
+    local tb = auction.findTextBox(lotName)
+    if tb and tb.Text and tb.Text ~= "" then
+        val = auction.parseAmount(tb.Text)
+        if val and val > 0 then
+            auction.customBidAmounts[lotName] = val
+            return val
+        end
+    end
+
+    return nil
+end
+
 function auction.setupLotUI(tab, lotName)
     tab:CreateSection({ Name = "Skin Lot: " .. lotName })
 
@@ -8659,9 +8799,11 @@ TotTab:CreateButton({
         trickOrTreat.detectCooldown()
         trickOrTreat.isSingleRun = true
         task.spawn(function()
-            local success, err = pcall(trickOrTreat.runCycle)
+            local success, err = xpcall(trickOrTreat.runCycle, function(e)
+                return debug.traceback(tostring(e), 2)
+            end)
             if not success then
-                warn("[CowHub TrickOrTreat] Error during single cycle:", err)
+                warn("[CowHub TrickOrTreat] Error during single cycle:\n" .. tostring(err))
                 trickOrTreat.isCycling = false
                 trickOrTreat.isSingleRun = false
                 trickOrTreat.statusText = "Error in cycle"
@@ -10286,7 +10428,8 @@ rafting.getHobgoblinEvasionOffset = rafting.getThreatEvasionOffset
 function rafting.dismissChestRewardGui(force)
     if not force and rafting.autoDismissRewardGui == false and rafting.autoAcceptRewards == false then return false end
     local p = plr or Players.LocalPlayer or localPlayer
-    local pg = p and p:FindFirstChildWhichIsA("PlayerGui")
+    local pg = nil
+    pcall(function() pg = p and p:FindFirstChildWhichIsA("PlayerGui") end)
     if not pg then return false end
     local dismissed = false
     local vi = VirtualInput
@@ -10294,39 +10437,52 @@ function rafting.dismissChestRewardGui(force)
     -- 1. Targeted dismissal for known reward / reveal modal ScreenGuis (RewardBoxReveal from TeamChestController, etc.)
     local targetGuiNames = { "RewardBoxReveal", "CaravanCrateReveal", "CowFavoriteReward", "FavoriteRewardPrompt", "QuestModal" }
     for _, tName in ipairs(targetGuiNames) do
-        local rGui = pg:FindFirstChild(tName)
-        if rGui and rGui:IsA("ScreenGui") and rGui.Enabled then
+        local rGui = nil
+        pcall(function() rGui = pg:FindFirstChild(tName) end)
+        local isTargetActive = false
+        pcall(function()
+            if rGui and rGui:IsA("ScreenGui") and rGui.Enabled then
+                isTargetActive = true
+            end
+        end)
+        if isTargetActive then
             -- Find action buttons inside panel (Primary: "Done" / "Open another", Secondary: "Done", WearIt, KeepRaiding, NotNow)
-            for _, desc in ipairs(rGui:GetDescendants()) do
-                if desc:IsA("GuiButton") and desc.Visible then
-                    local dName = desc.Name:lower()
-                    local dText = (desc:IsA("TextButton") and desc.Text:lower()) or ""
-                    if dName == "primary" or dName == "secondary" or dName == "wearit" or dName == "keepraiding" or dName == "notnow"
-                        or dText == "done" or dText:find("done") or dText:find("open another") or dText:find("wear") or dText:find("keep") or dText:find("not now") or dText:find("close") then
-                        if firesignal then
-                            pcall(function() firesignal(desc.Activated) end)
-                            pcall(function() firesignal(desc.MouseButton1Click) end)
-                        end
-                        if getconnections then
-                            pcall(function()
-                                for _, c in ipairs(getconnections(desc.Activated)) do
-                                    if c.Function then pcall(c.Function) end
+            local descs = nil
+            pcall(function() descs = rGui:GetDescendants() end)
+            if descs then
+                for _, desc in ipairs(descs) do
+                    pcall(function()
+                        if desc:IsA("GuiButton") and desc.Visible then
+                            local dName = desc.Name:lower()
+                            local dText = (desc:IsA("TextButton") and desc.Text:lower()) or ""
+                            if dName == "primary" or dName == "secondary" or dName == "wearit" or dName == "keepraiding" or dName == "notnow"
+                                or dText == "done" or dText:find("done") or dText:find("open another") or dText:find("wear") or dText:find("keep") or dText:find("not now") or dText:find("close") then
+                                if firesignal then
+                                    pcall(function() firesignal(desc.Activated) end)
+                                    pcall(function() firesignal(desc.MouseButton1Click) end)
                                 end
-                                for _, c in ipairs(getconnections(desc.MouseButton1Click)) do
-                                    if c.Function then pcall(c.Function) end
+                                if getconnections then
+                                    pcall(function()
+                                        for _, c in ipairs(getconnections(desc.Activated)) do
+                                            if c.Function then pcall(c.Function) end
+                                        end
+                                        for _, c in ipairs(getconnections(desc.MouseButton1Click)) do
+                                            if c.Function then pcall(c.Function) end
+                                        end
+                                    end)
                                 end
-                            end)
+                                if vi and vi.SendMouseButtonEvent then
+                                    pcall(function()
+                                        local abs = desc.AbsolutePosition + (desc.AbsoluteSize * 0.5)
+                                        vi:SendMouseButtonEvent(abs.X, abs.Y, 0, true, game, 1)
+                                        task.wait(0.04)
+                                        vi:SendMouseButtonEvent(abs.X, abs.Y, 0, false, game, 1)
+                                    end)
+                                end
+                                dismissed = true
+                            end
                         end
-                        if vi and vi.SendMouseButtonEvent then
-                            pcall(function()
-                                local abs = desc.AbsolutePosition + (desc.AbsoluteSize * 0.5)
-                                vi:SendMouseButtonEvent(abs.X, abs.Y, 0, true, game, 1)
-                                task.wait(0.04)
-                                vi:SendMouseButtonEvent(abs.X, abs.Y, 0, false, game, 1)
-                            end)
-                        end
-                        dismissed = true
-                    end
+                    end)
                 end
             end
             -- Send Escape key (natively bound to CowRewardBoxRevealClose in ContextActionService at priority 3300)
@@ -10344,48 +10500,65 @@ function rafting.dismissChestRewardGui(force)
     end
 
     -- 2. General recursive search across all active ScreenGuis and BillboardGuis
-    for _, gui in ipairs(pg:GetChildren()) do
-        if (gui:IsA("ScreenGui") or gui:IsA("BillboardGui")) and gui.Enabled then
-            local gName = gui.Name:lower()
-            if not gName:find("rayfield") and not gName:find("cowhub") and not gName:find("fjordraftinghud") then
-                for _, desc in ipairs(gui:GetDescendants()) do
-                    if desc:IsA("GuiButton") and desc.Visible then
-                        local name = desc.Name:lower()
-                        local text = (desc:IsA("TextButton") and desc.Text:lower()) or ""
-                        local attrLabel = desc:GetAttribute("AccessibilityLabel")
-                        local labelText = (typeof(attrLabel) == "string" and attrLabel:lower()) or ""
+    local children = nil
+    pcall(function() children = pg:GetChildren() end)
+    if children then
+        for _, gui in ipairs(children) do
+            local canCheck = false
+            local gName = ""
+            pcall(function()
+                if (gui:IsA("ScreenGui") or gui:IsA("BillboardGui")) and gui.Enabled then
+                    gName = gui.Name:lower()
+                    if not gName:find("rayfield") and not gName:find("cowhub") and not gName:find("fjordraftinghud") then
+                        canCheck = true
+                    end
+                end
+            end)
+            if canCheck then
+                local descs = nil
+                pcall(function() descs = gui:GetDescendants() end)
+                if descs then
+                    for _, desc in ipairs(descs) do
+                        pcall(function()
+                            if desc:IsA("GuiButton") and desc.Visible then
+                                local name = desc.Name:lower()
+                                local text = (desc:IsA("TextButton") and desc.Text:lower()) or ""
+                                local attrLabel = desc:GetAttribute("AccessibilityLabel")
+                                local labelText = (typeof(attrLabel) == "string" and attrLabel:lower()) or ""
 
-                        local isRewardBtn = name == "primary" or name == "secondary" or name == "wearit" or name == "keepraiding" or name == "notnow"
-                            or name:find("accept") or name:find("okay") or name == "ok" or name:find("claim") or name:find("confirm") or name:find("close") or name:find("dismiss") or name:find("done")
-                            or text == "done" or text:find("done") or text:find("accept") or text:find("okay") or text == "ok" or text:find("claim") or text:find("confirm") or text:find("close") or text:find("great")
-                            or text:find("open another") or text:find("wear it") or text:find("keep raiding") or text:find("keep knocking") or text:find("not now") or text:find("thank you")
-                            or labelText:find("done") or labelText:find("close") or labelText:find("accept") or labelText:find("okay")
+                                local isRewardBtn = name == "primary" or name == "secondary" or name == "wearit" or name == "keepraiding" or name == "notnow"
+                                    or name:find("accept") or name:find("okay") or name == "ok" or name:find("claim") or name:find("confirm") or name:find("close") or name:find("dismiss") or name:find("done")
+                                    or text == "done" or text:find("done") or text:find("accept") or text:find("okay") or text == "ok" or text:find("claim") or text:find("confirm") or text:find("close") or text:find("great")
+                                    or text:find("open another") or text:find("wear it") or text:find("keep raiding") or text:find("keep knocking") or text:find("not now") or text:find("thank you")
+                                    or labelText:find("done") or labelText:find("close") or labelText:find("accept") or labelText:find("okay")
 
-                        if isRewardBtn then
-                            if firesignal then
-                                pcall(function() firesignal(desc.Activated) end)
-                                pcall(function() firesignal(desc.MouseButton1Click) end)
-                            end
-                            if getconnections then
-                                pcall(function()
-                                    for _, c in ipairs(getconnections(desc.Activated)) do
-                                        if c.Function then pcall(c.Function) end
+                                if isRewardBtn then
+                                    if firesignal then
+                                        pcall(function() firesignal(desc.Activated) end)
+                                        pcall(function() firesignal(desc.MouseButton1Click) end)
                                     end
-                                    for _, c in ipairs(getconnections(desc.MouseButton1Click)) do
-                                        if c.Function then pcall(c.Function) end
+                                    if getconnections then
+                                        pcall(function()
+                                            for _, c in ipairs(getconnections(desc.Activated)) do
+                                                if c.Function then pcall(c.Function) end
+                                            end
+                                            for _, c in ipairs(getconnections(desc.MouseButton1Click)) do
+                                                if c.Function then pcall(c.Function) end
+                                            end
+                                        end)
                                     end
-                                end)
+                                    if vi and vi.SendMouseButtonEvent then
+                                        pcall(function()
+                                            local abs = desc.AbsolutePosition + (desc.AbsoluteSize * 0.5)
+                                            vi:SendMouseButtonEvent(abs.X, abs.Y, 0, true, game, 1)
+                                            task.wait(0.04)
+                                            vi:SendMouseButtonEvent(abs.X, abs.Y, 0, false, game, 1)
+                                        end)
+                                    end
+                                    dismissed = true
+                                end
                             end
-                            if vi and vi.SendMouseButtonEvent then
-                                pcall(function()
-                                    local abs = desc.AbsolutePosition + (desc.AbsoluteSize * 0.5)
-                                    vi:SendMouseButtonEvent(abs.X, abs.Y, 0, true, game, 1)
-                                    task.wait(0.04)
-                                    vi:SendMouseButtonEvent(abs.X, abs.Y, 0, false, game, 1)
-                                end)
-                            end
-                            dismissed = true
-                        end
+                        end)
                     end
                 end
             end
@@ -10427,9 +10600,18 @@ if ProximityPromptService then
     pcall(function()
         ProximityPromptService.PromptTriggered:Connect(function(prompt, playerWhoTriggered)
             if playerWhoTriggered == (plr or Players.LocalPlayer) and prompt then
-                local promptName = prompt.Name:lower()
-                local pName = (prompt.Parent and prompt.Parent.Name:lower()) or ""
-                local grandParentName = (prompt.Parent and prompt.Parent.Parent and prompt.Parent.Parent.Name:lower()) or ""
+                local promptName = ""
+                local pName = ""
+                local grandParentName = ""
+                pcall(function()
+                    promptName = prompt.Name:lower()
+                    if prompt.Parent then
+                        pName = prompt.Parent.Name:lower()
+                        if prompt.Parent.Parent then
+                            grandParentName = prompt.Parent.Parent.Name:lower()
+                        end
+                    end
+                end)
                 if promptName:find("chest") or pName:find("chest") or grandParentName:find("chest") or pName == "localteamchest" or grandParentName == "localteamchest" then
                     rafting.pollRewardGuiUntilDismissed(8.0)
                 elseif promptName:find("knock") or promptName:find("door") or promptName:find("treat") or pName:find("door") or grandParentName:find("farmerhouse") then
@@ -10443,23 +10625,30 @@ if ProximityPromptService then
 end
 
 task.spawn(function()
-    local pg = (plr or Players.LocalPlayer):WaitForChild("PlayerGui", 5)
+    local pg = nil
+    pcall(function()
+        pg = (plr or Players.LocalPlayer):WaitForChild("PlayerGui", 5)
+    end)
     if pg then
         pg.ChildAdded:Connect(function(child)
-            if rafting.autoDismissRewardGui and (child.Name == "RewardBoxReveal" or child.Name:find("Reveal") or child.Name:find("Reward")) then
+            local childName = nil
+            pcall(function() childName = child.Name end)
+            if not childName then return end
+
+            if rafting.autoDismissRewardGui and (childName == "RewardBoxReveal" or childName:find("Reveal") or childName:find("Reward")) then
                 task.wait(0.2)
                 rafting.dismissChestRewardGui()
             end
             if trickOrTreat and trickOrTreat.autoDismissRewardGui and (
-                child.Name == "RewardBoxReveal"
-                or child.Name:find("Reveal")
-                or child.Name:find("Reward")
-                or child.Name:find("Treat")
-                or child.Name:find("Halloween")
-                or child.Name:find("Candy")
+                childName == "RewardBoxReveal"
+                or childName:find("Reveal")
+                or childName:find("Reward")
+                or childName:find("Treat")
+                or childName:find("Halloween")
+                or childName:find("Candy")
             ) then
                 task.wait(0.2)
-                trickOrTreat.dismissRewardGui()
+                pcall(trickOrTreat.dismissRewardGui)
             end
         end)
     end
