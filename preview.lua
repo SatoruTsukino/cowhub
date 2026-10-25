@@ -758,6 +758,8 @@ mithril = {
 -- ==========================
 trickOrTreat = {
     auto = false,
+    autoDismissRewardGui = true,
+    autoAcceptRewards = true,
     isCycling = false,
     isSingleRun = false,
     returnOnFinish = true,
@@ -1254,6 +1256,149 @@ function trickOrTreat.initClientListener()
     end)
 end
 
+function trickOrTreat.dismissRewardGui(force)
+    if not force and trickOrTreat.autoDismissRewardGui == false and trickOrTreat.autoAcceptRewards == false then return false end
+    local p = plr or Players.LocalPlayer or localPlayer
+    local pg = p and p:FindFirstChildWhichIsA("PlayerGui")
+    if not pg then return false end
+    local dismissed = false
+    local vi = VirtualInput
+
+    -- 1. Targeted dismissal for known reward / reveal modal ScreenGuis
+    local targetGuiNames = {
+        "RewardBoxReveal", "HalloweenReward", "TrickOrTreatReward", "CandyReveal",
+        "EventReward", "CowFavoriteReward", "FavoriteRewardPrompt", "QuestModal",
+        "TrickOrTreatModal", "TreatReveal", "CandyPailReveal"
+    }
+    for _, tName in ipairs(targetGuiNames) do
+        local rGui = pg:FindFirstChild(tName)
+        if rGui and rGui:IsA("ScreenGui") and rGui.Enabled then
+            for _, desc in ipairs(rGui:GetDescendants()) do
+                if desc:IsA("GuiButton") and desc.Visible then
+                    local dName = desc.Name:lower()
+                    local dText = (desc:IsA("TextButton") and desc.Text:lower()) or ""
+                    if dName == "primary" or dName == "secondary" or dName == "wearit" or dName == "keepraiding" or dName == "notnow"
+                        or dName:find("close") or dName:find("done") or dName:find("claim") or dName:find("accept") or dName:find("okay")
+                        or dText == "done" or dText:find("done") or dText:find("open another") or dText:find("wear") or dText:find("keep")
+                        or dText:find("not now") or dText:find("close") or dText:find("claim") or dText:find("accept") or dText:find("okay")
+                        or dText == "ok" or dText:find("thank") or dText:find("sweet") or dText:find("treat") then
+                        if firesignal then
+                            pcall(function() firesignal(desc.Activated) end)
+                            pcall(function() firesignal(desc.MouseButton1Click) end)
+                        end
+                        if getconnections then
+                            pcall(function()
+                                for _, c in ipairs(getconnections(desc.Activated)) do
+                                    if c.Function then pcall(c.Function) end
+                                end
+                                for _, c in ipairs(getconnections(desc.MouseButton1Click)) do
+                                    if c.Function then pcall(c.Function) end
+                                end
+                            end)
+                        end
+                        if vi and vi.SendMouseButtonEvent then
+                            pcall(function()
+                                local abs = desc.AbsolutePosition + (desc.AbsoluteSize * 0.5)
+                                vi:SendMouseButtonEvent(abs.X, abs.Y, 0, true, game, 1)
+                                task.wait(0.04)
+                                vi:SendMouseButtonEvent(abs.X, abs.Y, 0, false, game, 1)
+                            end)
+                        end
+                        dismissed = true
+                    end
+                end
+            end
+            if vi and vi.SendKeyEvent then
+                pcall(function()
+                    vi:SendKeyEvent(true, Enum.KeyCode.Escape, false, game)
+                    task.wait(0.05)
+                    vi:SendKeyEvent(false, Enum.KeyCode.Escape, false, game)
+                end)
+            end
+            pcall(function() rGui.Enabled = false end)
+            dismissed = true
+        end
+    end
+
+    -- 2. General recursive search across all active ScreenGuis and BillboardGuis
+    for _, gui in ipairs(pg:GetChildren()) do
+        if (gui:IsA("ScreenGui") or gui:IsA("BillboardGui")) and gui.Enabled then
+            local gName = gui.Name:lower()
+            if not gName:find("rayfield") and not gName:find("cowhub") and not gName:find("fjordraftinghud") and gName ~= "trickortreatsign" then
+                for _, desc in ipairs(gui:GetDescendants()) do
+                    if desc:IsA("GuiButton") and desc.Visible then
+                        local name = desc.Name:lower()
+                        local text = (desc:IsA("TextButton") and desc.Text:lower()) or ""
+                        local attrLabel = desc:GetAttribute("AccessibilityLabel")
+                        local labelText = (typeof(attrLabel) == "string" and attrLabel:lower()) or ""
+
+                        local isRewardBtn = name == "primary" or name == "secondary" or name == "wearit" or name == "keepraiding" or name == "notnow"
+                            or name:find("accept") or name:find("okay") or name == "ok" or name:find("claim") or name:find("confirm") or name:find("close") or name:find("dismiss") or name:find("done")
+                            or text == "done" or text:find("done") or text:find("accept") or text:find("okay") or text == "ok" or text:find("claim") or text:find("confirm") or text:find("close") or text:find("great")
+                            or text:find("open another") or text:find("wear it") or text:find("keep raiding") or text:find("keep knocking") or text:find("not now") or text:find("thank you") or text:find("sweet") or text:find("treat")
+                            or labelText:find("done") or labelText:find("close") or labelText:find("accept") or labelText:find("okay")
+
+                        if isRewardBtn then
+                            if firesignal then
+                                pcall(function() firesignal(desc.Activated) end)
+                                pcall(function() firesignal(desc.MouseButton1Click) end)
+                            end
+                            if getconnections then
+                                pcall(function()
+                                    for _, c in ipairs(getconnections(desc.Activated)) do
+                                        if c.Function then pcall(c.Function) end
+                                    end
+                                    for _, c in ipairs(getconnections(desc.MouseButton1Click)) do
+                                        if c.Function then pcall(c.Function) end
+                                    end
+                                end)
+                            end
+                            if vi and vi.SendMouseButtonEvent then
+                                pcall(function()
+                                    local abs = desc.AbsolutePosition + (desc.AbsoluteSize * 0.5)
+                                    vi:SendMouseButtonEvent(abs.X, abs.Y, 0, true, game, 1)
+                                    task.wait(0.04)
+                                    vi:SendMouseButtonEvent(abs.X, abs.Y, 0, false, game, 1)
+                                end)
+                            end
+                            dismissed = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if dismissed and vi and vi.SendKeyEvent then
+        pcall(function()
+            vi:SendKeyEvent(true, Enum.KeyCode.Escape, false, game)
+            task.wait(0.04)
+            vi:SendKeyEvent(false, Enum.KeyCode.Escape, false, game)
+        end)
+    end
+
+    return dismissed
+end
+
+function trickOrTreat.pollRewardGuiUntilDismissed(timeoutSecs, force)
+    if not force and trickOrTreat.autoDismissRewardGui == false and trickOrTreat.autoAcceptRewards == false then return end
+    timeoutSecs = timeoutSecs or 4.0
+    task.spawn(function()
+        local startTime = os.clock()
+        while (os.clock() - startTime) < timeoutSecs do
+            if not force and trickOrTreat.autoDismissRewardGui == false and trickOrTreat.autoAcceptRewards == false then break end
+            local dismissed = trickOrTreat.dismissRewardGui(force)
+            if dismissed then
+                task.wait(0.25)
+                if not trickOrTreat.dismissRewardGui(force) then
+                    break
+                end
+            end
+            task.wait(0.15)
+        end
+    end)
+end
+
 function trickOrTreat.updateStatusUI()
     if not trickOrTreat.statusCard then return end
     local now = os.clock()
@@ -1491,6 +1636,9 @@ function trickOrTreat.runCycle()
             knockedCount = knockedCount + 1
 
             -- 7. Wait interaction delay (throttle next knock, respecting NextKnockAt = 1.2s)
+            if trickOrTreat.autoDismissRewardGui then
+                trickOrTreat.pollRewardGuiUntilDismissed(trickOrTreat.houseWaitTime)
+            end
             task.wait(trickOrTreat.houseWaitTime)
 
             if trickOrTreat.anchorDuringKnock then
@@ -1519,6 +1667,9 @@ function trickOrTreat.runCycle()
             stopCharacterVelocity()
         end)
         task.wait(0.2)
+        if trickOrTreat.autoDismissRewardGui then
+            trickOrTreat.dismissRewardGui()
+        end
         stopCharacterVelocity()
     end
 
@@ -8475,6 +8626,28 @@ TotTab:CreateToggle({
     end,
 })
 
+TotTab:CreateToggle({
+    Name = "Auto-Dismiss Reward GUI (Accept / Okay / Done)",
+    CurrentValue = true,
+    Flag = "Toggle_ToT_DismissRewardGui",
+    Callback = function(Value)
+        trickOrTreat.autoDismissRewardGui = Value
+        trickOrTreat.autoAcceptRewards = Value
+    end,
+})
+
+TotTab:CreateButton({
+    Name = "Dismiss Reward GUI Now",
+    Callback = function()
+        local didDismiss = trickOrTreat.dismissRewardGui(true)
+        if didDismiss then
+            Window:Notify({ Title = "Trick or Treat GUI", Content = "Dismissed reward popup.", Duration = 2 })
+        else
+            Window:Notify({ Title = "Trick or Treat GUI", Content = "No active reward popup found.", Duration = 2 })
+        end
+    end,
+})
+
 TotTab:CreateButton({
     Name = "Run Single Cycle Now",
     Callback = function()
@@ -10259,6 +10432,10 @@ if ProximityPromptService then
                 local grandParentName = (prompt.Parent and prompt.Parent.Parent and prompt.Parent.Parent.Name:lower()) or ""
                 if promptName:find("chest") or pName:find("chest") or grandParentName:find("chest") or pName == "localteamchest" or grandParentName == "localteamchest" then
                     rafting.pollRewardGuiUntilDismissed(8.0)
+                elseif promptName:find("knock") or promptName:find("door") or promptName:find("treat") or pName:find("door") or grandParentName:find("farmerhouse") then
+                    if trickOrTreat and trickOrTreat.autoDismissRewardGui then
+                        trickOrTreat.pollRewardGuiUntilDismissed(4.0)
+                    end
                 end
             end
         end)
@@ -10272,6 +10449,17 @@ task.spawn(function()
             if rafting.autoDismissRewardGui and (child.Name == "RewardBoxReveal" or child.Name:find("Reveal") or child.Name:find("Reward")) then
                 task.wait(0.2)
                 rafting.dismissChestRewardGui()
+            end
+            if trickOrTreat and trickOrTreat.autoDismissRewardGui and (
+                child.Name == "RewardBoxReveal"
+                or child.Name:find("Reveal")
+                or child.Name:find("Reward")
+                or child.Name:find("Treat")
+                or child.Name:find("Halloween")
+                or child.Name:find("Candy")
+            ) then
+                task.wait(0.2)
+                trickOrTreat.dismissRewardGui()
             end
         end)
     end
