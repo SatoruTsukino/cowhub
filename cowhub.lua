@@ -812,6 +812,9 @@ local function stopCharacterVelocity()
 end
 
 function trickOrTreat.detectCooldown()
+    if not trickOrTreat.autoDetectCooldown then
+        return nil
+    end
     local detected = nil
     pcall(function()
         local shared = cowGame and cowGame:FindFirstChild("Shared")
@@ -821,8 +824,8 @@ function trickOrTreat.detectCooldown()
                 local hw = require(hwConfigMod)
                 if type(hw) == "table" and type(hw.TrickOrTreat) == "table" then
                     local tot = hw.TrickOrTreat
-                    for _, k in ipairs({"Cooldown", "HouseCooldown", "KnockCooldown", "WaitTime", "CooldownSeconds", "CycleCooldown", "CycleSeconds"}) do
-                        if type(tot[k]) == "number" and tot[k] > 0 then
+                    for _, k in ipairs({"CycleCooldown", "CycleSeconds", "CooldownSeconds", "Cooldown"}) do
+                        if type(tot[k]) == "number" and tot[k] >= 60 then
                             detected = tot[k]
                             break
                         end
@@ -834,8 +837,8 @@ function trickOrTreat.detectCooldown()
                 if hwRulesMod then
                     local rules = require(hwRulesMod)
                     if type(rules) == "table" then
-                        for _, k in ipairs({"HouseCooldown", "Cooldown", "KnockCooldown", "WaitTime", "KnockWaitTime"}) do
-                            if type(rules[k]) == "number" and rules[k] > 0 then
+                        for _, k in ipairs({"CycleCooldown", "CycleSeconds", "CooldownSeconds", "Cooldown"}) do
+                            if type(rules[k]) == "number" and rules[k] >= 60 then
                                 detected = rules[k]
                                 break
                             end
@@ -845,9 +848,16 @@ function trickOrTreat.detectCooldown()
             end
         end
     end)
-    if detected and detected > 0 then
+    if detected and detected >= 60 then
         trickOrTreat.detectedCooldown = detected
         trickOrTreat.cycleCooldown = detected
+        if trickOrTreat.lastCycleCompletedTime > 0 and not trickOrTreat.isCycling then
+            local now = os.clock()
+            local targetNext = trickOrTreat.lastCycleCompletedTime + detected
+            if targetNext > now then
+                trickOrTreat.nextCycleTime = targetNext
+            end
+        end
     end
     return detected
 end
@@ -1255,11 +1265,14 @@ function trickOrTreat.initClientListener()
                 if eventName == "TrickOrTreat" and type(payload) == "table" then
                     if payload.Kind == "Refused" and tostring(payload.Reason) == "Cooldown" and type(payload.Wait) == "number" then
                         local waitSecs = math.ceil(payload.Wait)
-                        if waitSecs > 0 then
-                            trickOrTreat.nextCycleTime = math.max(trickOrTreat.nextCycleTime, os.clock() + waitSecs)
-                            if trickOrTreat.autoDetectCooldown and waitSecs > 10 then
+                        -- Only treat as full village cycle cooldown if >= 60 seconds.
+                        -- Lower values are door-level interaction throttles.
+                        if waitSecs >= 60 then
+                            if trickOrTreat.autoDetectCooldown then
+                                trickOrTreat.detectedCooldown = waitSecs
                                 trickOrTreat.cycleCooldown = waitSecs
                             end
+                            trickOrTreat.nextCycleTime = math.max(trickOrTreat.nextCycleTime, os.clock() + waitSecs)
                             trickOrTreat.updateStatusUI()
                         end
                     end
@@ -1476,8 +1489,9 @@ function trickOrTreat.updateStatusUI()
     if trickOrTreat.infoCard then
         local infoTitle = "Cycle Telemetry"
         local cdMin = math.floor(trickOrTreat.cycleCooldown / 60)
-        local cdSec = math.floor(trickOrTreat.cycleCooldown % 60)
-        local infoBody = string.format("Configured Cooldown: %d:%02d (%ds)\nLast Cycle Houses Knocked: %d\nLast House: %s",
+        local modeStr = trickOrTreat.autoDetectCooldown and "Auto-Detected" or "Manual"
+        local infoBody = string.format("Cooldown Mode: %s\nConfigured Cooldown: %d:%02d (%ds)\nLast Cycle Houses Knocked: %d\nLast House: %s",
+            modeStr,
             cdMin, cdSec, trickOrTreat.cycleCooldown,
             trickOrTreat.housesVisitedCount,
             trickOrTreat.lastHouseName ~= "" and trickOrTreat.lastHouseName or "None"
@@ -1509,6 +1523,9 @@ function trickOrTreat.runCycle()
     if not root or not char or not humanoid or humanoid.Health <= 0 then
         trickOrTreat.isCycling = false
         trickOrTreat.isSingleRun = false
+        trickOrTreat.statusText = "Waiting for character spawn..."
+        trickOrTreat.nextCycleTime = os.clock() + 10
+        trickOrTreat.updateStatusUI()
         return
     end
 
@@ -1723,17 +1740,18 @@ function trickOrTreat.runCycle()
         stopCharacterVelocity()
     end
 
+    local cd = math.max(10, trickOrTreat.cycleCooldown or 600)
     trickOrTreat.lastCycleCompletedTime = os.clock()
     trickOrTreat.housesVisitedCount = knockedCount
-    trickOrTreat.nextCycleTime = os.clock() + trickOrTreat.cycleCooldown
+    trickOrTreat.nextCycleTime = os.clock() + cd
     trickOrTreat.isCycling = false
     trickOrTreat.isSingleRun = false
     trickOrTreat.statusText = string.format("Cycle finished (%d houses). On cooldown.", knockedCount)
     trickOrTreat.updateStatusUI()
 
     if Window and Window.Notify then
-        local cdMin = math.floor(trickOrTreat.cycleCooldown / 60)
-        local cdSec = math.floor(trickOrTreat.cycleCooldown % 60)
+        local cdMin = math.floor(cd / 60)
+        local cdSec = math.floor(cd % 60)
         Window:Notify({
             Title = "Trick or Treat Cycle Complete",
             Content = string.format("Knocked %d houses! Returned to start. Next cycle in %d:%02d.", knockedCount, cdMin, cdSec),
@@ -1786,13 +1804,26 @@ function trickOrTreat.toggle(Value)
 
     if Value then
         trickOrTreat.initClientListener()
-        trickOrTreat.detectCooldown()
-        trickOrTreat.nextCycleTime = 0
+        if trickOrTreat.autoDetectCooldown then
+            trickOrTreat.detectCooldown()
+        end
+        local now = os.clock()
+        local cd = math.max(10, trickOrTreat.cycleCooldown or 600)
+        if trickOrTreat.lastCycleCompletedTime > 0 and (now - trickOrTreat.lastCycleCompletedTime < cd) then
+            trickOrTreat.nextCycleTime = trickOrTreat.lastCycleCompletedTime + cd
+        else
+            trickOrTreat.nextCycleTime = 0
+        end
         trickOrTreat.startLoop()
+        trickOrTreat.updateStatusUI()
         if Window and Window.Notify then
+            local notifyMsg = "Autofarm enabled. Starting cycle..."
+            if trickOrTreat.nextCycleTime > now then
+                notifyMsg = string.format("Autofarm enabled. Next cycle in %ds (cooldown active).", math.ceil(trickOrTreat.nextCycleTime - now))
+            end
             Window:Notify({
                 Title = "Trick or Treat Autofarm",
-                Content = "Autofarm enabled. Teleporting to barn to load map...",
+                Content = notifyMsg,
                 Duration = 3,
                 Image = 4483362458,
             })
@@ -1933,6 +1964,14 @@ function afkRelog.saveState()
         TrickOrTreat = {
             Auto = (trickOrTreat and trickOrTreat.auto) == true,
             CycleCooldown = trickOrTreat and trickOrTreat.cycleCooldown or 600,
+            AutoDetectCooldown = (trickOrTreat and trickOrTreat.autoDetectCooldown) ~= false,
+            AutoDismissRewardGui = (trickOrTreat and trickOrTreat.autoDismissRewardGui) ~= false,
+            ReturnOnFinish = (trickOrTreat and trickOrTreat.returnOnFinish) ~= false,
+            AnchorDuringKnock = (trickOrTreat and trickOrTreat.anchorDuringKnock) ~= false,
+            PauseFarmDuringCycle = (trickOrTreat and trickOrTreat.pauseFarmDuringCycle) ~= false,
+            BarnLoadDelay = trickOrTreat and trickOrTreat.barnLoadDelay or 2.5,
+            HouseWaitTime = trickOrTreat and trickOrTreat.houseWaitTime or 1.4,
+            SettleDelay = trickOrTreat and trickOrTreat.settleDelay or 0.3,
             WalkUpEnabled = (trickOrTreat and trickOrTreat.walkUpEnabled) ~= false,
             DisableInsideCollision = (trickOrTreat and trickOrTreat.disableInsideCollision) ~= false,
             ApproachOrigin = trickOrTreat and trickOrTreat.approachOrigin or "Inside House",
@@ -2143,9 +2182,42 @@ function afkRelog.checkAndResumeState()
             pcall(function() Window:Set("Toggle_MithrilFarm", true) end)
         end
         if data.TrickOrTreat then
+            if data.TrickOrTreat.AutoDetectCooldown ~= nil then
+                trickOrTreat.autoDetectCooldown = data.TrickOrTreat.AutoDetectCooldown
+                pcall(function() Window:Set("Toggle_ToT_AutoDetect", data.TrickOrTreat.AutoDetectCooldown) end)
+            end
+            if data.TrickOrTreat.AutoDismissRewardGui ~= nil then
+                trickOrTreat.autoDismissRewardGui = data.TrickOrTreat.AutoDismissRewardGui
+                trickOrTreat.autoAcceptRewards = data.TrickOrTreat.AutoDismissRewardGui
+                pcall(function() Window:Set("Toggle_ToT_DismissRewardGui", data.TrickOrTreat.AutoDismissRewardGui) end)
+            end
             if data.TrickOrTreat.CycleCooldown then
                 trickOrTreat.cycleCooldown = data.TrickOrTreat.CycleCooldown
                 pcall(function() Window:Set("Slider_ToT_CycleCooldown", data.TrickOrTreat.CycleCooldown) end)
+            end
+            if data.TrickOrTreat.BarnLoadDelay then
+                trickOrTreat.barnLoadDelay = data.TrickOrTreat.BarnLoadDelay
+                pcall(function() Window:Set("Slider_ToT_BarnDelay", data.TrickOrTreat.BarnLoadDelay) end)
+            end
+            if data.TrickOrTreat.HouseWaitTime then
+                trickOrTreat.houseWaitTime = data.TrickOrTreat.HouseWaitTime
+                pcall(function() Window:Set("Slider_ToT_HouseWait", data.TrickOrTreat.HouseWaitTime) end)
+            end
+            if data.TrickOrTreat.SettleDelay then
+                trickOrTreat.settleDelay = data.TrickOrTreat.SettleDelay
+                pcall(function() Window:Set("Slider_ToT_SettleDelay", data.TrickOrTreat.SettleDelay) end)
+            end
+            if data.TrickOrTreat.ReturnOnFinish ~= nil then
+                trickOrTreat.returnOnFinish = data.TrickOrTreat.ReturnOnFinish
+                pcall(function() Window:Set("Toggle_ToT_ReturnOnFinish", data.TrickOrTreat.ReturnOnFinish) end)
+            end
+            if data.TrickOrTreat.AnchorDuringKnock ~= nil then
+                trickOrTreat.anchorDuringKnock = data.TrickOrTreat.AnchorDuringKnock
+                pcall(function() Window:Set("Toggle_ToT_AnchorKnock", data.TrickOrTreat.AnchorDuringKnock) end)
+            end
+            if data.TrickOrTreat.PauseFarmDuringCycle ~= nil then
+                trickOrTreat.pauseFarmDuringCycle = data.TrickOrTreat.PauseFarmDuringCycle
+                pcall(function() Window:Set("Toggle_ToT_PauseFarm", data.TrickOrTreat.PauseFarmDuringCycle) end)
             end
             if data.TrickOrTreat.DisableInsideCollision ~= nil then
                 trickOrTreat.disableInsideCollision = data.TrickOrTreat.DisableInsideCollision
@@ -6361,30 +6433,31 @@ function updateHeartbeatConnection()
                 end
 
                 -- 1. Movement Logic
-                if farm.on and not (manatite and manatite.auto) and not (mithril and mithril.auto) and not (trickOrTreat and trickOrTreat.isCycling) and farm.anchorPos and not dodge.isDodging and not dodge.isUnderground then
+                local totPausing = (trickOrTreat and trickOrTreat.isCycling and trickOrTreat.pauseFarmDuringCycle ~= false)
+                if farm.on and not (manatite and manatite.auto) and not (mithril and mithril.auto) and not totPausing and farm.anchorPos and not dodge.isDodging and not dodge.isUnderground then
                     farm.processMovement(dt, now, rootPos)
                 end
 
                 local prioritizedMobThisFrame = false
 
                 -- 2. Priority Mob Aura Logic
-                if farm.autoChompMobs and not (trickOrTreat and trickOrTreat.isCycling) then
+                if farm.autoChompMobs and not totPausing then
                     prioritizedMobThisFrame = farm.processMobAura(now, rootPos)
                 end
 
                 -- 3. Raycast Grass Chomp Logic (Yields to Mobs & Dodging)
-                if farm.autoChomp and not (manatite and manatite.auto) and not (mithril and mithril.auto) and not (trickOrTreat and trickOrTreat.isCycling) and not prioritizedMobThisFrame and not dodge.isUnderground and not dodge.isDodging then
+                if farm.autoChomp and not (manatite and manatite.auto) and not (mithril and mithril.auto) and not totPausing and not prioritizedMobThisFrame and not dodge.isUnderground and not dodge.isDodging then
                     farm.processGrassChomp(now, rootPos)
                 end
 
                 -- 3b. Golden Grass Aura Logic (Periodic Pulse)
-                if farm.goldenAura and not (trickOrTreat and trickOrTreat.isCycling) and (now - farm.lastGoldenAuraTime > 0.3) then
+                if farm.goldenAura and not totPausing and (now - farm.lastGoldenAuraTime > 0.3) then
                     farm.lastGoldenAuraTime = now
                     farm.applyGoldenAura()
                 end
 
                 -- 4. Auto-Fishing Logic
-                if farm.autoFish and not (manatite and manatite.auto) and not (mithril and mithril.auto) and not (trickOrTreat and trickOrTreat.isCycling) then
+                if farm.autoFish and not (manatite and manatite.auto) and not (mithril and mithril.auto) and not totPausing then
                     farm.processFishing(now, rootPos)
                 end
 
@@ -8796,7 +8869,9 @@ TotTab:CreateButton({
             return
         end
         trickOrTreat.initClientListener()
-        trickOrTreat.detectCooldown()
+        if trickOrTreat.autoDetectCooldown then
+            trickOrTreat.detectCooldown()
+        end
         trickOrTreat.isSingleRun = true
         task.spawn(function()
             local success, err = xpcall(trickOrTreat.runCycle, function(e)
@@ -8857,6 +8932,15 @@ TotTab:CreateSlider({
     Flag = "Slider_ToT_CycleCooldown",
     Callback = function(Value)
         trickOrTreat.cycleCooldown = Value
+        if trickOrTreat.lastCycleCompletedTime > 0 and not trickOrTreat.isCycling then
+            local now = os.clock()
+            local targetNext = trickOrTreat.lastCycleCompletedTime + Value
+            if targetNext > now then
+                trickOrTreat.nextCycleTime = targetNext
+            elseif trickOrTreat.nextCycleTime > now then
+                trickOrTreat.nextCycleTime = now
+            end
+        end
         trickOrTreat.updateStatusUI()
     end,
 })
@@ -8998,6 +9082,10 @@ TotTab:CreateToggle({
     Flag = "Toggle_ToT_AutoDetect",
     Callback = function(Value)
         trickOrTreat.autoDetectCooldown = Value
+        if Value then
+            trickOrTreat.detectCooldown()
+        end
+        trickOrTreat.updateStatusUI()
     end,
 })
 
