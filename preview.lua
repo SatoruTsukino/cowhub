@@ -767,6 +767,12 @@ trickOrTreat = {
     pauseFarmDuringCycle = true,
     anchorDuringKnock = true,
     savedPreCFrame = nil,
+    currentHouseInteracting = nil,
+    completedHouseNames = {},
+    erroredHouseNames = {},
+    houseRetryAttempts = {},
+    isRetryPass = false,
+    maxHouseRetries = 2,
     barnPosition = Vector3.new(-537, 727, 600),
     barnLoadDelay = 2.5,
     settleDelay = 0.3,
@@ -888,6 +894,7 @@ function trickOrTreat.getTelemetry()
         enabled = trickOrTreat.auto == true,
         isCycling = trickOrTreat.isCycling == true,
         isSingleRun = trickOrTreat.isSingleRun == true,
+        isRetryPass = trickOrTreat.isRetryPass == true,
         status = trickOrTreat.statusText or "Idle",
         phase = trickOrTreat.currentPhase or "Idle",
         totalCycles = trickOrTreat.totalCycles or 0,
@@ -1660,6 +1667,130 @@ function trickOrTreat.updateStatusUI()
     end
 end
 
+function trickOrTreat.visitHouse(house, i, totalHouses)
+    if not house then return false, "House instance is nil" end
+    trickOrTreat.currentHouseInteracting = house
+
+    local approachCF, knockPos, knockCF = nil, nil, nil
+    local okTarget, errTarget = pcall(function()
+        approachCF, knockPos, knockCF = trickOrTreat.getTargetCFrame(house)
+    end)
+    if not okTarget or not approachCF or not knockPos then
+        return false, "Failed to resolve target CFrame: " .. tostring(errTarget)
+    end
+
+    local originLabel = trickOrTreat.approachOrigin or "Inside House"
+    trickOrTreat.currentHouseIndex = i
+    trickOrTreat.lastHouseName = house.Name
+    trickOrTreat.currentPhase = string.format("Approaching (%s)", originLabel)
+    trickOrTreat.statusText = string.format("Approaching [%d/%d] (%s): %s", i, totalHouses, originLabel, house.Name)
+    trickOrTreat.updateStatusUI()
+
+    -- Re-verify character & root
+    if not char or not char.Parent then char = resolveCharacter() end
+    if not root or not root.Parent then root = resolveRoot(char) end
+    if not humanoid or not humanoid.Parent then humanoid = resolveHumanoid(char) end
+    if not root or not humanoid or humanoid.Health <= 0 then
+        return false, "Player dead or missing character/root"
+    end
+
+    -- 1. Disable collision on Inside / Interior boundary box so player doesn't clip/fling
+    if trickOrTreat.disableInsideCollision then
+        pcall(function() trickOrTreat.setHouseCollision(house, false) end)
+    end
+
+    -- 2. Teleport to approach start point (inside house or outside porch)
+    pcall(function() root.Anchored = false end)
+    pcall(function()
+        char:PivotTo(approachCF)
+        setRootCFrame(approachCF)
+        stopCharacterVelocity()
+    end)
+    task.wait(0.05)
+
+    -- 3. Walk up towards the door so the game registers character movement into KnockRange
+    if trickOrTreat.walkUpEnabled and (trickOrTreat.walkDistance or 0) > 0 then
+        trickOrTreat.currentPhase = "Walking to Door"
+        trickOrTreat.statusText = string.format("Walking to Door [%d/%d]: %s", i, totalHouses, house.Name)
+        trickOrTreat.updateStatusUI()
+
+        pcall(function() root.Anchored = false end)
+        if humanoid then
+            pcall(function() humanoid:MoveTo(knockPos) end)
+        end
+
+        local walkStart = os.clock()
+        local maxWalkTime = trickOrTreat.walkTimeout or 1.8
+        while (os.clock() - walkStart < maxWalkTime) do
+            if not trickOrTreat.auto and not trickOrTreat.isSingleRun then break end
+            if not root or not humanoid or humanoid.Health <= 0 then break end
+
+            local rPos = getRootPos(root)
+            if not rPos then break end
+            local currentFlat = Vector3.new(rPos.X, 0, rPos.Z)
+            local targetFlat = Vector3.new(knockPos.X, 0, knockPos.Z)
+            local dist = (currentFlat - targetFlat).Magnitude
+            trickOrTreat.currentHouseDistance = math.floor(dist * 10) / 10
+            if dist <= 1.2 then
+                break
+            end
+            task.wait(0.04)
+        end
+
+        if humanoid then
+            pcall(function() humanoid:Move(Vector3.zero, false) end)
+        end
+        stopCharacterVelocity()
+    end
+
+    -- 4. Anchor during knock to prevent being pushed away
+    if trickOrTreat.anchorDuringKnock then
+        pcall(function() root.Anchored = true end)
+    end
+
+    -- 5. Pre-knock settle delay so server and client register arrival
+    task.wait(trickOrTreat.settleDelay)
+
+    -- 6. Trigger knock: fire proximity prompts, GUI button, remote & virtual key
+    trickOrTreat.currentPhase = "Knocking"
+    trickOrTreat.statusText = string.format("Knocking [%d/%d]: %s", i, totalHouses, house.Name)
+    trickOrTreat.updateStatusUI()
+
+    local promptSuccess, promptErr = pcall(function()
+        trickOrTreat.fireDoorPrompt(house)
+    end)
+    if not promptSuccess then
+        if trickOrTreat.anchorDuringKnock then pcall(function() root.Anchored = false end) end
+        if trickOrTreat.disableInsideCollision then pcall(function() trickOrTreat.setHouseCollision(house, true) end) end
+        trickOrTreat.currentHouseInteracting = nil
+        return false, "Prompt error: " .. tostring(promptErr)
+    end
+
+    trickOrTreat.totalHousesKnocked = (trickOrTreat.totalHousesKnocked or 0) + 1
+    trickOrTreat.lastKnockTime = os.clock()
+
+    -- 7. Wait interaction delay (throttle next knock, respecting NextKnockAt = 1.2s)
+    if trickOrTreat.autoDismissRewardGui then
+        trickOrTreat.currentPhase = "Dismissing Rewards"
+        trickOrTreat.pollRewardGuiUntilDismissed(trickOrTreat.houseWaitTime)
+    end
+    trickOrTreat.currentPhase = "House Delay"
+    task.wait(trickOrTreat.houseWaitTime)
+
+    if trickOrTreat.anchorDuringKnock then
+        pcall(function() root.Anchored = false end)
+    end
+    stopCharacterVelocity()
+
+    -- Restore house collision
+    if trickOrTreat.disableInsideCollision then
+        pcall(function() trickOrTreat.setHouseCollision(house, true) end)
+    end
+
+    trickOrTreat.currentHouseInteracting = nil
+    return true
+end
+
 function trickOrTreat.runCycle()
     if trickOrTreat.isCycling then return end
 
@@ -1689,8 +1820,8 @@ function trickOrTreat.runCycle()
         return
     end
 
-    -- Check if village houses are on cooldown before teleporting
-    if not trickOrTreat.isSingleRun and trickOrTreat.houseCooldowns then
+    -- Check if village houses are on cooldown before teleporting (unless this is a retry pass)
+    if not trickOrTreat.isSingleRun and not trickOrTreat.isRetryPass and trickOrTreat.houseCooldowns then
         local anyReady = false
         local longestRemaining = 0
         local houseCount = 0
@@ -1726,16 +1857,14 @@ function trickOrTreat.runCycle()
         trickOrTreat.sessionStartTime = os.clock()
     end
     trickOrTreat.cycleStartTime = os.clock()
-    trickOrTreat.currentPhase = "Starting Cycle"
+    trickOrTreat.currentPhase = trickOrTreat.isRetryPass and "Retrying Failed Houses" or "Starting Cycle"
     trickOrTreat.isCycling = true
-    trickOrTreat.statusText = "Starting Cycle..."
+    trickOrTreat.statusText = trickOrTreat.isRetryPass and "Retrying Failed Houses..." or "Starting Cycle..."
     trickOrTreat.updateStatusUI()
 
     -- 1. Save original player position BEFORE teleporting to barn for map load
     local preCycleCFrame = getRootCFrame(root)
     trickOrTreat.savedPreCFrame = preCycleCFrame
-
-    local currentHouseInteracting = nil
 
     local function cleanupCycle()
         pcall(function()
@@ -1743,9 +1872,10 @@ function trickOrTreat.runCycle()
                 root.Anchored = false
             end
         end)
-        if currentHouseInteracting and trickOrTreat.disableInsideCollision then
-            pcall(function() trickOrTreat.setHouseCollision(currentHouseInteracting, true) end)
+        if trickOrTreat.currentHouseInteracting and trickOrTreat.disableInsideCollision then
+            pcall(function() trickOrTreat.setHouseCollision(trickOrTreat.currentHouseInteracting, true) end)
         end
+        trickOrTreat.currentHouseInteracting = nil
         if trickOrTreat.returnOnFinish and preCycleCFrame then
             safeReturnToSavedPosition(preCycleCFrame)
         end
@@ -1756,38 +1886,40 @@ function trickOrTreat.runCycle()
         trickOrTreat.currentHouseDistance = 0
     end
 
-    -- 2. Teleport player to the barn (-537, 727, 600) so the map will load
-    trickOrTreat.currentPhase = "Loading Map (Barn)"
-    trickOrTreat.statusText = "Loading Map at Barn..."
-    trickOrTreat.updateStatusUI()
+    -- 2. Teleport player to the barn (-537, 727, 600) so the map will load if houses are not already loaded
+    local houses = trickOrTreat.getHouseList()
+    if #houses == 0 then
+        trickOrTreat.currentPhase = "Loading Map (Barn)"
+        trickOrTreat.statusText = "Loading Map at Barn..."
+        trickOrTreat.updateStatusUI()
 
-    stopCharacterVelocity()
-    pcall(function()
-        root.Anchored = true
-        char:PivotTo(CFrame.new(trickOrTreat.barnPosition))
-        setRootCFrame(CFrame.new(trickOrTreat.barnPosition))
         stopCharacterVelocity()
-    end)
+        pcall(function()
+            root.Anchored = true
+            char:PivotTo(CFrame.new(trickOrTreat.barnPosition))
+            setRootCFrame(CFrame.new(trickOrTreat.barnPosition))
+            stopCharacterVelocity()
+        end)
 
-    -- Wait for map to load (poll for houses)
-    local barnStart = os.clock()
-    local houses = {}
-    while (os.clock() - barnStart < trickOrTreat.barnLoadDelay) do
-        if not trickOrTreat.auto and not trickOrTreat.isSingleRun then
-            cleanupCycle()
-            trickOrTreat.statusText = "Aborted"
-            trickOrTreat.updateStatusUI()
-            return
+        -- Wait for map to load (poll for houses)
+        local barnStart = os.clock()
+        while (os.clock() - barnStart < trickOrTreat.barnLoadDelay) do
+            if not trickOrTreat.auto and not trickOrTreat.isSingleRun then
+                cleanupCycle()
+                trickOrTreat.statusText = "Aborted"
+                trickOrTreat.updateStatusUI()
+                return
+            end
+            task.wait(0.4)
+            houses = trickOrTreat.getHouseList()
+            if #houses > 0 and (os.clock() - barnStart >= 1.0) then
+                break
+            end
         end
-        task.wait(0.4)
-        houses = trickOrTreat.getHouseList()
-        if #houses > 0 and (os.clock() - barnStart >= 1.0) then
-            break
-        end
+
+        pcall(function() root.Anchored = false end)
+        stopCharacterVelocity()
     end
-
-    pcall(function() root.Anchored = false end)
-    stopCharacterVelocity()
 
     if #houses == 0 then
         houses = trickOrTreat.getHouseList()
@@ -1811,17 +1943,46 @@ function trickOrTreat.runCycle()
     local remote = trickOrTreat.getRemote()
     local knockedCount = 0
 
-    -- 3. Cycle through all houses in FarmerHouses
-    trickOrTreat.totalHousesInCycle = #houses
+    -- Determine houses to visit:
+    -- If retrying from an error, ONLY retry the houses where errors occurred (or uncompleted)!
+    local housesToVisit = {}
+    if trickOrTreat.isRetryPass then
+        for _, house in ipairs(houses) do
+            local hName = house.Name
+            if trickOrTreat.erroredHouseNames[hName] or not trickOrTreat.completedHouseNames[hName] then
+                local attempts = trickOrTreat.houseRetryAttempts[hName] or 0
+                if attempts < (trickOrTreat.maxHouseRetries or 2) then
+                    table.insert(housesToVisit, house)
+                else
+                    warn(string.format("[CowHub TrickOrTreat] House %s exceeded max retries (%d). Skipping this cycle.", hName, attempts))
+                    trickOrTreat.erroredHouseNames[hName] = nil
+                    trickOrTreat.completedHouseNames[hName] = true
+                end
+            end
+        end
+    else
+        trickOrTreat.completedHouseNames = {}
+        trickOrTreat.erroredHouseNames = {}
+        trickOrTreat.houseRetryAttempts = {}
+        housesToVisit = houses
+    end
+
+    if #housesToVisit == 0 then
+        trickOrTreat.isRetryPass = false
+    end
+
+    -- 3. Cycle through candidate houses
+    trickOrTreat.totalHousesInCycle = #housesToVisit
     trickOrTreat.currentHouseIndex = 0
-    for i, house in ipairs(houses) do
+    for i, house in ipairs(housesToVisit) do
         if not trickOrTreat.auto and not trickOrTreat.isSingleRun then
             break
         end
 
         -- Check health / alive state
         if not humanoid or humanoid.Health <= 0 or not root or not root.Parent then
-            warn("[CowHub TrickOrTreat] Player died or lost character during cycle. Aborting.")
+            warn("[CowHub TrickOrTreat] Player died or lost character during cycle. Pausing.")
+            trickOrTreat.erroredHouseNames[house.Name] = true
             break
         end
 
@@ -1829,118 +1990,77 @@ function trickOrTreat.runCycle()
         local houseExpiry = trickOrTreat.houseCooldowns and trickOrTreat.houseCooldowns[house.Name]
         if houseExpiry and houseExpiry > os.clock() then
             local waitLeft = math.ceil(houseExpiry - os.clock())
-            trickOrTreat.statusText = string.format("Skipping [%d/%d] %s (%ds cooldown left)", i, #houses, house.Name, waitLeft)
+            trickOrTreat.statusText = string.format("Skipping [%d/%d] %s (%ds cooldown left)", i, #housesToVisit, house.Name, waitLeft)
             trickOrTreat.updateStatusUI()
+            trickOrTreat.completedHouseNames[house.Name] = true
+            trickOrTreat.erroredHouseNames[house.Name] = nil
         else
-            currentHouseInteracting = house
-
-            local approachCF, knockPos, knockCF = nil, nil, nil
-            local okTarget, errTarget = pcall(function()
-                approachCF, knockPos, knockCF = trickOrTreat.getTargetCFrame(house)
-            end)
-            if not okTarget then
-                warn("[CowHub TrickOrTreat] Failed to get target CFrame for house:", errTarget)
-            end
-            if okTarget and approachCF and knockPos then
-                local originLabel = trickOrTreat.approachOrigin or "Inside House"
-                trickOrTreat.currentHouseIndex = i
-                trickOrTreat.lastHouseName = house.Name
-                trickOrTreat.currentPhase = string.format("Approaching (%s)", originLabel)
-                trickOrTreat.statusText = string.format("Approaching [%d/%d] (%s): %s", i, #houses, originLabel, house.Name)
-                trickOrTreat.updateStatusUI()
-
-                -- 1. Disable collision on Inside / Interior boundary box so player doesn't clip/fling
-                if trickOrTreat.disableInsideCollision then
-                    trickOrTreat.setHouseCollision(house, false)
-                end
-
-                -- 2. Teleport to approach start point (inside house or outside porch)
-                pcall(function() root.Anchored = false end)
-                pcall(function()
-                    char:PivotTo(approachCF)
-                    setRootCFrame(approachCF)
-                    stopCharacterVelocity()
+            -- Visit house with up to 2 immediate retry attempts
+            local success, visitErr = false, nil
+            for attempt = 1, 2 do
+                success, visitErr = xpcall(function()
+                    return trickOrTreat.visitHouse(house, i, #housesToVisit)
+                end, function(e)
+                    return debug.traceback(tostring(e), 2)
                 end)
-                task.wait(0.05)
-
-                -- 3. Walk up towards the door so the game registers character movement into KnockRange
-                if trickOrTreat.walkUpEnabled and (trickOrTreat.walkDistance or 0) > 0 then
-                    trickOrTreat.currentPhase = "Walking to Door"
-                    trickOrTreat.statusText = string.format("Walking to Door [%d/%d]: %s", i, #houses, house.Name)
-                    trickOrTreat.updateStatusUI()
-
-                    pcall(function() root.Anchored = false end)
-                    if humanoid then
-                        pcall(function() humanoid:MoveTo(knockPos) end)
-                    end
-
-                    local walkStart = os.clock()
-                    local maxWalkTime = trickOrTreat.walkTimeout or 1.8
-                    while (os.clock() - walkStart < maxWalkTime) do
-                        if not trickOrTreat.auto and not trickOrTreat.isSingleRun then break end
-                        if not root or not humanoid or humanoid.Health <= 0 then break end
-
-                        local rPos = getRootPos(root)
-                        if not rPos then break end
-                        local currentFlat = Vector3.new(rPos.X, 0, rPos.Z)
-                        local targetFlat = Vector3.new(knockPos.X, 0, knockPos.Z)
-                        local dist = (currentFlat - targetFlat).Magnitude
-                        trickOrTreat.currentHouseDistance = math.floor(dist * 10) / 10
-                        if dist <= 1.2 then
-                            break
+                if success then
+                    knockedCount = knockedCount + 1
+                    trickOrTreat.completedHouseNames[house.Name] = true
+                    trickOrTreat.erroredHouseNames[house.Name] = nil
+                    break
+                else
+                    warn(string.format("[CowHub TrickOrTreat] House %s error on attempt %d: %s", house.Name, attempt, tostring(visitErr)))
+                    pcall(function()
+                        if root and root:IsA("BasePart") then root.Anchored = false end
+                        if house and trickOrTreat.disableInsideCollision then
+                            trickOrTreat.setHouseCollision(house, true)
                         end
-                        task.wait(0.04)
-                    end
-
-                    if humanoid then
-                        pcall(function() humanoid:Move(Vector3.zero, false) end)
-                    end
-                    stopCharacterVelocity()
+                    end)
+                    task.wait(0.5)
                 end
+            end
 
-                -- 4. Anchor during knock to prevent being pushed away
-                if trickOrTreat.anchorDuringKnock then
-                    pcall(function() root.Anchored = true end)
-                end
-
-                -- 5. Pre-knock settle delay so server and client register arrival
-                task.wait(trickOrTreat.settleDelay)
-
-                -- 6. Trigger knock: fire proximity prompts, GUI button, remote & virtual key
-                trickOrTreat.currentPhase = "Knocking"
-                trickOrTreat.statusText = string.format("Knocking [%d/%d]: %s", i, #houses, house.Name)
-                trickOrTreat.updateStatusUI()
-
-                pcall(function() trickOrTreat.fireDoorPrompt(house) end)
-
-                knockedCount = knockedCount + 1
-                trickOrTreat.totalHousesKnocked = (trickOrTreat.totalHousesKnocked or 0) + 1
-                trickOrTreat.lastKnockTime = os.clock()
-
-                -- 7. Wait interaction delay (throttle next knock, respecting NextKnockAt = 1.2s)
-                if trickOrTreat.autoDismissRewardGui then
-                    trickOrTreat.currentPhase = "Dismissing Rewards"
-                    trickOrTreat.pollRewardGuiUntilDismissed(trickOrTreat.houseWaitTime)
-                end
-                trickOrTreat.currentPhase = "House Delay"
-                task.wait(trickOrTreat.houseWaitTime)
-
-                if trickOrTreat.anchorDuringKnock then
-                    pcall(function() root.Anchored = false end)
-                end
-                stopCharacterVelocity()
-
-                -- Restore house collision
-                if trickOrTreat.disableInsideCollision then
-                    pcall(function() trickOrTreat.setHouseCollision(house, true) end)
-                end
+            if not success then
+                trickOrTreat.erroredHouseNames[house.Name] = true
+                trickOrTreat.houseRetryAttempts[house.Name] = (trickOrTreat.houseRetryAttempts[house.Name] or 0) + 1
             end
         end
-
-        currentHouseInteracting = nil
     end
 
     pcall(function() root.Anchored = false end)
+    trickOrTreat.currentHouseInteracting = nil
+
+    -- Check if any houses had errors and need retrying
+    local remainingErrors = 0
+    for hName, _ in pairs(trickOrTreat.erroredHouseNames) do
+        local attempts = trickOrTreat.houseRetryAttempts[hName] or 0
+        if attempts < (trickOrTreat.maxHouseRetries or 2) then
+            remainingErrors = remainingErrors + 1
+        else
+            trickOrTreat.erroredHouseNames[hName] = nil
+            trickOrTreat.completedHouseNames[hName] = true
+        end
+    end
+
+    if remainingErrors > 0 and (trickOrTreat.auto or trickOrTreat.isSingleRun) then
+        trickOrTreat.isRetryPass = true
+        trickOrTreat.statusText = string.format("%d house(s) errored. Retrying only failed houses in 4s...", remainingErrors)
+        trickOrTreat.currentPhase = "Retrying Failed Houses"
+        trickOrTreat.nextCycleTime = os.clock() + 4
+        trickOrTreat.isCycling = false
+        trickOrTreat.updateStatusUI()
+
+        if trickOrTreat.returnOnFinish and preCycleCFrame then
+            safeReturnToSavedPosition(preCycleCFrame)
+        end
+        return
+    end
+
+    -- All houses completed without active errors: finalize cycle!
+    trickOrTreat.isRetryPass = false
+    trickOrTreat.completedHouseNames = {}
+    trickOrTreat.erroredHouseNames = {}
+    trickOrTreat.houseRetryAttempts = {}
 
     -- 4. Teleport back to original position before the cycle started
     if trickOrTreat.returnOnFinish and preCycleCFrame then
@@ -1994,7 +2114,7 @@ function trickOrTreat.startLoop()
         while trickOrTreat.loopRunning do
             task.wait(1)
             pcall(trickOrTreat.updateStatusUI)
-            if trickOrTreat.auto and not trickOrTreat.isCycling then
+            if (trickOrTreat.auto or (trickOrTreat.isSingleRun and trickOrTreat.isRetryPass)) and not trickOrTreat.isCycling then
                 local now = os.clock()
                 if now >= trickOrTreat.nextCycleTime then
                     local success, err = xpcall(trickOrTreat.runCycle, function(e)
@@ -2004,8 +2124,18 @@ function trickOrTreat.startLoop()
                         warn("[CowHub TrickOrTreat] Error during cycle:\n" .. tostring(err))
                         trickOrTreat.isCycling = false
                         trickOrTreat.isSingleRun = false
-                        trickOrTreat.statusText = "Cycle Error (retrying in 20s)"
-                        trickOrTreat.nextCycleTime = os.clock() + 20
+                        trickOrTreat.isRetryPass = true
+                        if trickOrTreat.currentHouseInteracting then
+                            trickOrTreat.erroredHouseNames[trickOrTreat.currentHouseInteracting.Name] = true
+                        end
+                        local errCount = 0
+                        for _ in pairs(trickOrTreat.erroredHouseNames) do errCount = errCount + 1 end
+                        if errCount > 0 then
+                            trickOrTreat.statusText = string.format("Error during cycle. Retrying %d failed house(s) in 4s...", errCount)
+                        else
+                            trickOrTreat.statusText = "Error during cycle (retrying failed houses in 4s)"
+                        end
+                        trickOrTreat.nextCycleTime = os.clock() + 4
                         pcall(trickOrTreat.updateStatusUI)
                     end
                 end
@@ -2081,6 +2211,14 @@ function trickOrTreat.toggle(Value)
         trickOrTreat.currentPhase = "Idle (Disabled)"
         trickOrTreat.currentHouseIndex = 0
         trickOrTreat.currentHouseDistance = 0
+        trickOrTreat.isRetryPass = false
+        trickOrTreat.completedHouseNames = {}
+        trickOrTreat.erroredHouseNames = {}
+        trickOrTreat.houseRetryAttempts = {}
+        if trickOrTreat.currentHouseInteracting and trickOrTreat.disableInsideCollision then
+            pcall(function() trickOrTreat.setHouseCollision(trickOrTreat.currentHouseInteracting, true) end)
+        end
+        trickOrTreat.currentHouseInteracting = nil
         if trickOrTreat.isCycling and trickOrTreat.returnOnFinish and trickOrTreat.savedPreCFrame then
             safeReturnToSavedPosition(trickOrTreat.savedPreCFrame)
         end
@@ -9143,6 +9281,10 @@ TotTab:CreateButton({
         if trickOrTreat.autoDetectCooldown then
             trickOrTreat.detectCooldown()
         end
+        trickOrTreat.isRetryPass = false
+        trickOrTreat.completedHouseNames = {}
+        trickOrTreat.erroredHouseNames = {}
+        trickOrTreat.houseRetryAttempts = {}
         trickOrTreat.isSingleRun = true
         task.spawn(function()
             local success, err = xpcall(trickOrTreat.runCycle, function(e)
@@ -9151,9 +9293,24 @@ TotTab:CreateButton({
             if not success then
                 warn("[CowHub TrickOrTreat] Error during single cycle:\n" .. tostring(err))
                 trickOrTreat.isCycling = false
-                trickOrTreat.isSingleRun = false
-                trickOrTreat.statusText = "Error in cycle"
+                trickOrTreat.isRetryPass = true
+                if trickOrTreat.currentHouseInteracting then
+                    trickOrTreat.erroredHouseNames[trickOrTreat.currentHouseInteracting.Name] = true
+                end
+                local errCount = 0
+                for _ in pairs(trickOrTreat.erroredHouseNames) do errCount = errCount + 1 end
+                if errCount > 0 then
+                    trickOrTreat.statusText = string.format("Error in cycle. Retrying %d failed house(s) in 4s...", errCount)
+                else
+                    trickOrTreat.statusText = "Error in cycle (retrying failed houses in 4s)"
+                end
+                trickOrTreat.nextCycleTime = os.clock() + 4
                 pcall(trickOrTreat.updateStatusUI)
+                task.delay(4, function()
+                    if trickOrTreat.isSingleRun and not trickOrTreat.isCycling then
+                        trickOrTreat.runCycle()
+                    end
+                end)
             end
         end)
     end,
