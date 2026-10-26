@@ -299,20 +299,24 @@ local charConn = plr.CharacterAdded:Connect(function(newChar)
     raycastParams.FilterDescendantsInstances = {char}
     updateWallRaycastFilter()
     updateCharBaseParts(newChar)
-    dodge.isDodging = false
-    dodge.isUnderground = false
-    dodge.lastRecordedHearts = nil
-    dodge.currentAttackingMob = nil
-    dodge.preDodgePos = nil
-    dodge.preDodgeCFrame = nil
-    dodge.lastSurfaceCFrame = nil
-    dodge.lastSurfacePos = nil
-    dodge.undergroundCFrame = nil
-    dodge.currentUndergroundRetreatOffset = nil
-    aerial.active = false
-    aerial.cframe = nil
-    aerial.preCFrame = nil
-    aerial.startTime = 0
+    if dodge then
+        dodge.isDodging = false
+        dodge.isUnderground = false
+        dodge.lastRecordedHearts = nil
+        dodge.currentAttackingMob = nil
+        dodge.preDodgePos = nil
+        dodge.preDodgeCFrame = nil
+        dodge.lastSurfaceCFrame = nil
+        dodge.lastSurfacePos = nil
+        dodge.undergroundCFrame = nil
+        dodge.currentUndergroundRetreatOffset = nil
+    end
+    if aerial then
+        aerial.active = false
+        aerial.cframe = nil
+        aerial.preCFrame = nil
+        aerial.startTime = 0
+    end
     if manatite then
         manatite.model = nil
         manatite.target = nil
@@ -9876,6 +9880,15 @@ function rafting.ensureDynamicSites()
         local mouthPos = Vector3.new(coveX, 700.5, mouthZ)
         local landPos = Vector3.new(coveX, floorY + 1.8, coveZ)
 
+        if sid == "Cave_Cubby04" then
+            bank = "North"
+            coveX = 4503.58
+            coveZ = -551.46
+            mouthZ = -542.46
+            mouthPos = Vector3.new(coveX, 700.5, mouthZ)
+            landPos = Vector3.new(coveX, floorY + 1.8, coveZ)
+        end
+
         local siteData = {
             Id = sid,
             Kind = kind,
@@ -10451,7 +10464,11 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     if departSite then
         local isDeparting = (os.clock() - (rafting.lastCastOffTime or 0)) < 6.0
         local insideCoveBounds = posX <= (departSite.MaxX + 40)
-        if isDeparting or insideCoveBounds then
+        local rd = getReachData()
+        local reachIdx = getReachIndex(posX)
+        local forkX = rd and rd.forkX and rd.forkX[reachIdx]
+        local nearUpcomingFork = forkX and (posX >= (forkX - 100))
+        if (isDeparting or insideCoveBounds) and not nearUpcomingFork then
             return rafting.getSiteChannelZ(departSite)
         end
     end
@@ -10514,8 +10531,9 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     local currentChZ = (corridors and corridors[reachIdx]) or rafting.getSiteChannelZ(targetSite)
 
     -- If approaching or inside cove: steer directly towards interior ShoreZ (landing dock)!
-    if posX >= (mouthX - 120) and posX <= (maxX + 25) then
-        local rawT = math.clamp((posX - (mouthX - 120)) / 120, 0, 1)
+    local approachLead = 320.0
+    if posX >= (mouthX - approachLead) and posX <= (maxX + 25) then
+        local rawT = math.clamp((posX - (mouthX - approachLead)) / approachLead, 0, 1)
         local t = (1 - math.cos(rawT * math.pi)) * 0.5
         return currentChZ + t * (shoreZ - currentChZ)
     end
@@ -11536,13 +11554,13 @@ function rafting.handleSnapshot(payload)
             if (site or isServerDocked) and isSelectedSite and ((site and not rafting.visitedSites[site.Id]) or isServerDocked) then
                 local distToMouth = site and site.Mouth and (Vector3.new(posX, 700.5, posZ) - site.Mouth).Magnitude or math.huge
                 local distToLand = site and site.LandPos and (Vector3.new(posX, 700.5, posZ) - site.LandPos).Magnitude or math.huge
-                local inSiteX = site and posX >= (site.MinX - 35) and posX <= (site.MaxX + 35)
-                local inSiteZ = site and ((site.BankSide == "North" and posZ <= (site.MaxZ + 35)) or (site.BankSide == "South" and posZ >= (site.MinZ - 35)))
+                local inSiteX = site and posX >= (site.MinX - 45) and posX <= (site.MaxX + 45)
+                local inSiteZ = site and ((site.BankSide == "North" and posZ <= (site.MaxZ + 45)) or (site.BankSide == "South" and posZ >= (site.MinZ - 45)))
 
                 local reachedShore = isServerDocked
-                    or distToMouth < 85
-                    or distToLand < 85
-                    or (inSiteX and inSiteZ and (distToMouth < 110 or (speed or 16) < 18))
+                    or distToMouth < 125
+                    or distToLand < 125
+                    or (inSiteX and inSiteZ and (distToMouth < 160 or (speed or 16) < 18))
 
                 if reachedShore then
                     local siteId = (site and site.Id) or payload.SiteId or "Clearing_Dock"
@@ -11593,7 +11611,7 @@ function rafting.handleSnapshot(payload)
                         placeCowAboveDeck(curDeck)
                         if rafting.emergencyDocked then
                             rafting.emergencyDocked = false
-                            Window:Notify({ Title = "Rafting Emergency", Content = "Emergency dock: returning to shore...", Duration = 4 })
+                            safeNotify({ Title = "Rafting Emergency", Content = "Emergency dock: returning to shore...", Duration = 4 })
                             task.wait(0.6)
                             rafting.endVoyage()
                         end
@@ -11611,6 +11629,9 @@ function rafting.handleSnapshot(payload)
                 if inWater then
                     placeCowAboveDeck(deck)
                 end
+            else
+                rafting.teleportToRaftYard()
+                rafting.onSessionEnded("Raft missing while docked. Returned to launch pad.")
             end
         end
     end
@@ -11667,7 +11688,7 @@ function rafting.stepSteering(dt)
         rafting.status = "Idle"
         rafting.statusText = "Reached The Sea! Ending voyage..."
         rafting.updateCards()
-        Window:Notify({ Title = "Voyage Finished", Content = "Reached The Sea! Returning to shore.", Duration = 4 })
+        safeNotify({ Title = "Voyage Finished", Content = "Reached The Sea! Returning to shore.", Duration = 4 })
         task.spawn(rafting.endVoyage)
         return
     end
@@ -11720,8 +11741,8 @@ function rafting.stepSteering(dt)
     local mouthX = nextSite and nextSite.Mouth and nextSite.Mouth.X or ((minX + (nextSite and nextSite.MaxX or 0)) * 0.5)
     local isDeparting = (os.clock() - (rafting.lastCastOffTime or 0)) < 6.0
     local inCoveZone = nextSite and (posX >= (nextSite.MinX - 50) and posX <= (nextSite.MaxX + 25))
-    local isHeadingToNorthCove = (not isDeparting) and nextSite and nextSite.BankSide == "North" and posX >= (mouthX - 120) and posX <= (nextSite.MaxX + 25)
-    local isHeadingToSouthCove = (not isDeparting) and nextSite and nextSite.BankSide == "South" and posX >= (mouthX - 120) and posX <= (nextSite.MaxX + 25)
+    local isHeadingToNorthCove = (not isDeparting) and nextSite and nextSite.BankSide == "North" and posX >= (mouthX - 320) and posX <= (nextSite.MaxX + 25)
+    local isHeadingToSouthCove = (not isDeparting) and nextSite and nextSite.BankSide == "South" and posX >= (mouthX - 320) and posX <= (nextSite.MaxX + 25)
 
     -- Stand-Off Buffer: deck half-width is 7.0 studs.
     -- Begin repelling when wall is closer than 32 studs from center (25 studs from railing).
@@ -11928,14 +11949,14 @@ function rafting.stepSteering(dt)
 
         -- If character is separated from the raft (jumped off, thrown, or fell in water)
         if distFromDeck > 30.0 then
-            if rafting.autoRecoverOverboard then
-                -- Auto-recover character back onto raft deck (+5.5 studs hoof clearance)
+            if rafting.autoRecoverOverboard and deck and deck.Parent then
                 placeCowAboveDeck(deck)
                 local rem = rafting.getRemote()
                 if rem then pcall(function() rem:FireServer("Boarded") end) end
                 return
             else
-                rafting.onSessionEnded("Character separated from raft. Automated rafting stopped.")
+                rafting.teleportToRaftYard()
+                rafting.onSessionEnded("Character separated from raft. Returned to dock.")
                 return
             end
         end
@@ -12292,19 +12313,42 @@ function rafting.onSessionEnded(reason)
     rafting.isUnsticking = false
     rafting.unstickDirection = 0
     rafting.unstickStartTime = 0
+    local oldDeck = rafting.deckPart
     rafting.deckPart = nil
     rafting.raftModel = nil
     if not (rafting.autoLoop and rafting.enabled) then
         rafting.stopSteeringLoop()
     end
+
+    -- River rescue failsafe: ensure player is never abandoned in river water
+    task.spawn(function()
+        task.wait(0.5)
+        if root then
+            local rPos = root.Position
+            local inRiver = (rPos.X > 50) or (rPos.Y < 703.0) or (humanoid and humanoid.FloorMaterial == Enum.Material.Water)
+            if inRiver then
+                local deck = rafting.getRaftDeck() or oldDeck
+                if deck and deck.Parent and (root.Position - deck.Position).Magnitude <= 35.0 then
+                    placeCowAboveDeck(deck)
+                    safeNotify({ Title = "Rafting Recovered", Content = "Returned safely to boat deck.", Duration = 3 })
+                else
+                    rafting.teleportToRaftYard()
+                    safeNotify({ Title = "River Failsafe", Content = "Rescued from river! Returned to dock.", Duration = 3 })
+                    if rafting.autoLoop and rafting.enabled then
+                        task.wait(2)
+                        rafting.startVoyage()
+                    end
+                end
+            end
+        end
+    end)
+
     if reason then
         rafting.statusText = reason
         local now = os.clock()
         if (now - (rafting.lastSessionEndNotify or 0)) > 3.0 then
             rafting.lastSessionEndNotify = now
-            pcall(function()
-                Window:Notify({ Title = "Rafting Stopped", Content = reason, Duration = 4 })
-            end)
+            safeNotify({ Title = "Rafting Stopped", Content = reason, Duration = 4 })
         end
     else
         rafting.statusText = "Rafting session ended."
@@ -12325,6 +12369,16 @@ function rafting.endVoyage()
     rafting.fireRemoteSafely("Return", nil, 1.0)
     rafting.onSessionEnded("Voyage ended. Returned to shore.")
 
+    -- Immediate failsafe: guarantee teleport back to launch pad within 1.0s if still in water
+    task.delay(1.0, function()
+        if root then
+            local rPos = root.Position
+            if rPos.X > 50 or rPos.Y < 703.0 or (humanoid and humanoid.FloorMaterial == Enum.Material.Water) then
+                rafting.teleportToRaftYard()
+            end
+        end
+    end)
+
     if rafting.autoLoop and rafting.enabled then
         task.delay(4, function()
             if rafting.autoLoop and rafting.enabled then
@@ -12341,7 +12395,7 @@ function rafting.teleportToRaftYard()
         stopCharacterVelocity()
         local part, prompt, targetCF = rafting.getLaunchTarget()
         root.CFrame = targetCF or CFrame.new(-240.12, 705.5, 12.35)
-        Window:Notify({ Title = "Teleported", Content = "Teleported to Fjord Raft Launch Pad.", Duration = 3 })
+        safeNotify({ Title = "Teleported", Content = "Teleported to Fjord Raft Launch Pad.", Duration = 3 })
     end
 end
 
@@ -12349,9 +12403,9 @@ function rafting.teleportToDeck()
     local deck = rafting.getRaftDeck()
     if root and deck then
         placeCowAboveDeck(deck)
-        Window:Notify({ Title = "Teleported", Content = "Placed safely ~3 studs above raft deck.", Duration = 3 })
+        safeNotify({ Title = "Teleported", Content = "Placed safely ~3 studs above raft deck.", Duration = 3 })
     else
-        Window:Notify({ Title = "Teleport Failed", Content = "Raft deck not found.", Duration = 3 })
+        safeNotify({ Title = "Teleport Failed", Content = "Raft deck not found.", Duration = 3 })
     end
 end
 
