@@ -763,6 +763,7 @@ trickOrTreat = {
     isCycling = false,
     isSingleRun = false,
     returnOnFinish = true,
+    returnHeightOffset = 4.0, -- Vertical offset (studs) above previous position to prevent spawning under map
     pauseFarmDuringCycle = true,
     anchorDuringKnock = true,
     savedPreCFrame = nil,
@@ -824,6 +825,57 @@ local function stopCharacterVelocity()
             end)
         end
     end
+end
+
+local function safeReturnToSavedPosition(savedCF)
+    if not savedCF then return end
+    local baseCF = savedCF
+    if typeof(baseCF) == "Vector3" then
+        baseCF = CFrame.new(baseCF)
+    elseif typeof(baseCF) ~= "CFrame" then
+        return
+    end
+
+    if not char or not char.Parent then
+        char = resolveCharacter()
+    end
+    if not root or not root.Parent or not root:IsA("BasePart") then
+        root = resolveRoot(char)
+    end
+    if not root or not char then return end
+
+    local heightOffset = trickOrTreat.returnHeightOffset or 4.0
+    local targetCF = baseCF + Vector3.new(0, heightOffset, 0)
+
+    -- Terrain raycast check to ensure player does not spawn underneath ground
+    pcall(function()
+        local rayOrigin = targetCF.Position + Vector3.new(0, 10, 0)
+        local rayDir = Vector3.new(0, -25, 0)
+        local rayParams = RaycastParams.new()
+        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+        rayParams.FilterDescendantsInstances = {char}
+        local hit = workspace:Raycast(rayOrigin, rayDir, rayParams)
+        if hit and hit.Position then
+            local groundY = hit.Position.Y + heightOffset
+            if groundY > targetCF.Position.Y then
+                targetCF = CFrame.new(targetCF.Position.X, groundY, targetCF.Position.Z) * targetCF.Rotation
+            end
+        end
+    end)
+
+    pcall(function()
+        root.Anchored = true
+        char:PivotTo(targetCF)
+        setRootCFrame(targetCF)
+        stopCharacterVelocity()
+    end)
+    task.wait(0.15)
+    pcall(function()
+        if root and root:IsA("BasePart") then
+            root.Anchored = false
+        end
+        stopCharacterVelocity()
+    end)
 end
 
 function trickOrTreat.getTelemetry()
@@ -1694,12 +1746,8 @@ function trickOrTreat.runCycle()
         if currentHouseInteracting and trickOrTreat.disableInsideCollision then
             pcall(function() trickOrTreat.setHouseCollision(currentHouseInteracting, true) end)
         end
-        if trickOrTreat.returnOnFinish and preCycleCFrame and root and char and char.Parent then
-            pcall(function()
-                char:PivotTo(preCycleCFrame)
-                setRootCFrame(preCycleCFrame)
-                stopCharacterVelocity()
-            end)
+        if trickOrTreat.returnOnFinish and preCycleCFrame then
+            safeReturnToSavedPosition(preCycleCFrame)
         end
         trickOrTreat.isCycling = false
         trickOrTreat.isSingleRun = false
@@ -1899,12 +1947,8 @@ function trickOrTreat.runCycle()
         trickOrTreat.currentPhase = "Returning to Start"
         trickOrTreat.statusText = "Returning to original position..."
         trickOrTreat.updateStatusUI()
-        pcall(function()
-            char:PivotTo(preCycleCFrame)
-            setRootCFrame(preCycleCFrame)
-            stopCharacterVelocity()
-        end)
-        task.wait(0.2)
+        safeReturnToSavedPosition(preCycleCFrame)
+        task.wait(0.1)
         if trickOrTreat.autoDismissRewardGui then
             pcall(trickOrTreat.dismissRewardGui)
         end
@@ -2037,13 +2081,8 @@ function trickOrTreat.toggle(Value)
         trickOrTreat.currentPhase = "Idle (Disabled)"
         trickOrTreat.currentHouseIndex = 0
         trickOrTreat.currentHouseDistance = 0
-        if trickOrTreat.isCycling and trickOrTreat.returnOnFinish and trickOrTreat.savedPreCFrame and root then
-            pcall(function() root.Anchored = false end)
-            pcall(function()
-                char:PivotTo(trickOrTreat.savedPreCFrame)
-                setRootCFrame(trickOrTreat.savedPreCFrame)
-                stopCharacterVelocity()
-            end)
+        if trickOrTreat.isCycling and trickOrTreat.returnOnFinish and trickOrTreat.savedPreCFrame then
+            safeReturnToSavedPosition(trickOrTreat.savedPreCFrame)
         end
         trickOrTreat.isCycling = false
         trickOrTreat.isSingleRun = false
@@ -2191,6 +2230,7 @@ function afkRelog.saveState()
             WalkTimeout = trickOrTreat and trickOrTreat.walkTimeout or 1.5,
             DoorDistance = trickOrTreat and trickOrTreat.doorDistance or 2.0,
             DoorHeightOffset = trickOrTreat and trickOrTreat.doorHeightOffset or 0.0,
+            ReturnHeightOffset = trickOrTreat and trickOrTreat.returnHeightOffset or 4.0,
         },
         TownAuction = {
             AutoBidAll = townAuction and townAuction.autoBidAll == true,
@@ -2473,6 +2513,10 @@ function afkRelog.checkAndResumeState()
             if data.TrickOrTreat.DoorHeightOffset then
                 trickOrTreat.doorHeightOffset = data.TrickOrTreat.DoorHeightOffset
                 pcall(function() Window:Set("Slider_ToT_DoorHeightOffset", data.TrickOrTreat.DoorHeightOffset) end)
+            end
+            if data.TrickOrTreat.ReturnHeightOffset then
+                trickOrTreat.returnHeightOffset = data.TrickOrTreat.ReturnHeightOffset
+                pcall(function() Window:Set("Slider_ToT_ReturnHeightOffset", data.TrickOrTreat.ReturnHeightOffset) end)
             end
             if data.TrickOrTreat.Auto and trickOrTreat then
                 trickOrTreat.toggle(true)
@@ -9118,14 +9162,9 @@ TotTab:CreateButton({
 TotTab:CreateButton({
     Name = "Return to Saved Position",
     Callback = function()
-        if trickOrTreat.savedPreCFrame and root and char then
-            pcall(function() root.Anchored = false end)
-            pcall(function()
-                char:PivotTo(trickOrTreat.savedPreCFrame)
-                setRootCFrame(trickOrTreat.savedPreCFrame)
-                stopCharacterVelocity()
-            end)
-            Window:Notify({ Title = "Returned", Content = "Returned to original saved position.", Duration = 2 })
+        if trickOrTreat.savedPreCFrame then
+            safeReturnToSavedPosition(trickOrTreat.savedPreCFrame)
+            Window:Notify({ Title = "Returned", Content = "Returned to saved position (+4 studs safe height).", Duration = 2 })
         else
             Window:Notify({ Title = "No Saved Position", Content = "No saved position exists yet.", Duration = 2 })
         end
@@ -9270,6 +9309,18 @@ TotTab:CreateSlider({
     Flag = "Slider_ToT_DoorHeightOffset",
     Callback = function(Value)
         trickOrTreat.doorHeightOffset = Value
+    end,
+})
+
+TotTab:CreateSlider({
+    Name = "Return Position Height Offset",
+    Range = {0.0, 15.0},
+    Increment = 0.5,
+    Suffix = " studs",
+    CurrentValue = 4.0,
+    Flag = "Slider_ToT_ReturnHeightOffset",
+    Callback = function(Value)
+        trickOrTreat.returnHeightOffset = Value
     end,
 })
 
@@ -12915,11 +12966,8 @@ SettingsTab:CreateButton({
                 pcall(function()
                     trickOrTreat.auto = false
                     trickOrTreat.loopRunning = false
-                    if trickOrTreat.isCycling and trickOrTreat.savedPreCFrame and root then
-                        pcall(function() root.Anchored = false end)
-                        pcall(function() char:PivotTo(trickOrTreat.savedPreCFrame) end)
-                        pcall(function() setRootCFrame(trickOrTreat.savedPreCFrame) end)
-                        pcall(stopCharacterVelocity)
+                    if trickOrTreat.isCycling and trickOrTreat.savedPreCFrame then
+                        pcall(function() safeReturnToSavedPosition(trickOrTreat.savedPreCFrame) end)
                     end
                     if trickOrTreat.clientEventConn then
                         pcall(function() trickOrTreat.clientEventConn:Disconnect() end)
