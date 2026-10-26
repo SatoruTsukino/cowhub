@@ -33,6 +33,15 @@ local Window = Rayfield:CreateWindow({
     KeySystem = false
 })
 
+local function safeNotify(opts)
+    if not Window or not opts then return end
+    pcall(function()
+        if Window.Notify then
+            Window:Notify(opts)
+        end
+    end)
+end
+
 -- ==========================
 -- SERVICES & FAST LOCAL APIS
 -- ==========================
@@ -1929,13 +1938,11 @@ function trickOrTreat.runCycle()
         trickOrTreat.statusText = "Error: FarmerHouses not loaded"
         trickOrTreat.nextCycleTime = os.clock() + 20
         trickOrTreat.updateStatusUI()
-        if Window and Window.Notify then
-            Window:Notify({
-                Title = "Trick or Treat",
-                Content = "FarmerHouses folder not loaded yet! Retrying in 20s.",
-                Duration = 4,
-            })
-        end
+        safeNotify({
+            Title = "Trick or Treat",
+            Content = "FarmerHouses folder not loaded yet! Retrying in 20s.",
+            Duration = 4,
+        })
         cleanupCycle()
         return
     end
@@ -2095,16 +2102,14 @@ function trickOrTreat.runCycle()
     trickOrTreat.statusText = string.format("Cycle finished (%d houses). On cooldown.", knockedCount)
     trickOrTreat.updateStatusUI()
 
-    if Window and Window.Notify then
-        local cdMin = math.floor(cd / 60)
-        local cdSec = math.floor(cd % 60)
-        Window:Notify({
-            Title = "Trick or Treat Cycle Complete",
-            Content = string.format("Knocked %d houses! Returned to start. Next cycle in %d:%02d.", knockedCount, cdMin, cdSec),
-            Duration = 4,
-            Image = 4483362458,
-        })
-    end
+    local cdMin = math.floor(cd / 60)
+    local cdSec = math.floor(cd % 60)
+    safeNotify({
+        Title = "Trick or Treat Cycle Complete",
+        Content = string.format("Knocked %d houses! Returned to start. Next cycle in %d:%02d.", knockedCount, cdMin, cdSec),
+        Duration = 4,
+        Image = 4483362458,
+    })
 end
 
 function trickOrTreat.startLoop()
@@ -2124,18 +2129,24 @@ function trickOrTreat.startLoop()
                         warn("[CowHub TrickOrTreat] Error during cycle:\n" .. tostring(err))
                         trickOrTreat.isCycling = false
                         trickOrTreat.isSingleRun = false
-                        trickOrTreat.isRetryPass = true
                         if trickOrTreat.currentHouseInteracting then
                             trickOrTreat.erroredHouseNames[trickOrTreat.currentHouseInteracting.Name] = true
                         end
                         local errCount = 0
                         for _ in pairs(trickOrTreat.erroredHouseNames) do errCount = errCount + 1 end
                         if errCount > 0 then
+                            trickOrTreat.isRetryPass = true
                             trickOrTreat.statusText = string.format("Error during cycle. Retrying %d failed house(s) in 4s...", errCount)
+                            trickOrTreat.nextCycleTime = os.clock() + 4
                         else
-                            trickOrTreat.statusText = "Error during cycle (retrying failed houses in 4s)"
+                            -- Cycle finished without house failures (non-fatal error in post-cycle GUI). Preserve active cooldown!
+                            trickOrTreat.isRetryPass = false
+                            if trickOrTreat.nextCycleTime <= os.clock() then
+                                local cd = math.max(10, trickOrTreat.cycleCooldown or 600)
+                                trickOrTreat.nextCycleTime = os.clock() + cd
+                            end
+                            trickOrTreat.statusText = "Cycle finished with non-fatal error. On cooldown."
                         end
-                        trickOrTreat.nextCycleTime = os.clock() + 4
                         pcall(trickOrTreat.updateStatusUI)
                     end
                 end
@@ -2194,18 +2205,16 @@ function trickOrTreat.toggle(Value)
         end
         trickOrTreat.startLoop()
         trickOrTreat.updateStatusUI()
-        if Window and Window.Notify then
-            local notifyMsg = "Autofarm enabled. Starting cycle..."
-            if trickOrTreat.nextCycleTime > now then
-                notifyMsg = string.format("Autofarm enabled. Next cycle in %ds (cooldown active).", math.ceil(trickOrTreat.nextCycleTime - now))
-            end
-            Window:Notify({
-                Title = "Trick or Treat Autofarm",
-                Content = notifyMsg,
-                Duration = 3,
-                Image = 4483362458,
-            })
+        local notifyMsg = "Autofarm enabled. Starting cycle..."
+        if trickOrTreat.nextCycleTime > now then
+            notifyMsg = string.format("Autofarm enabled. Next cycle in %ds (cooldown active).", math.ceil(trickOrTreat.nextCycleTime - now))
         end
+        safeNotify({
+            Title = "Trick or Treat Autofarm",
+            Content = notifyMsg,
+            Duration = 3,
+            Image = 4483362458,
+        })
     else
         trickOrTreat.statusText = "Idle"
         trickOrTreat.currentPhase = "Idle (Disabled)"
@@ -7292,7 +7301,9 @@ SlidersTab:CreateSlider({
     Callback = function(Value)
         farm.radius = Value
         farm.radiusSq = farm.radius * farm.radius
-        updatePenVisualizer()
+        if penESP and penESP.update then
+            pcall(penESP.update)
+        end
     end,
 })
 
@@ -9263,9 +9274,9 @@ TotTab:CreateButton({
     Callback = function()
         local didDismiss = trickOrTreat.dismissRewardGui(true)
         if didDismiss then
-            Window:Notify({ Title = "Trick or Treat GUI", Content = "Dismissed reward popup.", Duration = 2 })
+            safeNotify({ Title = "Trick or Treat GUI", Content = "Dismissed reward popup.", Duration = 2 })
         else
-            Window:Notify({ Title = "Trick or Treat GUI", Content = "No active reward popup found.", Duration = 2 })
+            safeNotify({ Title = "Trick or Treat GUI", Content = "No active reward popup found.", Duration = 2 })
         end
     end,
 })
@@ -9274,7 +9285,7 @@ TotTab:CreateButton({
     Name = "Run Single Cycle Now",
     Callback = function()
         if trickOrTreat.isCycling then
-            Window:Notify({ Title = "Already Running", Content = "A cycle is already in progress!", Duration = 3 })
+            safeNotify({ Title = "Already Running", Content = "A cycle is already in progress!", Duration = 3 })
             return
         end
         trickOrTreat.initClientListener()
@@ -9293,24 +9304,26 @@ TotTab:CreateButton({
             if not success then
                 warn("[CowHub TrickOrTreat] Error during single cycle:\n" .. tostring(err))
                 trickOrTreat.isCycling = false
-                trickOrTreat.isRetryPass = true
                 if trickOrTreat.currentHouseInteracting then
                     trickOrTreat.erroredHouseNames[trickOrTreat.currentHouseInteracting.Name] = true
                 end
                 local errCount = 0
                 for _ in pairs(trickOrTreat.erroredHouseNames) do errCount = errCount + 1 end
                 if errCount > 0 then
+                    trickOrTreat.isRetryPass = true
                     trickOrTreat.statusText = string.format("Error in cycle. Retrying %d failed house(s) in 4s...", errCount)
+                    trickOrTreat.nextCycleTime = os.clock() + 4
+                    pcall(trickOrTreat.updateStatusUI)
+                    task.delay(4, function()
+                        if trickOrTreat.isSingleRun and not trickOrTreat.isCycling then
+                            trickOrTreat.runCycle()
+                        end
+                    end)
                 else
-                    trickOrTreat.statusText = "Error in cycle (retrying failed houses in 4s)"
+                    trickOrTreat.isRetryPass = false
+                    trickOrTreat.statusText = "Single cycle completed."
+                    pcall(trickOrTreat.updateStatusUI)
                 end
-                trickOrTreat.nextCycleTime = os.clock() + 4
-                pcall(trickOrTreat.updateStatusUI)
-                task.delay(4, function()
-                    if trickOrTreat.isSingleRun and not trickOrTreat.isCycling then
-                        trickOrTreat.runCycle()
-                    end
-                end)
             end
         end)
     end,
@@ -9321,9 +9334,9 @@ TotTab:CreateButton({
     Callback = function()
         if trickOrTreat.savedPreCFrame then
             safeReturnToSavedPosition(trickOrTreat.savedPreCFrame)
-            Window:Notify({ Title = "Returned", Content = "Returned to saved position (+4 studs safe height).", Duration = 2 })
+            safeNotify({ Title = "Returned", Content = "Returned to saved position (+4 studs safe height).", Duration = 2 })
         else
-            Window:Notify({ Title = "No Saved Position", Content = "No saved position exists yet.", Duration = 2 })
+            safeNotify({ Title = "No Saved Position", Content = "No saved position exists yet.", Duration = 2 })
         end
     end,
 })
