@@ -790,8 +790,23 @@ trickOrTreat = {
     clientEventConn = nil,
     statusCard = nil,
     infoCard = nil,
+    telemetryCard = nil,
     cachedHousesFolder = nil,
     lastDeepSearch = 0,
+    -- Live Script Telemetry
+    totalCycles = 0,
+    totalHousesKnocked = 0,
+    totalRewardsDismissed = 0,
+    currentPhase = "Idle",
+    currentHouseIndex = 0,
+    totalHousesInCycle = 0,
+    currentHouseDistance = 0,
+    sessionStartTime = 0,
+    cycleStartTime = 0,
+    lastCycleDuration = 0,
+    lastKnockTime = 0,
+    longestDetectedCooldown = 0,
+    houseCooldowns = {},
 }
 
 local function stopCharacterVelocity()
@@ -809,6 +824,36 @@ local function stopCharacterVelocity()
             end)
         end
     end
+end
+
+function trickOrTreat.getTelemetry()
+    local now = os.clock()
+    local cdRemaining = math.max(0, math.ceil(trickOrTreat.nextCycleTime - now))
+    local sessionSecs = trickOrTreat.sessionStartTime > 0 and math.floor(now - trickOrTreat.sessionStartTime) or 0
+    local cycleSecs = trickOrTreat.isCycling and trickOrTreat.cycleStartTime > 0 and math.floor(now - trickOrTreat.cycleStartTime) or (trickOrTreat.lastCycleDuration or 0)
+    local rPos = root and getRootPos(root)
+    return {
+        enabled = trickOrTreat.auto == true,
+        isCycling = trickOrTreat.isCycling == true,
+        isSingleRun = trickOrTreat.isSingleRun == true,
+        status = trickOrTreat.statusText or "Idle",
+        phase = trickOrTreat.currentPhase or "Idle",
+        totalCycles = trickOrTreat.totalCycles or 0,
+        totalHousesKnocked = trickOrTreat.totalHousesKnocked or 0,
+        totalRewardsDismissed = trickOrTreat.totalRewardsDismissed or 0,
+        lastCycleHouses = trickOrTreat.housesVisitedCount or 0,
+        lastCycleDuration = trickOrTreat.lastCycleDuration or 0,
+        currentCycleElapsed = cycleSecs,
+        currentHouseIndex = trickOrTreat.currentHouseIndex or 0,
+        totalHousesInCycle = trickOrTreat.totalHousesInCycle or 0,
+        currentHouseName = trickOrTreat.lastHouseName or "",
+        currentHouseDistance = trickOrTreat.currentHouseDistance or 0,
+        cooldownRemaining = cdRemaining,
+        cycleCooldown = trickOrTreat.cycleCooldown or 600,
+        autoDetectCooldown = trickOrTreat.autoDetectCooldown == true,
+        sessionUptime = sessionSecs,
+        position = rPos and { X = rPos.X, Y = rPos.Y, Z = rPos.Z } or nil,
+    }
 end
 
 function trickOrTreat.detectCooldown()
@@ -1265,14 +1310,21 @@ function trickOrTreat.initClientListener()
                 if eventName == "TrickOrTreat" and type(payload) == "table" then
                     if payload.Kind == "Refused" and tostring(payload.Reason) == "Cooldown" and type(payload.Wait) == "number" then
                         local waitSecs = math.ceil(payload.Wait)
-                        -- Only treat as full village cycle cooldown if >= 60 seconds.
-                        -- Lower values are door-level interaction throttles.
-                        if waitSecs >= 60 then
+                        local houseName = tostring(payload.House or payload.HouseName or trickOrTreat.lastHouseName or "")
+                        if houseName ~= "" then
+                            trickOrTreat.houseCooldowns[houseName] = os.clock() + waitSecs
+                        end
+
+                        if waitSecs >= 10 then
+                            trickOrTreat.longestDetectedCooldown = math.max(trickOrTreat.longestDetectedCooldown or 0, waitSecs)
                             if trickOrTreat.autoDetectCooldown then
-                                trickOrTreat.detectedCooldown = waitSecs
-                                trickOrTreat.cycleCooldown = waitSecs
+                                -- Strict requirement: Only schedule at the end of the LONGEST cooldown!
+                                trickOrTreat.detectedCooldown = trickOrTreat.longestDetectedCooldown
+                                trickOrTreat.cycleCooldown = math.max(trickOrTreat.cycleCooldown or 600, trickOrTreat.longestDetectedCooldown)
+                                trickOrTreat.nextCycleTime = math.max(trickOrTreat.nextCycleTime, os.clock() + trickOrTreat.longestDetectedCooldown)
+                            else
+                                trickOrTreat.nextCycleTime = math.max(trickOrTreat.nextCycleTime, os.clock() + waitSecs)
                             end
-                            trickOrTreat.nextCycleTime = math.max(trickOrTreat.nextCycleTime, os.clock() + waitSecs)
                             trickOrTreat.updateStatusUI()
                         end
                     end
@@ -1426,12 +1478,15 @@ function trickOrTreat.dismissRewardGui(force)
         end
     end
 
-    if dismissed and vi and vi.SendKeyEvent then
-        pcall(function()
-            vi:SendKeyEvent(true, Enum.KeyCode.Escape, false, game)
-            task.wait(0.04)
-            vi:SendKeyEvent(false, Enum.KeyCode.Escape, false, game)
-        end)
+    if dismissed then
+        trickOrTreat.totalRewardsDismissed = (trickOrTreat.totalRewardsDismissed or 0) + 1
+        if vi and vi.SendKeyEvent then
+            pcall(function()
+                vi:SendKeyEvent(true, Enum.KeyCode.Escape, false, game)
+                task.wait(0.04)
+                vi:SendKeyEvent(false, Enum.KeyCode.Escape, false, game)
+            end)
+        end
     end
 
     return dismissed
@@ -1457,51 +1512,97 @@ function trickOrTreat.pollRewardGuiUntilDismissed(timeoutSecs, force)
 end
 
 function trickOrTreat.updateStatusUI()
-    if not trickOrTreat.statusCard then return end
+    if not trickOrTreat.statusCard and not trickOrTreat.infoCard and not trickOrTreat.telemetryCard then return end
     local now = os.clock()
-    local statusTitle = "Status: " .. trickOrTreat.statusText
-    local statusBody = ""
+    local cdRemaining = math.max(0, math.ceil(trickOrTreat.nextCycleTime - now))
+    local cdMin = math.floor(trickOrTreat.cycleCooldown / 60)
+    local cdSec = math.floor(trickOrTreat.cycleCooldown % 60)
+    local modeStr = trickOrTreat.autoDetectCooldown and "Auto" or "Manual"
 
-    if trickOrTreat.isCycling then
-        statusBody = "Currently cycling through houses..."
-    elseif trickOrTreat.auto then
-        local cdRemaining = math.max(0, math.ceil(trickOrTreat.nextCycleTime - now))
-        if cdRemaining > 0 then
-            local m = math.floor(cdRemaining / 60)
-            local s = math.floor(cdRemaining % 60)
-            statusBody = string.format("Next cycle in: %02d:%02d\nAuto-repeating when ready.", m, s)
+    -- 1. Status Card Update (Live Phase, House Progress, Countdown)
+    if trickOrTreat.statusCard then
+        local statusTitle = "Status: " .. trickOrTreat.statusText
+        local statusBody = ""
+
+        if trickOrTreat.isCycling then
+            local cur = trickOrTreat.currentHouseIndex or 0
+            local tot = trickOrTreat.totalHousesInCycle or 0
+            local pct = tot > 0 and math.floor((cur / tot) * 100) or 0
+            local cycleSecs = trickOrTreat.cycleStartTime > 0 and math.floor(now - trickOrTreat.cycleStartTime) or 0
+            local cM = math.floor(cycleSecs / 60)
+            local cS = math.floor(cycleSecs % 60)
+            local distStr = (trickOrTreat.currentHouseDistance and trickOrTreat.currentHouseDistance > 0)
+                and string.format(" | Dist: %.1f studs", trickOrTreat.currentHouseDistance)
+                or ""
+            statusBody = string.format("Phase: %s | House: %s\nCycle Progress: [%d/%d] (%d%%)%s\nCycle Elapsed: %02d:%02d",
+                trickOrTreat.currentPhase or "Cycling",
+                trickOrTreat.lastHouseName ~= "" and trickOrTreat.lastHouseName or "N/A",
+                cur, tot, pct,
+                distStr,
+                cM, cS
+            )
+        elseif trickOrTreat.auto then
+            if cdRemaining > 0 then
+                local m = math.floor(cdRemaining / 60)
+                local s = math.floor(cdRemaining % 60)
+                statusBody = string.format("Next cycle in: %02d:%02d\nAuto-repeating when ready.", m, s)
+            else
+                statusBody = "Ready! Starting next cycle shortly..."
+            end
         else
-            statusBody = "Ready! Starting next cycle shortly..."
+            statusBody = "Autofarm is currently OFF."
         end
-    else
-        statusBody = "Autofarm is currently OFF."
+
+        pcall(function()
+            if trickOrTreat.statusCard.SetTitle then
+                trickOrTreat.statusCard:SetTitle(statusTitle)
+                trickOrTreat.statusCard:Set(statusBody)
+            elseif trickOrTreat.statusCard.Set then
+                trickOrTreat.statusCard:Set({ Title = statusTitle, Content = statusBody })
+            end
+        end)
     end
 
-    pcall(function()
-        if trickOrTreat.statusCard.SetTitle then
-            trickOrTreat.statusCard:SetTitle(statusTitle)
-            trickOrTreat.statusCard:Set(statusBody)
-        elseif trickOrTreat.statusCard.Set then
-            trickOrTreat.statusCard:Set({ Title = statusTitle, Content = statusBody })
-        end
-    end)
+    -- 2. Script Telemetry Card Update (Session Stats, Uptime, Pace, Position)
+    local telemCard = trickOrTreat.telemetryCard or trickOrTreat.infoCard
+    if telemCard then
+        local sessionSecs = trickOrTreat.sessionStartTime > 0 and math.floor(now - trickOrTreat.sessionStartTime) or 0
+        local sH = math.floor(sessionSecs / 3600)
+        local sM = math.floor((sessionSecs % 3600) / 60)
+        local sS = math.floor(sessionSecs % 60)
+        local uptimeStr = sH > 0 and string.format("%d:%02d:%02d", sH, sM, sS) or string.format("%02d:%02d", sM, sS)
 
-    if trickOrTreat.infoCard then
-        local infoTitle = "Cycle Telemetry"
-        local cdMin = math.floor(trickOrTreat.cycleCooldown / 60)
-        local modeStr = trickOrTreat.autoDetectCooldown and "Auto-Detected" or "Manual"
-        local infoBody = string.format("Cooldown Mode: %s\nConfigured Cooldown: %d:%02d (%ds)\nLast Cycle Houses Knocked: %d\nLast House: %s",
-            modeStr,
-            cdMin, cdSec, trickOrTreat.cycleCooldown,
-            trickOrTreat.housesVisitedCount,
-            trickOrTreat.lastHouseName ~= "" and trickOrTreat.lastHouseName or "None"
+        local avgHouses = (trickOrTreat.totalCycles and trickOrTreat.totalCycles > 0)
+            and string.format("%.1f", trickOrTreat.totalHousesKnocked / trickOrTreat.totalCycles)
+            or tostring(trickOrTreat.housesVisitedCount or 0)
+
+        local posStr = "N/A"
+        if root and root:IsA("BasePart") then
+            local p = root.Position
+            posStr = string.format("X:%d Y:%d Z:%d", math.floor(p.X), math.floor(p.Y), math.floor(p.Z))
+        end
+
+        local telemTitle = string.format("Script Telemetry | Cycles: %d | Knocked: %d", trickOrTreat.totalCycles or 0, trickOrTreat.totalHousesKnocked or 0)
+        local telemBody = string.format(
+            "Uptime: %s | Total Cycles: %d | Total Knocked: %d\n" ..
+            "Rewards Dismissed: %d | Avg/Cycle: %s | Last Duration: %.1fs\n" ..
+            "Cooldown: %d:%02d (%s) | Pos: %s",
+            uptimeStr,
+            trickOrTreat.totalCycles or 0,
+            trickOrTreat.totalHousesKnocked or 0,
+            trickOrTreat.totalRewardsDismissed or 0,
+            avgHouses,
+            trickOrTreat.lastCycleDuration or 0,
+            cdMin, cdSec, modeStr,
+            posStr
         )
+
         pcall(function()
-            if trickOrTreat.infoCard.SetTitle then
-                trickOrTreat.infoCard:SetTitle(infoTitle)
-                trickOrTreat.infoCard:Set(infoBody)
-            elseif trickOrTreat.infoCard.Set then
-                trickOrTreat.infoCard:Set({ Title = infoTitle, Content = infoBody })
+            if telemCard.SetTitle then
+                telemCard:SetTitle(telemTitle)
+                telemCard:Set(telemBody)
+            elseif telemCard.Set then
+                telemCard:Set({ Title = telemTitle, Content = telemBody })
             end
         end)
     end
@@ -1529,6 +1630,51 @@ function trickOrTreat.runCycle()
         return
     end
 
+    local now = os.clock()
+    -- Guard: If automated and cooldown is active, DO NOT TELEPORT!
+    if not trickOrTreat.isSingleRun and trickOrTreat.nextCycleTime > now then
+        trickOrTreat.updateStatusUI()
+        return
+    end
+
+    -- Check if village houses are on cooldown before teleporting
+    if not trickOrTreat.isSingleRun and trickOrTreat.houseCooldowns then
+        local anyReady = false
+        local longestRemaining = 0
+        local houseCount = 0
+        for _, expiry in pairs(trickOrTreat.houseCooldowns) do
+            houseCount = houseCount + 1
+            local rem = expiry - now
+            if rem <= 0 then
+                anyReady = true
+            else
+                longestRemaining = math.max(longestRemaining, rem)
+            end
+        end
+
+        -- USER REQUIREMENT: Only teleport at the end of the longest cooldown when autodetect is on
+        if trickOrTreat.autoDetectCooldown and longestRemaining > 0 then
+            trickOrTreat.nextCycleTime = now + longestRemaining
+            trickOrTreat.statusText = string.format("Village on cooldown (%ds left). Waiting.", math.ceil(longestRemaining))
+            trickOrTreat.currentPhase = "On Cooldown"
+            trickOrTreat.updateStatusUI()
+            return
+        end
+
+        if houseCount > 0 and not anyReady and longestRemaining > 0 then
+            trickOrTreat.nextCycleTime = now + longestRemaining
+            trickOrTreat.statusText = string.format("All houses on cooldown (%ds left). Waiting.", math.ceil(longestRemaining))
+            trickOrTreat.currentPhase = "On Cooldown"
+            trickOrTreat.updateStatusUI()
+            return
+        end
+    end
+
+    if trickOrTreat.sessionStartTime == 0 then
+        trickOrTreat.sessionStartTime = os.clock()
+    end
+    trickOrTreat.cycleStartTime = os.clock()
+    trickOrTreat.currentPhase = "Starting Cycle"
     trickOrTreat.isCycling = true
     trickOrTreat.statusText = "Starting Cycle..."
     trickOrTreat.updateStatusUI()
@@ -1557,9 +1703,13 @@ function trickOrTreat.runCycle()
         end
         trickOrTreat.isCycling = false
         trickOrTreat.isSingleRun = false
+        trickOrTreat.currentPhase = "Aborted"
+        trickOrTreat.currentHouseIndex = 0
+        trickOrTreat.currentHouseDistance = 0
     end
 
     -- 2. Teleport player to the barn (-537, 727, 600) so the map will load
+    trickOrTreat.currentPhase = "Loading Map (Barn)"
     trickOrTreat.statusText = "Loading Map at Barn..."
     trickOrTreat.updateStatusUI()
 
@@ -1614,6 +1764,8 @@ function trickOrTreat.runCycle()
     local knockedCount = 0
 
     -- 3. Cycle through all houses in FarmerHouses
+    trickOrTreat.totalHousesInCycle = #houses
+    trickOrTreat.currentHouseIndex = 0
     for i, house in ipairs(houses) do
         if not trickOrTreat.auto and not trickOrTreat.isSingleRun then
             break
@@ -1625,97 +1777,115 @@ function trickOrTreat.runCycle()
             break
         end
 
-        currentHouseInteracting = house
-
-        local approachCF, knockPos, knockCF = nil, nil, nil
-        local okTarget, errTarget = pcall(function()
-            approachCF, knockPos, knockCF = trickOrTreat.getTargetCFrame(house)
-        end)
-        if not okTarget then
-            warn("[CowHub TrickOrTreat] Failed to get target CFrame for house:", errTarget)
-        end
-        if okTarget and approachCF and knockPos then
-            local originLabel = trickOrTreat.approachOrigin or "Inside House"
-            trickOrTreat.statusText = string.format("Approaching [%d/%d] (%s): %s", i, #houses, originLabel, house.Name)
-            trickOrTreat.lastHouseName = house.Name
+        -- Check if this specific house is currently on cooldown:
+        local houseExpiry = trickOrTreat.houseCooldowns and trickOrTreat.houseCooldowns[house.Name]
+        if houseExpiry and houseExpiry > os.clock() then
+            local waitLeft = math.ceil(houseExpiry - os.clock())
+            trickOrTreat.statusText = string.format("Skipping [%d/%d] %s (%ds cooldown left)", i, #houses, house.Name, waitLeft)
             trickOrTreat.updateStatusUI()
+        else
+            currentHouseInteracting = house
 
-            -- 1. Disable collision on Inside / Interior boundary box so player doesn't clip/fling
-            if trickOrTreat.disableInsideCollision then
-                trickOrTreat.setHouseCollision(house, false)
-            end
-
-            -- 2. Teleport to approach start point (inside house or outside porch)
-            pcall(function() root.Anchored = false end)
-            pcall(function()
-                char:PivotTo(approachCF)
-                setRootCFrame(approachCF)
-                stopCharacterVelocity()
+            local approachCF, knockPos, knockCF = nil, nil, nil
+            local okTarget, errTarget = pcall(function()
+                approachCF, knockPos, knockCF = trickOrTreat.getTargetCFrame(house)
             end)
-            task.wait(0.05)
-
-            -- 3. Walk up towards the door so the game registers character movement into KnockRange
-            if trickOrTreat.walkUpEnabled and (trickOrTreat.walkDistance or 0) > 0 then
-                trickOrTreat.statusText = string.format("Walking to Door [%d/%d]: %s", i, #houses, house.Name)
+            if not okTarget then
+                warn("[CowHub TrickOrTreat] Failed to get target CFrame for house:", errTarget)
+            end
+            if okTarget and approachCF and knockPos then
+                local originLabel = trickOrTreat.approachOrigin or "Inside House"
+                trickOrTreat.currentHouseIndex = i
+                trickOrTreat.lastHouseName = house.Name
+                trickOrTreat.currentPhase = string.format("Approaching (%s)", originLabel)
+                trickOrTreat.statusText = string.format("Approaching [%d/%d] (%s): %s", i, #houses, originLabel, house.Name)
                 trickOrTreat.updateStatusUI()
 
+                -- 1. Disable collision on Inside / Interior boundary box so player doesn't clip/fling
+                if trickOrTreat.disableInsideCollision then
+                    trickOrTreat.setHouseCollision(house, false)
+                end
+
+                -- 2. Teleport to approach start point (inside house or outside porch)
                 pcall(function() root.Anchored = false end)
-                if humanoid then
-                    pcall(function() humanoid:MoveTo(knockPos) end)
-                end
+                pcall(function()
+                    char:PivotTo(approachCF)
+                    setRootCFrame(approachCF)
+                    stopCharacterVelocity()
+                end)
+                task.wait(0.05)
 
-                local walkStart = os.clock()
-                local maxWalkTime = trickOrTreat.walkTimeout or 1.8
-                while (os.clock() - walkStart < maxWalkTime) do
-                    if not trickOrTreat.auto and not trickOrTreat.isSingleRun then break end
-                    if not root or not humanoid or humanoid.Health <= 0 then break end
+                -- 3. Walk up towards the door so the game registers character movement into KnockRange
+                if trickOrTreat.walkUpEnabled and (trickOrTreat.walkDistance or 0) > 0 then
+                    trickOrTreat.currentPhase = "Walking to Door"
+                    trickOrTreat.statusText = string.format("Walking to Door [%d/%d]: %s", i, #houses, house.Name)
+                    trickOrTreat.updateStatusUI()
 
-                    local rPos = getRootPos(root)
-                    if not rPos then break end
-                    local currentFlat = Vector3.new(rPos.X, 0, rPos.Z)
-                    local targetFlat = Vector3.new(knockPos.X, 0, knockPos.Z)
-                    if (currentFlat - targetFlat).Magnitude <= 1.2 then
-                        break
+                    pcall(function() root.Anchored = false end)
+                    if humanoid then
+                        pcall(function() humanoid:MoveTo(knockPos) end)
                     end
-                    task.wait(0.04)
+
+                    local walkStart = os.clock()
+                    local maxWalkTime = trickOrTreat.walkTimeout or 1.8
+                    while (os.clock() - walkStart < maxWalkTime) do
+                        if not trickOrTreat.auto and not trickOrTreat.isSingleRun then break end
+                        if not root or not humanoid or humanoid.Health <= 0 then break end
+
+                        local rPos = getRootPos(root)
+                        if not rPos then break end
+                        local currentFlat = Vector3.new(rPos.X, 0, rPos.Z)
+                        local targetFlat = Vector3.new(knockPos.X, 0, knockPos.Z)
+                        local dist = (currentFlat - targetFlat).Magnitude
+                        trickOrTreat.currentHouseDistance = math.floor(dist * 10) / 10
+                        if dist <= 1.2 then
+                            break
+                        end
+                        task.wait(0.04)
+                    end
+
+                    if humanoid then
+                        pcall(function() humanoid:Move(Vector3.zero, false) end)
+                    end
+                    stopCharacterVelocity()
                 end
 
-                if humanoid then
-                    pcall(function() humanoid:Move(Vector3.zero, false) end)
+                -- 4. Anchor during knock to prevent being pushed away
+                if trickOrTreat.anchorDuringKnock then
+                    pcall(function() root.Anchored = true end)
+                end
+
+                -- 5. Pre-knock settle delay so server and client register arrival
+                task.wait(trickOrTreat.settleDelay)
+
+                -- 6. Trigger knock: fire proximity prompts, GUI button, remote & virtual key
+                trickOrTreat.currentPhase = "Knocking"
+                trickOrTreat.statusText = string.format("Knocking [%d/%d]: %s", i, #houses, house.Name)
+                trickOrTreat.updateStatusUI()
+
+                pcall(function() trickOrTreat.fireDoorPrompt(house) end)
+
+                knockedCount = knockedCount + 1
+                trickOrTreat.totalHousesKnocked = (trickOrTreat.totalHousesKnocked or 0) + 1
+                trickOrTreat.lastKnockTime = os.clock()
+
+                -- 7. Wait interaction delay (throttle next knock, respecting NextKnockAt = 1.2s)
+                if trickOrTreat.autoDismissRewardGui then
+                    trickOrTreat.currentPhase = "Dismissing Rewards"
+                    trickOrTreat.pollRewardGuiUntilDismissed(trickOrTreat.houseWaitTime)
+                end
+                trickOrTreat.currentPhase = "House Delay"
+                task.wait(trickOrTreat.houseWaitTime)
+
+                if trickOrTreat.anchorDuringKnock then
+                    pcall(function() root.Anchored = false end)
                 end
                 stopCharacterVelocity()
-            end
 
-            -- 4. Anchor during knock to prevent being pushed away
-            if trickOrTreat.anchorDuringKnock then
-                pcall(function() root.Anchored = true end)
-            end
-
-            -- 5. Pre-knock settle delay so server and client register arrival
-            task.wait(trickOrTreat.settleDelay)
-
-            -- 6. Trigger knock: fire proximity prompts, GUI button, remote & virtual key
-            trickOrTreat.statusText = string.format("Knocking [%d/%d]: %s", i, #houses, house.Name)
-            trickOrTreat.updateStatusUI()
-
-            pcall(function() trickOrTreat.fireDoorPrompt(house) end)
-
-            knockedCount = knockedCount + 1
-
-            -- 7. Wait interaction delay (throttle next knock, respecting NextKnockAt = 1.2s)
-            if trickOrTreat.autoDismissRewardGui then
-                trickOrTreat.pollRewardGuiUntilDismissed(trickOrTreat.houseWaitTime)
-            end
-            task.wait(trickOrTreat.houseWaitTime)
-
-            if trickOrTreat.anchorDuringKnock then
-                pcall(function() root.Anchored = false end)
-            end
-            stopCharacterVelocity()
-
-            -- Restore house collision
-            if trickOrTreat.disableInsideCollision then
-                pcall(function() trickOrTreat.setHouseCollision(house, true) end)
+                -- Restore house collision
+                if trickOrTreat.disableInsideCollision then
+                    pcall(function() trickOrTreat.setHouseCollision(house, true) end)
+                end
             end
         end
 
@@ -1726,6 +1896,7 @@ function trickOrTreat.runCycle()
 
     -- 4. Teleport back to original position before the cycle started
     if trickOrTreat.returnOnFinish and preCycleCFrame then
+        trickOrTreat.currentPhase = "Returning to Start"
         trickOrTreat.statusText = "Returning to original position..."
         trickOrTreat.updateStatusUI()
         pcall(function()
@@ -1740,10 +1911,21 @@ function trickOrTreat.runCycle()
         stopCharacterVelocity()
     end
 
+    local cycleDuration = os.clock() - (trickOrTreat.cycleStartTime or os.clock())
+    trickOrTreat.lastCycleDuration = math.floor(cycleDuration * 10) / 10
+    trickOrTreat.totalCycles = (trickOrTreat.totalCycles or 0) + 1
+    trickOrTreat.currentPhase = "On Cooldown"
+    trickOrTreat.currentHouseIndex = 0
+    trickOrTreat.currentHouseDistance = 0
     local cd = math.max(10, trickOrTreat.cycleCooldown or 600)
+    if trickOrTreat.autoDetectCooldown and (trickOrTreat.longestDetectedCooldown or 0) > 0 then
+        cd = math.max(cd, trickOrTreat.longestDetectedCooldown)
+        trickOrTreat.cycleCooldown = cd
+    end
     trickOrTreat.lastCycleCompletedTime = os.clock()
     trickOrTreat.housesVisitedCount = knockedCount
-    trickOrTreat.nextCycleTime = os.clock() + cd
+    -- Only teleport at the end of the longest cooldown when autodetect is on
+    trickOrTreat.nextCycleTime = math.max(trickOrTreat.nextCycleTime or 0, os.clock() + cd)
     trickOrTreat.isCycling = false
     trickOrTreat.isSingleRun = false
     trickOrTreat.statusText = string.format("Cycle finished (%d houses). On cooldown.", knockedCount)
@@ -1803,16 +1985,38 @@ function trickOrTreat.toggle(Value)
     end
 
     if Value then
+        if trickOrTreat.sessionStartTime == 0 then
+            trickOrTreat.sessionStartTime = os.clock()
+        end
+        trickOrTreat.currentPhase = "Idle (Enabled)"
         trickOrTreat.initClientListener()
         if trickOrTreat.autoDetectCooldown then
             trickOrTreat.detectCooldown()
         end
         local now = os.clock()
         local cd = math.max(10, trickOrTreat.cycleCooldown or 600)
-        if trickOrTreat.lastCycleCompletedTime > 0 and (now - trickOrTreat.lastCycleCompletedTime < cd) then
+        if trickOrTreat.autoDetectCooldown and (trickOrTreat.longestDetectedCooldown or 0) > 0 then
+            cd = math.max(cd, trickOrTreat.longestDetectedCooldown)
+        end
+        if trickOrTreat.nextCycleTime > now then
+            -- Active scheduled cooldown in progress; do not wipe!
+        elseif trickOrTreat.lastCycleCompletedTime > 0 and (now - trickOrTreat.lastCycleCompletedTime < cd) then
             trickOrTreat.nextCycleTime = trickOrTreat.lastCycleCompletedTime + cd
         else
             trickOrTreat.nextCycleTime = 0
+        end
+
+        -- Check if village houses are currently on cooldown:
+        if trickOrTreat.houseCooldowns then
+            local longestRemaining = 0
+            for _, expiry in pairs(trickOrTreat.houseCooldowns) do
+                if expiry > now then
+                    longestRemaining = math.max(longestRemaining, expiry - now)
+                end
+            end
+            if trickOrTreat.autoDetectCooldown and longestRemaining > 0 then
+                trickOrTreat.nextCycleTime = math.max(trickOrTreat.nextCycleTime, now + longestRemaining)
+            end
         end
         trickOrTreat.startLoop()
         trickOrTreat.updateStatusUI()
@@ -1830,6 +2034,9 @@ function trickOrTreat.toggle(Value)
         end
     else
         trickOrTreat.statusText = "Idle"
+        trickOrTreat.currentPhase = "Idle (Disabled)"
+        trickOrTreat.currentHouseIndex = 0
+        trickOrTreat.currentHouseDistance = 0
         if trickOrTreat.isCycling and trickOrTreat.returnOnFinish and trickOrTreat.savedPreCFrame and root then
             pcall(function() root.Anchored = false end)
             pcall(function()
@@ -1972,6 +2179,11 @@ function afkRelog.saveState()
             BarnLoadDelay = trickOrTreat and trickOrTreat.barnLoadDelay or 2.5,
             HouseWaitTime = trickOrTreat and trickOrTreat.houseWaitTime or 1.4,
             SettleDelay = trickOrTreat and trickOrTreat.settleDelay or 0.3,
+            TotalCycles = trickOrTreat and trickOrTreat.totalCycles or 0,
+            TotalHousesKnocked = trickOrTreat and trickOrTreat.totalHousesKnocked or 0,
+            TotalRewardsDismissed = trickOrTreat and trickOrTreat.totalRewardsDismissed or 0,
+            LongestDetectedCooldown = trickOrTreat and trickOrTreat.longestDetectedCooldown or 0,
+            NextCycleRemaining = trickOrTreat and (trickOrTreat.nextCycleTime > os.clock()) and math.ceil(trickOrTreat.nextCycleTime - os.clock()) or 0,
             WalkUpEnabled = (trickOrTreat and trickOrTreat.walkUpEnabled) ~= false,
             DisableInsideCollision = (trickOrTreat and trickOrTreat.disableInsideCollision) ~= false,
             ApproachOrigin = trickOrTreat and trickOrTreat.approachOrigin or "Inside House",
@@ -2206,6 +2418,21 @@ function afkRelog.checkAndResumeState()
             if data.TrickOrTreat.SettleDelay then
                 trickOrTreat.settleDelay = data.TrickOrTreat.SettleDelay
                 pcall(function() Window:Set("Slider_ToT_SettleDelay", data.TrickOrTreat.SettleDelay) end)
+            end
+            if data.TrickOrTreat.TotalCycles then
+                trickOrTreat.totalCycles = data.TrickOrTreat.TotalCycles
+            end
+            if data.TrickOrTreat.TotalHousesKnocked then
+                trickOrTreat.totalHousesKnocked = data.TrickOrTreat.TotalHousesKnocked
+            end
+            if data.TrickOrTreat.TotalRewardsDismissed then
+                trickOrTreat.totalRewardsDismissed = data.TrickOrTreat.TotalRewardsDismissed
+            end
+            if data.TrickOrTreat.LongestDetectedCooldown then
+                trickOrTreat.longestDetectedCooldown = data.TrickOrTreat.LongestDetectedCooldown
+            end
+            if data.TrickOrTreat.NextCycleRemaining and data.TrickOrTreat.NextCycleRemaining > 0 then
+                trickOrTreat.nextCycleTime = os.clock() + data.TrickOrTreat.NextCycleRemaining
             end
             if data.TrickOrTreat.ReturnOnFinish ~= nil then
                 trickOrTreat.returnOnFinish = data.TrickOrTreat.ReturnOnFinish
@@ -8907,19 +9134,60 @@ TotTab:CreateButton({
 
 TotTab:CreateSection({ Name = "Status & Live Telemetry" })
 
-pcall(function()
-    trickOrTreat.statusCard = TotTab:CreateParagraph({
-        Title = "Status: Idle",
-        Content = "Autofarm is currently OFF."
-    })
-end)
+local initialStatusTitle = "Status: Idle"
+local initialStatusBody = "Autofarm is currently OFF."
+if TotTab.CreateText then
+    pcall(function()
+        trickOrTreat.statusCard = TotTab:CreateText({
+            name = initialStatusTitle,
+            text = initialStatusBody
+        })
+    end)
+end
+if not trickOrTreat.statusCard and TotTab.CreateParagraph then
+    pcall(function()
+        trickOrTreat.statusCard = TotTab:CreateParagraph({
+            Title = initialStatusTitle,
+            Content = initialStatusBody
+        })
+    end)
+end
 
-pcall(function()
-    trickOrTreat.infoCard = TotTab:CreateParagraph({
-        Title = "Cycle Telemetry",
-        Content = string.format("Configured Cooldown: %ds\nHouses Knocked: 0", trickOrTreat.cycleCooldown)
-    })
-end)
+local initialTelemTitle = "Script Telemetry | Cycles: 0 | Knocked: 0"
+local initialTelemBody = "Uptime: 00:00 | Total Cycles: 0 | Total Knocked: 0\nRewards Dismissed: 0 | Avg/Cycle: 0 | Last Duration: 0.0s\nCooldown: 10:00 (Auto) | Pos: N/A"
+if TotTab.CreateText then
+    pcall(function()
+        trickOrTreat.infoCard = TotTab:CreateText({
+            name = initialTelemTitle,
+            text = initialTelemBody
+        })
+        trickOrTreat.telemetryCard = trickOrTreat.infoCard
+    end)
+end
+if not trickOrTreat.infoCard and TotTab.CreateParagraph then
+    pcall(function()
+        trickOrTreat.infoCard = TotTab:CreateParagraph({
+            Title = initialTelemTitle,
+            Content = initialTelemBody
+        })
+        trickOrTreat.telemetryCard = trickOrTreat.infoCard
+    end)
+end
+
+TotTab:CreateButton({
+    Name = "Reset Session Telemetry",
+    Callback = function()
+        trickOrTreat.totalCycles = 0
+        trickOrTreat.totalHousesKnocked = 0
+        trickOrTreat.totalRewardsDismissed = 0
+        trickOrTreat.sessionStartTime = os.clock()
+        trickOrTreat.lastCycleDuration = 0
+        trickOrTreat.updateStatusUI()
+        if Window and Window.Notify then
+            Window:Notify({ Title = "Telemetry Reset", Content = "Trick or Treat session counters reset.", Duration = 2 })
+        end
+    end,
+})
 
 TotTab:CreateSection({ Name = "Timing & Sliders" })
 
