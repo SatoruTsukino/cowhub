@@ -10053,7 +10053,7 @@ function rafting.ensureDynamicSites()
             coveZ = -874.16
             mouthZ = -883.16
             mouthPos = Vector3.new(coveX, 700.5, mouthZ)
-            landPos = Vector3.new(coveX, floorY + 1.8, coveZ)
+            landPos = Vector3.new(6444.58, floorY + 1.8, -551.46)
         end
 
         local siteData = {
@@ -10459,7 +10459,7 @@ local siteCorridors = {
 
     -- Level 4 Terminus (Reach 7)
     ["Cave_Cubby05"]      = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -937.81,  [7] = -937.81 },
-    ["Clearing_09"]       = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -487.81, [5] = -487.81, [6] = -487.81,  [7] = -487.81 },
+    ["Clearing_09"]       = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -937.81,  [7] = -937.81 },
     ["Clearing_10"]       = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -487.81, [5] = -487.81, [6] = -487.81,  [7] = -487.81 },
     ["Cave_11"]           = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 412.19,  [5] = 412.19,  [6] = 412.19,   [7] = 412.19 },
     ["Cave_12"]           = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 637.19,  [5] = 862.19,  [6] = 1087.19,  [7] = 1312.19 },
@@ -11750,6 +11750,14 @@ function rafting.lootSingleSite(targetSite)
     if not root or not targetSite then return false end
     local landPos = targetSite.LandPos or Vector3.new((targetSite.MinX + targetSite.MaxX) * 0.5, targetSite.FloorY + 2.5, (targetSite.MinZ + targetSite.MaxZ) * 0.5)
 
+    -- Request stream replication for distant / unrendered clearings
+    pcall(function()
+        local lp = game:GetService("Players").LocalPlayer
+        if lp and lp.RequestStreamAroundAsync then
+            lp:RequestStreamAroundAsync(landPos, 5)
+        end
+    end)
+
     if rafting.naturalMode then
         -- Natural mode: debark and walk from raft deck onto shore landing
         naturalWalkTo(landPos, 8.0, 3.5)
@@ -11757,19 +11765,22 @@ function rafting.lootSingleSite(targetSite)
         -- Teleport onto landing ground: triggers client/server to spawn LocalTeamChest
         stopCharacterVelocity()
         root.CFrame = CFrame.new(landPos.X, landPos.Y + 1.5, landPos.Z)
+        root.Anchored = true
         if humanoid then
             humanoid:Move(Vector3.zero, false)
             humanoid:MoveTo(root.Position)
         end
+        task.wait(0.25)
+        root.Anchored = false
     end
     -- Paced landing settle: allows server physics to register touchdown and stream TeamChestSnapshot
-    task.wait(0.7)
+    task.wait(0.5)
 
     -- Poll for LocalTeamChest to spawn on ground
     local targetChest = nil
     local targetModel = nil
     local pollStart = os.clock()
-    while (os.clock() - pollStart) < 3.0 do
+    while (os.clock() - pollStart) < 4.0 do
         local localChest = workspace:FindFirstChild("LocalTeamChest", true)
         if localChest and localChest:IsA("Model") and not localChest:GetAttribute("Opened") then
             local chestPos = localChest:GetPivot().Position
@@ -11865,7 +11876,12 @@ function rafting.sweepZoneChests(zoneNum, deck)
     rafting.isLootingChest = true
     task.spawn(function()
         for _, siteId in ipairs(zoneList) do
-            local targetSite = rafting.sitesById[siteId]
+            local targetSite = rafting.sitesById[siteId] or (rafting.getClearingById and rafting.getClearingById(siteId))
+            if not targetSite and rafting.allSites then
+                for _, s in ipairs(rafting.allSites) do
+                    if s.Id == siteId then targetSite = s break end
+                end
+            end
             if targetSite and not rafting.lootedChestSites[siteId] then
                 rafting.statusText = string.format("Zone %d Sweep: Looting %s...", zoneNum, targetSite.Name or siteId)
                 rafting.updateCards()
@@ -12085,11 +12101,20 @@ function rafting.handleSnapshot(payload)
                 local distToMouth = site and site.Mouth and (Vector3.new(posX, 700.5, posZ) - site.Mouth).Magnitude or math.huge
 
                 local reachedShore = isServerDocked
-                    or (inCoveInterior and inSiteX and (
-                        distToLand < 75
-                        or (distToMouth < 60 and (speed or 20) <= 14.0)
-                        or ((rafting.stuckDuration or 0) >= 0.5)
-                    ))
+                if not reachedShore and site then
+                    if rafting.naturalMode then
+                        reachedShore = inCoveInterior and inSiteX and (
+                            distToLand < 75
+                            or (distToMouth < 60 and (speed or 20) <= 14.0)
+                            or ((rafting.stuckDuration or 0) >= 0.5)
+                        )
+                    else
+                        -- Non-natural mode: take advantage of server BeachSiteRange (45 studs) to dock reliably
+                        reachedShore = (inSiteX and distToMouth <= 45.0)
+                            or (inCoveInterior and inSiteX and distToLand < 75)
+                            or (inSiteX and ((rafting.stuckDuration or 0) >= 0.5))
+                    end
+                end
 
                 if reachedShore then
                     local siteId = (site and site.Id) or payload.SiteId or "Clearing_Dock"
@@ -12171,6 +12196,7 @@ end
 function rafting.handleBoarding(payload)
     rafting.status = "Boarding"
     rafting.statusText = "Boarding raft (walking aboard)..."
+    rafting.zone4Swept = false
     rafting.updateCards()
 end
 
@@ -12211,6 +12237,12 @@ function rafting.stepSteering(dt)
     local posZ = frame.Position.Z
 
 
+
+    -- Terminus Zone 4 Sweep Failsafe: if approaching Sea without docking in Zone 4, sweep Zone 4 sites
+    if not rafting.zone4Swept and posX >= 6350 and not rafting.naturalMode and rafting.collectAllLootChests and not rafting.isLootingChest and not (rafting.status == "Docked") and root then
+        rafting.zone4Swept = true
+        rafting.sweepZoneChests(4, deck)
+    end
 
     -- Reached the Sea? (SeaStartX = 6594.58)
     if posX >= 6590 and not rafting.isEndingVoyage then
@@ -12481,9 +12513,9 @@ function rafting.stepSteering(dt)
             local safeToEvade = true
             if forwardDist < 60.0 then
                 safeToEvade = false
-            elseif evadeDeckX < 0 and leftMinDist < 20.0 then
+            elseif evadeDeckX < 0 and (leftMinDist < 32.0 or whiskerRepulsion > 0.5) then
                 safeToEvade = false
-            elseif evadeDeckX > 0 and rightMinDist < 20.0 then
+            elseif evadeDeckX > 0 and (rightMinDist < 32.0 or whiskerRepulsion < -0.5) then
                 safeToEvade = false
             end
 
