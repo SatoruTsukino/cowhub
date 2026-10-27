@@ -11022,22 +11022,18 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     end
 
     -- Two-Stage Cove Approach:
-    -- Only steer off river channel into cove if physical mooring is needed (e.g. naturalMode or not collectAllLootChests)
-    local shouldEnterCove = rafting.naturalMode or not rafting.collectAllLootChests
-    if shouldEnterCove then
-        -- Stage 1 (Approaching mouth from river): align with mouth opening in river bank
-        if posX >= (mouthX - 140.0) and posX < mouthX then
-            local rawT = math.clamp((posX - (mouthX - 140.0)) / 140.0, 0, 1)
-            local t = (1 - math.cos(rawT * math.pi)) * 0.5
-            return currentChZ + t * (mouthZ - currentChZ)
-        end
-        -- Stage 2 (Passing through mouth into interior): steer from mouth to landing dock
-        if posX >= mouthX and posX <= (maxX + 25) then
-            local leadIn = math.max(1.0, (maxX + 25) - mouthX)
-            local rawT = math.clamp((posX - mouthX) / leadIn, 0, 1)
-            local t = (1 - math.cos(rawT * math.pi)) * 0.5
-            return mouthZ + t * (shoreZ - mouthZ)
-        end
+    -- Stage 1 (Approaching mouth from river): align with mouth opening in river bank (160 studs lead)
+    if posX >= (mouthX - 160.0) and posX < mouthX then
+        local rawT = math.clamp((posX - (mouthX - 160.0)) / 160.0, 0, 1)
+        local t = (1 - math.cos(rawT * math.pi)) * 0.5
+        return currentChZ + t * (mouthZ - currentChZ)
+    end
+    -- Stage 2 (Passing through mouth into interior): steer from mouth to landing dock
+    if posX >= mouthX and posX <= (maxX + 25) then
+        local leadIn = math.max(1.0, (maxX + 25) - mouthX)
+        local rawT = math.clamp((posX - mouthX) / leadIn, 0, 1)
+        local t = (1 - math.cos(rawT * math.pi)) * 0.5
+        return mouthZ + t * (shoreZ - mouthZ)
     end
 
     -- Pre-Fork Spline Guidance: smooth continuous S-curve into the next reach channel (320 studs lead)
@@ -12098,15 +12094,21 @@ function rafting.handleSnapshot(payload)
             local site = (payload.SiteId and (rafting.sitesById[payload.SiteId] or rafting.getClearingById(payload.SiteId))) or rafting.getNearbyClearing(posX, posZ) or nextSite
             local isSelectedSite = (site and rafting.isSiteSelected(site)) or isServerDocked
             if (site or isServerDocked) and isSelectedSite and ((site and not rafting.visitedSites[site.Id]) or isServerDocked) then
+                local mouthZ = (site and site.Mouth and site.Mouth.Z) or (site and site.ShoreZ) or -37.81
                 local inCoveInterior = site and (
-                    (site.BankSide == "North" and posZ <= (site.MaxZ - 10)) or
-                    (site.BankSide == "South" and posZ >= (site.MinZ + 10))
+                    (site.BankSide == "North" and posZ <= (mouthZ + 10)) or
+                    (site.BankSide == "South" and posZ >= (mouthZ - 10))
                 )
-                local inSiteX = site and posX >= (site.MinX - 25) and posX <= (site.MaxX + 25)
+                local inSiteX = site and posX >= (site.MinX - 35) and posX <= (site.MaxX + 35)
                 local distToLand = site and site.LandPos and (Vector3.new(posX, 700.5, posZ) - site.LandPos).Magnitude or math.huge
+                local distToMouth = site and site.Mouth and (Vector3.new(posX, 700.5, posZ) - site.Mouth).Magnitude or math.huge
 
                 local reachedShore = isServerDocked
-                    or (inCoveInterior and inSiteX and (distToLand < 55) and (speed or 20) <= 6.0)
+                    or (inCoveInterior and inSiteX and (
+                        distToLand < 75
+                        or (distToMouth < 60 and (speed or 20) <= 14.0)
+                        or ((rafting.stuckDuration or 0) >= 0.5)
+                    ))
 
                 if reachedShore then
                     local siteId = (site and site.Id) or payload.SiteId or "Clearing_Dock"
@@ -12227,22 +12229,7 @@ function rafting.stepSteering(dt)
     local posX = frame.Position.X
     local posZ = frame.Position.Z
 
-    -- In-Transit Zone Chest Sweep: when collectAllLootChests is enabled, sweep upcoming clearings and cubbies in active zone
-    if rafting.collectAllLootChests and not rafting.naturalMode and not rafting.isLootingChest and root then
-        local transitZone = nil
-        if posX >= 1150 and posX <= 1844 then
-            transitZone = 1
-        elseif posX >= 2800 and posX <= 3344 then
-            transitZone = 2
-        elseif posX >= 4200 and posX <= 4844 then
-            transitZone = 3
-        elseif posX >= 5800 and posX <= 6550 then
-            transitZone = 4
-        end
-        if transitZone then
-            rafting.sweepZoneChests(transitZone, deck)
-        end
-    end
+
 
     -- Reached the Sea? (SeaStartX = 6594.58)
     if posX >= 6590 and not rafting.isEndingVoyage then
@@ -12318,9 +12305,8 @@ function rafting.stepSteering(dt)
         end
     end
 
-    local shouldEnterCove = (rafting.naturalMode or not rafting.collectAllLootChests)
-    local isHeadingToNorthCove = shouldEnterCove and (not isDeparting) and nextSite and nextSite.BankSide == "North" and posX >= (mouthX - 140) and posX <= (maxX + 25)
-    local isHeadingToSouthCove = shouldEnterCove and (not isDeparting) and nextSite and nextSite.BankSide == "South" and posX >= (mouthX - 140) and posX <= (maxX + 25)
+    local isHeadingToNorthCove = (not isDeparting) and nextSite and nextSite.BankSide == "North" and posX >= (mouthX - 160) and posX <= (maxX + 25)
+    local isHeadingToSouthCove = (not isDeparting) and nextSite and nextSite.BankSide == "South" and posX >= (mouthX - 160) and posX <= (maxX + 25)
 
     -- Stand-Off Buffer: deck half-width is 7.0 studs.
     -- Begin repelling when wall is closer than 32 studs from center (25 studs from railing).
@@ -12594,7 +12580,7 @@ function rafting.stepSteering(dt)
     local reachIdx = getReachIndex(posX)
     local forkX = rd and rd.forkX and rd.forkX[reachIdx]
     local approachingFork = forkX and (posX >= forkX - 160) and (posX <= forkX)
-    local approachingCove = nextSite and posX >= (minX - 80) and posX <= (nextSite.MaxX + 20)
+    local approachingCove = nextSite and posX >= (mouthX - 140) and posX <= (nextSite.MaxX + 25)
     local nearFacade = (forwardDist < 75.0) or (leftMinDist < 22.0) or (rightMinDist < 22.0)
     local suppressBoost = isInsideCoveInterior or approachingCove or approachingFork or nearFacade or isWallStuck or rafting.isUnsticking or isActivelyDislodging
 
