@@ -10246,6 +10246,56 @@ local channelTransitions = {
     },
 }
 
+local pipelineCorridors = {
+    ["North"]    = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -487.81, [5] = -487.81, [6] = -487.81, [7] = -487.81 },
+    ["NorthFar"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -1162.81, [7] = -1387.81 },
+    ["South"]    = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 412.19,  [5] = 412.19,  [6] = 412.19,  [7] = 412.19 },
+    ["SouthFar"] = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 637.19,  [5] = 862.19,  [6] = 1087.19,  [7] = 1312.19 },
+    ["Center"]   = { [1] = -37.81, [2] = -37.81,  [3] = -37.81,  [4] = -37.81,  [5] = -37.81,  [6] = -37.81,   [7] = -37.81 },
+}
+
+function rafting.selectOptimalPipeline()
+    local route = rafting.route or "Hybrid Dynamic Explorer"
+    if route:find("Fast Sea") or route:find("Center") then
+        return "Center"
+    elseif route:find("Leftmost") or route:find("North Channels") then
+        return "North"
+    elseif route:find("South Channels") then
+        return "South"
+    end
+
+    local northCount = 0
+    local southCount = 0
+    local wantsFarNorth = false
+    local wantsFarSouth = false
+
+    local sitesToScan = rafting.allSites or clearingSites or {}
+    for _, site in ipairs(sitesToScan) do
+        if rafting.isSiteSelected(site) then
+            local shoreZ = site.ShoreZ or (site.Mouth and site.Mouth.Z) or -37.81
+            if shoreZ < -100 then
+                northCount = northCount + 1
+                if shoreZ < -700 then
+                    wantsFarNorth = true
+                end
+            elseif shoreZ > 50 then
+                southCount = southCount + 1
+                if shoreZ > 700 then
+                    wantsFarSouth = true
+                end
+            end
+        end
+    end
+
+    if northCount >= southCount and northCount > 0 then
+        return if wantsFarNorth then "NorthFar" else "North"
+    elseif southCount > 0 then
+        return if wantsFarSouth then "SouthFar" else "South"
+    end
+
+    return "North"
+end
+
 local function getDownstreamChannelZ(reachIdx, curChZ, prefRoute)
     local rTrans = channelTransitions[reachIdx]
     if not rTrans then return curChZ end
@@ -10260,6 +10310,23 @@ local function getDownstreamChannelZ(reachIdx, curChZ, prefRoute)
     end
     if not validNext or #validNext == 0 then return curChZ end
     if #validNext == 1 then return validNext[1] end
+
+    local pipeline = rafting.selectOptimalPipeline()
+    local pCorr = pipelineCorridors[pipeline] or pipelineCorridors["North"]
+    local nextReach = reachIdx + 1
+    if pCorr and pCorr[nextReach] then
+        local targetPZ = pCorr[nextReach]
+        local bestPZ = validNext[1]
+        local minPDiff = math.huge
+        for _, z in ipairs(validNext) do
+            local diff = math.abs(z - targetPZ)
+            if diff < minPDiff then
+                minPDiff = diff
+                bestPZ = z
+            end
+        end
+        return bestPZ
+    end
 
     local r = prefRoute or rafting.route or ""
     if r:find("Leftmost") or r:find("North") or r:find("Left") then
@@ -10352,7 +10419,7 @@ local siteCorridors = {
     ["ManatiteFjordCave"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -1162.81, [7] = -1387.81 },
     ["Cave_Cubby05"]      = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -937.81,  [7] = -937.81 },
     ["Clearing_09"]       = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -487.81, [5] = -487.81, [6] = -487.81,  [7] = -487.81 },
-    ["Clearing_10"]       = { [1] = -37.81, [2] = -37.81,  [3] = -37.81,  [4] = -37.81,  [5] = -37.81,  [6] = -37.81,   [7] = -37.81 },
+    ["Clearing_10"]       = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -487.81, [5] = -487.81, [6] = -487.81,  [7] = -487.81 },
     ["Cave_11"]           = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 412.19,  [5] = 412.19,  [6] = 412.19,   [7] = 412.19 },
     ["Cave_12"]           = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 637.19,  [5] = 862.19,  [6] = 1087.19,  [7] = 1312.19 },
 }
@@ -10502,17 +10569,28 @@ function rafting.getNextTargetClearing(posX, currentZ)
     local bestSite = nil
     local bestCost = math.huge
 
+    local pipeline = rafting.selectOptimalPipeline()
+    local pCorr = pipelineCorridors[pipeline] or pipelineCorridors["North"]
+
     local sitesToScan = rafting.allSites or clearingSites
     for _, site in ipairs(sitesToScan) do
         local isCandidate = rafting.isSiteSelected(site)
 
         if isCandidate and not rafting.visitedSites[site.Id] then
             if posX <= (site.MaxX or site.MinX) + 25 then
-                if currentZ == nil or rafting.isSiteReachable(site, posX, currentZ) then
+                local sReach = siteReach[site.Id] or getReachIndex(site.MinX)
+                local expectedChZ = pCorr[sReach] or -37.81
+                local corridors = siteCorridors[site.Id]
+                local siteTargetChZ = (corridors and corridors[sReach]) or expectedChZ
+
+                -- Only candidate if on the active pipeline corridor (or in Reach 1)
+                local onPipeline = (sReach == 1) or (math.abs(siteTargetChZ - expectedChZ) <= 50)
+                if onPipeline and (currentZ == nil or rafting.isSiteReachable(site, posX, currentZ)) then
                     local mouthX = site.Mouth and site.Mouth.X or site.MinX
                     local dx = math.max(0, mouthX - posX)
                     local dz = math.abs((site.ShoreZ or -37.81) - (currentZ or -37.81))
-                    local cost = dz * 1.2 + dx
+                    -- Prioritize next downstream site along current pipeline
+                    local cost = dx + dz * 0.4
                     if cost < bestCost then
                         bestCost = cost
                         bestSite = site
@@ -10529,14 +10607,14 @@ function rafting.getNextTargetClearing(posX, currentZ)
         return bestSite
     end
 
-    -- End Cave fallback ONLY if route explicitly specifies caves or user selected caves
-    if string.find(route, "Leftmost", 1, true) or string.find(route, "North Channels", 1, true) then
-        local endSite = rafting.sitesById["ManatiteFjordCave"]
+    -- End Cave fallback if route explicitly specifies caves or pipeline ends at cave
+    if string.find(route, "Leftmost", 1, true) or string.find(route, "North Channels", 1, true) or pipeline:find("North") then
+        local endSite = rafting.sitesById["ManatiteFjordCave"] or rafting.sitesById["Cave_Cubby05"]
         if endSite and not rafting.visitedSites[endSite.Id] and posX <= (endSite.MaxX or endSite.MinX) + 25 and rafting.isSiteReachable(endSite, posX, currentZ) then
             rafting.isSelfCorrecting = false
             return endSite
         end
-    elseif string.find(route, "South Channels", 1, true) then
+    elseif string.find(route, "South Channels", 1, true) or pipeline:find("South") then
         local endSite = rafting.sitesById["Cave_12"] or rafting.sitesById["Cave_11"]
         if endSite and not rafting.visitedSites[endSite.Id] and posX <= (endSite.MaxX or endSite.MinX) + 25 and rafting.isSiteReachable(endSite, posX, currentZ) then
             rafting.isSelfCorrecting = false
@@ -10843,11 +10921,14 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     if not targetSite then
         local curChZ, rIdx = rafting.getCurrentChannel(posX, currentZ)
         local forkX = rd.forkX[rIdx]
-        if forkX and posX >= (forkX - 350) and posX <= forkX then
+        local forkLead = 90.0
+        if forkX and posX >= (forkX - forkLead) and posX <= forkX then
             local nextChZ = getDownstreamChannelZ(rIdx, curChZ, r)
-            local rawT = math.clamp((posX - (forkX - 350)) / 350, 0, 1)
+            local diff = nextChZ - curChZ
+            local throatBiasZ = if diff < -30 then (curChZ - 20.0) elseif diff > 30 then (curChZ + 20.0) else curChZ
+            local rawT = math.clamp((posX - (forkX - forkLead)) / forkLead, 0, 1)
             local t = (1 - math.cos(rawT * math.pi)) * 0.5
-            return curChZ + t * (nextChZ - curChZ)
+            return curChZ + t * (throatBiasZ - curChZ)
         end
         return curChZ
     end
@@ -10855,7 +10936,8 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     local minX = targetSite.MinX
     local maxX = targetSite.MaxX
     local mouthX = targetSite.Mouth and targetSite.Mouth.X or ((minX + maxX) * 0.5)
-    local shoreZ = targetSite.ShoreZ or -37.81
+    local mouthZ = targetSite.Mouth and targetSite.Mouth.Z or (targetSite.ShoreZ or -37.81)
+    local shoreZ = targetSite.ShoreZ or mouthZ
 
     local corridors = siteCorridors[targetSite.Id]
     local currentChZ = (corridors and corridors[reachIdx]) or rafting.getSiteChannelZ(targetSite)
@@ -10866,22 +10948,32 @@ function rafting.getTargetZ(posX, currentZ, clearances)
         currentChZ = physicalChZ
     end
 
-    -- If approaching or inside cove: steer directly towards interior ShoreZ (landing dock)!
-    local approachLead = 320.0
-    if posX >= (mouthX - approachLead) and posX <= (maxX + 25) then
-        local rawT = math.clamp((posX - (mouthX - approachLead)) / approachLead, 0, 1)
+    -- Two-Stage Cove Approach:
+    -- Stage 1 (Approaching mouth from river): align with mouth opening in river bank
+    if posX >= (mouthX - 220.0) and posX < mouthX then
+        local rawT = math.clamp((posX - (mouthX - 220.0)) / 220.0, 0, 1)
         local t = (1 - math.cos(rawT * math.pi)) * 0.5
-        return currentChZ + t * (shoreZ - currentChZ)
+        return currentChZ + t * (mouthZ - currentChZ)
+    end
+    -- Stage 2 (Passing through mouth into interior): steer from mouth to landing dock
+    if posX >= mouthX and posX <= (maxX + 25) then
+        local leadIn = math.max(1.0, (maxX + 25) - mouthX)
+        local rawT = math.clamp((posX - mouthX) / leadIn, 0, 1)
+        local t = (1 - math.cos(rawT * math.pi)) * 0.5
+        return mouthZ + t * (shoreZ - mouthZ)
     end
 
-    -- If in fork approach: smooth S-curve to next reach channel
+    -- If in fork throat: gentle entry bias within the open throat (90 studs before divider nose)
     local forkX = rd.forkX[reachIdx]
-    if forkX and posX >= (forkX - 350) and posX <= forkX then
+    local forkLead = 90.0
+    if forkX and posX >= (forkX - forkLead) and posX <= forkX then
         local nextReach = math.min(reachIdx + 1, rd.maxReach)
         local nextChZ = (corridors and corridors[nextReach]) or getDownstreamChannelZ(reachIdx, currentChZ, r)
-        local rawT = math.clamp((posX - (forkX - 350)) / 350, 0, 1)
+        local diff = nextChZ - currentChZ
+        local throatBiasZ = if diff < -30 then (currentChZ - 20.0) elseif diff > 30 then (currentChZ + 20.0) else currentChZ
+        local rawT = math.clamp((posX - (forkX - forkLead)) / forkLead, 0, 1)
         local t = (1 - math.cos(rawT * math.pi)) * 0.5
-        return currentChZ + t * (nextChZ - currentChZ)
+        return currentChZ + t * (throatBiasZ - currentChZ)
     end
 
     return currentChZ
@@ -11197,11 +11289,13 @@ function rafting.updateCards()
     if nextSite and rafting.isSelfCorrecting then
         nextSiteStr = nextSiteStr .. " (Self-Corrected)"
     end
-    local statusContent = string.format("Session: %s | Auto-Pilot: %s | Target: %s\nRoute: %s | Natural: %s | Auto-Loop: %s",
+    local pipeline = rafting.selectOptimalPipeline and rafting.selectOptimalPipeline() or "North"
+    local statusContent = string.format("Session: %s | Auto-Pilot: %s | Target: %s\nRoute: %s (%s Pipeline) | Natural: %s | Auto-Loop: %s",
         tostring(rafting.status),
         rafting.enabled and "Active" or "Disabled",
         nextSiteStr,
         tostring(rafting.route),
+        tostring(pipeline),
         rafting.naturalMode and "ON" or "OFF",
         rafting.autoLoop and "ON" or "OFF"
     )
@@ -12023,15 +12117,16 @@ function rafting.stepSteering(dt)
     -- 3. Flow Guidance Bias (-5.8 to +5.8 with smooth proportional ramp & deadband)
     local absErr = math.abs(errorZ)
     local flowBias = 0
-    if absErr <= 0.6 then
+    if absErr <= 1.8 then
+        -- Stable deadband on straightaways: boat glides straight down channel centerline
         flowBias = 0
-    elseif absErr <= 4.0 then
-        local t = (absErr - 0.6) / 3.4
-        local mag = 0.8 + t * 2.0
+    elseif absErr <= 6.0 then
+        local t = (absErr - 1.8) / 4.2
+        local mag = 0.6 + t * 2.2
         flowBias = if errorZ > 0 then mag else -mag
-    elseif absErr <= 10.0 then
-        local t = (absErr - 4.0) / 6.0
-        local mag = 2.8 + t * 2.2
+    elseif absErr <= 14.0 then
+        local t = (absErr - 6.0) / 8.0
+        local mag = 2.8 + t * 2.4
         flowBias = if errorZ > 0 then mag else -mag
     else
         flowBias = if errorZ > 0 then 5.8 else -5.8
