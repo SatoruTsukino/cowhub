@@ -11356,41 +11356,12 @@ function rafting.lootReachChests(dockSite, deck)
     rafting.isLootingChest = true
 
     task.spawn(function()
-        local zoneNum = rafting.getSiteZone(dockSite)
-        local zoneSites = {}
-        if rafting.naturalMode then
-            -- In natural mode: physical reach limit (only loot the clearing currently docked at)
-            table.insert(zoneSites, dockSite)
-        elseif rafting.allSites then
-            for _, s in ipairs(rafting.allSites) do
-                local sZone = rafting.getSiteZone(s)
-                if sZone == zoneNum then
-                    local isSelected = (rafting.selectAllSites or rafting.collectAllLootChests)
-                        or (rafting.selectedClearings and rafting.selectedClearings[s.Id] == true)
-                        or (s.Id == dockSite.Id)
-                    if isSelected then
-                        table.insert(zoneSites, s)
-                    end
-                end
-            end
-        else
-            table.insert(zoneSites, dockSite)
-        end
-
-        -- Sort: visit docked site first (already adjacent!), then remaining sites in zone in order of MinX
-        table.sort(zoneSites, function(a, b)
-            if a.Id == dockSite.Id then return true end
-            if b.Id == dockSite.Id then return false end
-            return a.MinX < b.MinX
-        end)
-
-        for _, site in ipairs(zoneSites) do
-            if not rafting.lootedChestSites[site.Id] then
-                rafting.statusText = string.format("Looting %s...", site.Name or site.Id)
-                rafting.updateCards()
-                rafting.lootSingleSite(site)
-                task.wait(0.5)
-            end
+        -- Loot ONLY the clearing where the raft is physically docked
+        if not rafting.lootedChestSites[dockSite.Id] then
+            rafting.statusText = string.format("Looting %s...", dockSite.Name or dockSite.Id)
+            rafting.updateCards()
+            rafting.lootSingleSite(dockSite)
+            task.wait(0.5)
         end
 
         -- Re-board boat deck
@@ -11528,7 +11499,7 @@ function rafting.handleSnapshot(payload)
         local sitesToScan = rafting.allSites or clearingSites
         for _, site in ipairs(sitesToScan) do
             if not rafting.visitedSites[site.Id] and rafting.status ~= "Docked" then
-                local inCove = (site.BankSide == "North" and posZ < -70.0) or (site.BankSide == "South" and posZ > 35.0)
+                local inCove = (site.BankSide == "North" and posZ <= (site.MaxZ + 10)) or (site.BankSide == "South" and posZ >= (site.MinZ - 10))
                 if posX > (site.MaxX + 25) and not inCove then
                     rafting.visitedSites[site.Id] = true
                 end
@@ -11552,15 +11523,15 @@ function rafting.handleSnapshot(payload)
             local site = (payload.SiteId and (rafting.sitesById[payload.SiteId] or rafting.getClearingById(payload.SiteId))) or rafting.getNearbyClearing(posX, posZ) or nextSite
             local isSelectedSite = (site and rafting.isSiteSelected(site)) or isServerDocked
             if (site or isServerDocked) and isSelectedSite and ((site and not rafting.visitedSites[site.Id]) or isServerDocked) then
-                local distToMouth = site and site.Mouth and (Vector3.new(posX, 700.5, posZ) - site.Mouth).Magnitude or math.huge
+                local inCoveInterior = site and (
+                    (site.BankSide == "North" and posZ <= (site.MaxZ - 10)) or
+                    (site.BankSide == "South" and posZ >= (site.MinZ + 10))
+                )
+                local inSiteX = site and posX >= (site.MinX - 25) and posX <= (site.MaxX + 25)
                 local distToLand = site and site.LandPos and (Vector3.new(posX, 700.5, posZ) - site.LandPos).Magnitude or math.huge
-                local inSiteX = site and posX >= (site.MinX - 45) and posX <= (site.MaxX + 45)
-                local inSiteZ = site and ((site.BankSide == "North" and posZ <= (site.MaxZ + 45)) or (site.BankSide == "South" and posZ >= (site.MinZ - 45)))
 
                 local reachedShore = isServerDocked
-                    or distToMouth < 125
-                    or distToLand < 125
-                    or (inSiteX and inSiteZ and (distToMouth < 160 or (speed or 16) < 18))
+                    or (inCoveInterior and inSiteX and (distToLand < 55) and (speed or 20) <= 6.0)
 
                 if reachedShore then
                     local siteId = (site and site.Id) or payload.SiteId or "Clearing_Dock"
