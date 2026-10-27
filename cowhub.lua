@@ -10047,6 +10047,13 @@ function rafting.ensureDynamicSites()
             mouthZ = -542.46
             mouthPos = Vector3.new(coveX, 700.5, mouthZ)
             landPos = Vector3.new(coveX, floorY + 1.8, coveZ)
+        elseif sid == "Cave_Cubby05" then
+            bank = "South"
+            coveX = 6348.58
+            coveZ = -874.16
+            mouthZ = -883.16
+            mouthPos = Vector3.new(coveX, 700.5, mouthZ)
+            landPos = Vector3.new(coveX, floorY + 1.8, coveZ)
         end
 
         local siteData = {
@@ -10070,27 +10077,6 @@ function rafting.ensureDynamicSites()
             table.insert(clearingsList, siteData)
         end
         byId[sid] = siteData
-    end
-
-    if not byId["ManatiteFjordCave"] then
-        local manatiteSite = {
-            Id = "ManatiteFjordCave",
-            Kind = "Cave",
-            Name = "Manatite Cave (North Terminus)",
-            BankSide = "North",
-            Mouth = Vector3.new(6594.58, 700.5, -1267.81),
-            MinX = 6356.58,
-            MaxX = 6594.58,
-            MinZ = -1299.81,
-            MaxZ = -1035.81,
-            FloorY = 700.7,
-            LandPos = Vector3.new(6475.0, 702.5, -1167.0),
-            ShoreZ = -1267.81,
-            FjordLevel = getFjordLevel(6475.0),
-            Reach = (getReachIndex and getReachIndex(6475.0)) or 7,
-        }
-        table.insert(sitesList, manatiteSite)
-        byId["ManatiteFjordCave"] = manatiteSite
     end
 
     table.sort(sitesList, function(a, b) return a.MinX < b.MinX end)
@@ -10288,7 +10274,7 @@ local channelTransitions = {
 
 local pipelineCorridors = {
     ["North"]    = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -487.81, [5] = -487.81, [6] = -487.81, [7] = -487.81 },
-    ["NorthFar"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -1162.81, [7] = -1387.81 },
+    ["NorthFar"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -937.81, [7] = -937.81 },
     ["South"]    = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 412.19,  [5] = 412.19,  [6] = 412.19,  [7] = 412.19 },
     ["SouthFar"] = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 637.19,  [5] = 862.19,  [6] = 1087.19,  [7] = 1312.19 },
     ["Center"]   = { [1] = -37.81, [2] = -37.81,  [3] = -37.81,  [4] = -37.81,  [5] = -37.81,  [6] = -37.81,   [7] = -37.81 },
@@ -10435,21 +10421,21 @@ local zoneSites = {
     [1] = { "Clearing_01", "Cave_Cubby02", "Cave_Cubby01", "Clearing_02" },
     [2] = { "Clearing_03", "Cave_Cubby03", "Clearing_04" },
     [3] = { "Clearing_05", "Clearing_07", "Clearing_06", "Cave_Cubby04", "Clearing_08" },
-    [4] = { "Clearing_09", "Cave_11", "Clearing_10", "Cave_12", "Cave_Cubby05", "ManatiteFjordCave" },
+    [4] = { "Clearing_09", "Cave_11", "Clearing_10", "Cave_12", "Cave_Cubby05" },
 }
 
 local siteZoneMap = {
     ["Clearing_01"] = 1, ["Cave_Cubby02"] = 1, ["Cave_Cubby01"] = 1, ["Clearing_02"] = 1,
     ["Clearing_03"] = 2, ["Cave_Cubby03"] = 2, ["Clearing_04"] = 2,
     ["Clearing_05"] = 3, ["Clearing_07"] = 3, ["Clearing_06"] = 3, ["Cave_Cubby04"] = 3, ["Clearing_08"] = 3,
-    ["Clearing_09"] = 4, ["Cave_11"] = 4, ["Clearing_10"] = 4, ["Cave_12"] = 4, ["Cave_Cubby05"] = 4, ["ManatiteFjordCave"] = 4,
+    ["Clearing_09"] = 4, ["Cave_11"] = 4, ["Clearing_10"] = 4, ["Cave_12"] = 4, ["Cave_Cubby05"] = 4,
 }
 
 local siteReach = {
     ["Clearing_01"] = 1, ["Cave_Cubby02"] = 1, ["Clearing_02"] = 1, ["Cave_Cubby01"] = 1,
     ["Clearing_03"] = 3, ["Cave_Cubby03"] = 3, ["Clearing_04"] = 3,
     ["Clearing_05"] = 5, ["Clearing_06"] = 5, ["Cave_Cubby04"] = 5, ["Clearing_07"] = 5, ["Clearing_08"] = 5,
-    ["Cave_11"] = 7, ["Clearing_09"] = 7, ["Clearing_10"] = 7, ["Cave_Cubby05"] = 7, ["Cave_12"] = 7, ["ManatiteFjordCave"] = 7,
+    ["Cave_11"] = 7, ["Clearing_09"] = 7, ["Clearing_10"] = 7, ["Cave_Cubby05"] = 7, ["Cave_12"] = 7,
 }
 
 local siteCorridors = {
@@ -10472,7 +10458,6 @@ local siteCorridors = {
     ["Clearing_08"] = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 637.19,  [5] = 862.19 },
 
     -- Level 4 Terminus (Reach 7)
-    ["ManatiteFjordCave"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -1162.81, [7] = -1387.81 },
     ["Cave_Cubby05"]      = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -937.81,  [7] = -937.81 },
     ["Clearing_09"]       = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -487.81, [5] = -487.81, [6] = -487.81,  [7] = -487.81 },
     ["Clearing_10"]       = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -487.81, [5] = -487.81, [6] = -487.81,  [7] = -487.81 },
@@ -10555,7 +10540,7 @@ local function getEndCaveSite(currentZ)
             end
         end
     end
-    return bestCave or rafting.sitesById["ManatiteFjordCave"] or rafting.sitesById["Cave_Cubby05"]
+    return bestCave or rafting.sitesById["Cave_Cubby05"]
 end
 
 local leftmostSites = {
@@ -10563,7 +10548,7 @@ local leftmostSites = {
     ["Cave_Cubby01"] = true,
     ["Clearing_03"] = true,
     ["Clearing_05"] = true,
-    ["ManatiteFjordCave"] = true,
+    ["Cave_Cubby05"] = true,
 }
 
 local northPresetSites = {
@@ -10573,7 +10558,6 @@ local northPresetSites = {
     ["Cave_Cubby04"] = true,
     ["Clearing_05"] = true,
     ["Cave_Cubby05"] = true,
-    ["ManatiteFjordCave"] = true,
 }
 
 local southPresetSites = {
@@ -10665,7 +10649,7 @@ function rafting.getNextTargetClearing(posX, currentZ)
 
     -- End Cave fallback if route explicitly specifies caves or pipeline ends at cave
     if string.find(route, "Leftmost", 1, true) or string.find(route, "North Channels", 1, true) or pipeline:find("North") then
-        local endSite = rafting.sitesById["ManatiteFjordCave"] or rafting.sitesById["Cave_Cubby05"]
+        local endSite = rafting.sitesById["Cave_Cubby05"]
         if endSite and not rafting.visitedSites[endSite.Id] and posX <= (endSite.MaxX or endSite.MinX) + 25 and rafting.isSiteReachable(endSite, posX, currentZ) then
             rafting.isSelfCorrecting = false
             return endSite
@@ -10712,7 +10696,7 @@ function rafting.getNextTargetClearing(posX, currentZ)
     end
     if rafting.selectedClearings then
         for sId, active in pairs(rafting.selectedClearings) do
-            if active and (string.sub(sId, 1, 4) == "Cave" or sId == "ManatiteFjordCave") then
+            if active and (string.sub(sId, 1, 4) == "Cave") then
                 local ec = getEndCaveSite(currentZ)
                 if ec and rafting.isSiteReachable(ec, posX, currentZ) then return ec end
             end
@@ -10725,9 +10709,6 @@ end
 
 local function parseSiteId(opt)
     if not opt or type(opt) ~= "string" then return nil end
-    if string.find(opt, "Manatite", 1, true) then
-        return "ManatiteFjordCave"
-    end
     local cubbyNum = string.match(opt, "Cubby%s*(%d+)")
     if cubbyNum then
         return string.format("Cave_Cubby%02d", tonumber(cubbyNum))
@@ -10746,7 +10727,7 @@ end
 local zone1Sites = { ["Clearing_01"] = true, ["Cave_Cubby01"] = true, ["Cave_Cubby02"] = true, ["Clearing_02"] = true }
 local zone2Sites = { ["Clearing_03"] = true, ["Cave_Cubby03"] = true, ["Clearing_04"] = true }
 local zone3Sites = { ["Clearing_05"] = true, ["Cave_Cubby04"] = true, ["Clearing_06"] = true, ["Clearing_07"] = true, ["Clearing_08"] = true }
-local zone4Sites = { ["ManatiteFjordCave"] = true, ["Cave_Cubby05"] = true, ["Clearing_09"] = true, ["Clearing_10"] = true, ["Cave_11"] = true, ["Cave_12"] = true }
+local zone4Sites = { ["Cave_Cubby05"] = true, ["Clearing_09"] = true, ["Clearing_10"] = true, ["Cave_11"] = true, ["Cave_12"] = true }
 
 function rafting.getSiteZone(siteOrId)
     local sid = type(siteOrId) == "table" and siteOrId.Id or siteOrId
@@ -13334,7 +13315,6 @@ RaftingTab:CreateDropdown({
 RaftingTab:CreateDropdown({
     Name = "Zone 4: Level 4 Terminus Sites (Delta Terminus - Reach 7 & Caves)",
     Options = {
-        "[Far-Left] Manatite Fjord Cave (Level 4, North Terminus)",
         "[Left] Cubby 05 Cave (Level 4, North 1 Channel)",
         "[Mid-Left] Clearing 09 (Level 4, North 2 Channel)",
         "[Mid-Left] Clearing 10 (Level 4, North 2 Channel)",
