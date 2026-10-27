@@ -10190,6 +10190,44 @@ local reachChannelZ = {
     [7] = { -1387.81, -937.81, -487.81, -37.81, 412.19, 862.19, 1312.19 },
 }
 
+function rafting.getChannelCenterZ(reachIdx, nominalChZ, posX)
+    if not nominalChZ then return -37.81 end
+    if reachIdx == 2 then
+        if math.abs(nominalChZ - (-262.81)) <= 40 then
+            local x = posX or 2344.58
+            return -262.81 - 0.315 * (x - 2344.58)
+        elseif math.abs(nominalChZ - 187.19) <= 40 then
+            local x = posX or 2344.58
+            return 187.19 + 0.324 * (x - 2344.58)
+        end
+    end
+    if FjordZones and FjordZones.Channels then
+        local bestCh = nil
+        local minDiff = 40
+        for _, ch in ipairs(FjordZones.Channels) do
+            if ch[7] == reachIdx then
+                local diff = math.abs(ch[2] - nominalChZ)
+                if diff < minDiff then
+                    minDiff = diff
+                    bestCh = ch
+                end
+            end
+        end
+        if bestCh then
+            local midX = bestCh[1]
+            local midZ = bestCh[2]
+            local dirX = bestCh[3] or 1
+            local dirZ = bestCh[4] or 0
+            if math.abs(dirX) > 0.01 and math.abs(dirZ) > 0.001 and posX then
+                local slope = dirZ / dirX
+                return midZ + slope * (posX - midX)
+            end
+            return midZ
+        end
+    end
+    return nominalChZ
+end
+
 function rafting.getCurrentChannel(posX, posZ)
     local reachIdx = getReachIndex(posX)
     local channels = reachChannelZ[reachIdx] or { -37.81 }
@@ -10197,7 +10235,8 @@ function rafting.getCurrentChannel(posX, posZ)
     local minDiff = math.huge
     local z = posZ or -37.81
     for _, chZ in ipairs(channels) do
-        local diff = math.abs(chZ - z)
+        local centerZ = rafting.getChannelCenterZ(reachIdx, chZ, posX)
+        local diff = math.abs(centerZ - z)
         if diff < minDiff then
             minDiff = diff
             bestZ = chZ
@@ -10259,7 +10298,9 @@ function rafting.selectOptimalPipeline()
     local route = rafting.route or "Hybrid Dynamic Explorer"
     if route:find("Fast Sea") or route:find("Center") then
         return "Center"
-    elseif route:find("Leftmost") or route:find("North Channels") then
+    elseif route:find("Leftmost") then
+        return "NorthFar"
+    elseif route:find("North Channels") then
         return "North"
     elseif route:find("South Channels") then
         return "South"
@@ -10935,17 +10976,29 @@ function rafting.getTargetZ(posX, currentZ, clearances)
 
     if not targetSite then
         local curChZ, rIdx = rafting.getCurrentChannel(posX, currentZ)
+        local curCenterZ = rafting.getChannelCenterZ(rIdx, curChZ, posX)
         local forkX = rd.forkX[rIdx]
-        local forkLead = 90.0
+        local forkLead = 320.0
         if forkX and posX >= (forkX - forkLead) and posX <= forkX then
+            local nextReach = math.min(rIdx + 1, rd.maxReach)
             local nextChZ = getDownstreamChannelZ(rIdx, curChZ, r)
-            local diff = nextChZ - curChZ
-            local throatBiasZ = if diff < -30 then (curChZ - 20.0) elseif diff > 30 then (curChZ + 20.0) else curChZ
+            local targetThroatZ = nextChZ
+            if rIdx == 1 then
+                if nextChZ < -100 then
+                    targetThroatZ = -105.0
+                elseif nextChZ > 100 then
+                    targetThroatZ = 25.0
+                else
+                    targetThroatZ = -37.81
+                end
+            else
+                targetThroatZ = rafting.getChannelCenterZ(nextReach, nextChZ, forkX)
+            end
             local rawT = math.clamp((posX - (forkX - forkLead)) / forkLead, 0, 1)
             local t = (1 - math.cos(rawT * math.pi)) * 0.5
-            return curChZ + t * (throatBiasZ - curChZ)
+            return curCenterZ + t * (targetThroatZ - curCenterZ)
         end
-        return curChZ
+        return curCenterZ
     end
 
     local minX = targetSite.MinX
@@ -10955,12 +11008,17 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     local shoreZ = targetSite.ShoreZ or mouthZ
 
     local corridors = siteCorridors[targetSite.Id]
-    local currentChZ = (corridors and corridors[reachIdx]) or rafting.getSiteChannelZ(targetSite)
+    local nominalChZ = (corridors and corridors[reachIdx]) or rafting.getSiteChannelZ(targetSite)
+    local currentChZ = rafting.getChannelCenterZ(reachIdx, nominalChZ, posX)
 
-    -- Physical channel clamp: prevent commanding cross-canyon Z if raft is in a different branch
+    -- Physical channel clamp: prevent commanding cross-canyon Z if raft is in a different branch.
+    -- Suppressed during fork transitions (320 studs before fork and 150 studs after fork).
     local physicalChZ = rafting.getCurrentChannel(posX, currentZ)
-    if math.abs(physicalChZ - currentChZ) > 40 then
-        currentChZ = physicalChZ
+    local forkX = rd.forkX[reachIdx]
+    local nearFork = (forkX and posX >= (forkX - 320)) or (reachIdx > 1 and posX <= ((rd.forkX[reachIdx - 1] or 0) + 150))
+    if not nearFork and math.abs(physicalChZ - nominalChZ) > 40 then
+        currentChZ = rafting.getChannelCenterZ(reachIdx, physicalChZ, posX)
+        nominalChZ = physicalChZ
     end
 
     -- Two-Stage Cove Approach:
@@ -10982,17 +11040,26 @@ function rafting.getTargetZ(posX, currentZ, clearances)
         end
     end
 
-    -- If in fork throat: gentle entry bias within the open throat (90 studs before divider nose)
-    local forkX = rd.forkX[reachIdx]
-    local forkLead = 90.0
+    -- Pre-Fork Spline Guidance: smooth continuous S-curve into the next reach channel (320 studs lead)
+    local forkLead = 320.0
     if forkX and posX >= (forkX - forkLead) and posX <= forkX then
         local nextReach = math.min(reachIdx + 1, rd.maxReach)
-        local nextChZ = (corridors and corridors[nextReach]) or getDownstreamChannelZ(reachIdx, currentChZ, r)
-        local diff = nextChZ - currentChZ
-        local throatBiasZ = if diff < -30 then (currentChZ - 20.0) elseif diff > 30 then (currentChZ + 20.0) else currentChZ
+        local nextNominalZ = (corridors and corridors[nextReach]) or getDownstreamChannelZ(reachIdx, nominalChZ, r)
+        local targetThroatZ = nextNominalZ
+        if reachIdx == 1 then
+            if nextNominalZ < -100 then
+                targetThroatZ = -105.0
+            elseif nextNominalZ > 100 then
+                targetThroatZ = 25.0
+            else
+                targetThroatZ = -37.81
+            end
+        else
+            targetThroatZ = rafting.getChannelCenterZ(nextReach, nextNominalZ, forkX)
+        end
         local rawT = math.clamp((posX - (forkX - forkLead)) / forkLead, 0, 1)
         local t = (1 - math.cos(rawT * math.pi)) * 0.5
-        return currentChZ + t * (throatBiasZ - currentChZ)
+        return currentChZ + t * (targetThroatZ - currentChZ)
     end
 
     return currentChZ
