@@ -10179,6 +10179,156 @@ getReachIndex = function(posX)
     return rd.maxReach
 end
 
+local reachChannelZ = {
+    [1] = { -37.81 },
+    [2] = { -262.81, -37.81, 187.19 },
+    [3] = { -487.81, -262.81, -37.81, 412.19 },
+    [4] = { -712.81, -487.81, -37.81, 412.19, 637.19 },
+    [5] = { -937.81, -487.81, -37.81, 187.19, 412.19, 862.19 },
+    [6] = { -1162.81, -937.81, -487.81, -37.81, 412.19, 862.19, 1087.19 },
+    [7] = { -1387.81, -937.81, -487.81, -37.81, 412.19, 862.19, 1312.19 },
+}
+
+function rafting.getCurrentChannel(posX, posZ)
+    local reachIdx = getReachIndex(posX)
+    local channels = reachChannelZ[reachIdx] or { -37.81 }
+    local bestZ = channels[1]
+    local minDiff = math.huge
+    local z = posZ or -37.81
+    for _, chZ in ipairs(channels) do
+        local diff = math.abs(chZ - z)
+        if diff < minDiff then
+            minDiff = diff
+            bestZ = chZ
+        end
+    end
+    return bestZ, reachIdx
+end
+
+local channelTransitions = {
+    [1] = {
+        [-37.81] = { -262.81, -37.81, 187.19 },
+    },
+    [2] = {
+        [-262.81] = { -487.81 },
+        [-37.81]  = { -262.81, -37.81 },
+        [187.19]  = { 412.19 },
+    },
+    [3] = {
+        [-487.81] = { -712.81, -487.81 },
+        [-262.81] = { -712.81, -487.81 },
+        [-37.81]  = { -37.81 },
+        [412.19]  = { 412.19, 637.19 },
+    },
+    [4] = {
+        [-712.81] = { -937.81 },
+        [-487.81] = { -487.81 },
+        [-37.81]  = { -37.81, 187.19 },
+        [412.19]  = { 412.19 },
+        [637.19]  = { 862.19 },
+    },
+    [5] = {
+        [-937.81] = { -1162.81, -937.81 },
+        [-487.81] = { -487.81 },
+        [-37.81]  = { -37.81 },
+        [187.19]  = { 412.19 },
+        [412.19]  = { 412.19 },
+        [862.19]  = { 862.19, 1087.19 },
+    },
+    [6] = {
+        [-1162.81] = { -1387.81 },
+        [-937.81]  = { -937.81 },
+        [-487.81]  = { -487.81 },
+        [-37.81]   = { -37.81 },
+        [412.19]   = { 412.19 },
+        [862.19]   = { 862.19 },
+        [1087.19]  = { 1312.19 },
+    },
+}
+
+local function getDownstreamChannelZ(reachIdx, curChZ, prefRoute)
+    local rTrans = channelTransitions[reachIdx]
+    if not rTrans then return curChZ end
+    local validNext = nil
+    local minDiff = 40
+    for keyZ, list in pairs(rTrans) do
+        local diff = math.abs(keyZ - curChZ)
+        if diff < minDiff then
+            minDiff = diff
+            validNext = list
+        end
+    end
+    if not validNext or #validNext == 0 then return curChZ end
+    if #validNext == 1 then return validNext[1] end
+
+    local r = prefRoute or rafting.route or ""
+    if r:find("Leftmost") or r:find("North") or r:find("Left") then
+        local minZ = math.huge
+        for _, z in ipairs(validNext) do
+            if z < minZ then minZ = z end
+        end
+        return minZ
+    elseif r:find("South") or r:find("Right") then
+        local maxZ = -math.huge
+        for _, z in ipairs(validNext) do
+            if z > maxZ then maxZ = z end
+        end
+        return maxZ
+    else
+        local bestNext = validNext[1]
+        local closestDiff = math.huge
+        for _, z in ipairs(validNext) do
+            local diff = math.abs(z - curChZ)
+            if diff < closestDiff then
+                closestDiff = diff
+                bestNext = z
+            end
+        end
+        return bestNext
+    end
+end
+
+local function getReachableChannelsInReach(curReach, curChZ, targetReach)
+    local currentSet = { [curChZ] = true }
+    if curReach >= targetReach then
+        return currentSet
+    end
+    for r = curReach, targetReach - 1 do
+        local nextSet = {}
+        local rTransitions = channelTransitions[r]
+        if rTransitions then
+            for chZ in pairs(currentSet) do
+                local matchedTrans = nil
+                local minDiff = 40
+                for transKey, targets in pairs(rTransitions) do
+                    local diff = math.abs(transKey - chZ)
+                    if diff < minDiff then
+                        minDiff = diff
+                        matchedTrans = targets
+                    end
+                end
+                if matchedTrans then
+                    for _, nextZ in ipairs(matchedTrans) do
+                        nextSet[nextZ] = true
+                    end
+                end
+            end
+        end
+        if not next(nextSet) then
+            return currentSet
+        end
+        currentSet = nextSet
+    end
+    return currentSet
+end
+
+local siteReach = {
+    ["Clearing_01"] = 1, ["Cave_Cubby02"] = 1, ["Clearing_02"] = 1, ["Cave_Cubby01"] = 1,
+    ["Clearing_03"] = 3, ["Cave_Cubby03"] = 3, ["Clearing_04"] = 3,
+    ["Clearing_05"] = 5, ["Clearing_06"] = 5, ["Cave_Cubby04"] = 5, ["Clearing_07"] = 5, ["Clearing_08"] = 5,
+    ["Cave_11"] = 7, ["Clearing_09"] = 7, ["Clearing_10"] = 7, ["Cave_Cubby05"] = 7, ["Cave_12"] = 7, ["ManatiteFjordCave"] = 7,
+}
+
 local siteCorridors = {
     -- Level 1 & 2 (Reach 1)
     ["Clearing_01"] = { [1] = -37.81 },
@@ -10220,33 +10370,50 @@ function rafting.isSiteReachable(site, posX, currentZ)
     local mouthX = site.Mouth and site.Mouth.X or ((site.MinX + site.MaxX) * 0.5)
     local shoreZ = site.ShoreZ or ((site.MinZ + site.MaxZ) * 0.5)
 
-    -- If already approaching or at cove mouth, it is reachable
-    if posX >= (mouthX - 140) and posX <= (maxX + 25) then
-        return true
+    -- If already inside cove or close proximity to mouth, reachable
+    if posX >= (mouthX - 100) and posX <= (maxX + 25) then
+        if math.abs(currentZ - shoreZ) <= 150 then
+            return true
+        end
     end
 
-    -- In Harbour & Reach 1 (before Fork 1 at X = 1844.58): all downriver sites are reachable
-    if posX <= 1844.58 then
-        return true
-    end
+    local curChZ, curReach = rafting.getCurrentChannel(posX, currentZ)
+    local sReach = siteReach[site.Id] or getReachIndex(mouthX)
 
-    -- Physical Canyon Wall Barriers:
-    -- Once past Fork 1: North branch (currentZ < -100) cannot reach South bank coves (shoreZ > 50)
-    if currentZ < -100 and shoreZ > 50 then
-        return false
-    end
-    -- South branch (currentZ > 50) cannot reach North bank coves (shoreZ < -100)
-    if currentZ > 50 and shoreZ < -100 then
+    if curReach > sReach then
         return false
     end
 
-    -- Once past Fork 3 (X > 3294.58): Far-North (currentZ < -550) cannot reach Central/South (shoreZ > -200)
-    if posX > 3294.58 then
-        if currentZ < -550 and shoreZ > -200 then return false end
-        if currentZ > 500 and shoreZ < 200 then return false end
-    end
+    local corridors = siteCorridors[site.Id]
+    local siteTargetChZ = corridors and corridors[sReach]
 
-    return true
+    if curReach == sReach then
+        if siteTargetChZ and math.abs(curChZ - siteTargetChZ) > 40 then
+            if site.Id == "Clearing_10" and (math.abs(curChZ - (-487.81)) <= 40 or math.abs(curChZ - (-37.81)) <= 40) then
+                return true
+            end
+            if site.Id == "Cave_12" and (math.abs(curChZ - 862.19) <= 40 or math.abs(curChZ - 1312.19) <= 40) then
+                return true
+            end
+            return false
+        end
+        return true
+    else
+        local reachableSet = getReachableChannelsInReach(curReach, curChZ, sReach)
+        if siteTargetChZ then
+            if reachableSet[siteTargetChZ] then
+                return true
+            end
+            if site.Id == "Clearing_10" and (reachableSet[-487.81] or reachableSet[-37.81]) then
+                return true
+            end
+            if site.Id == "Cave_12" and (reachableSet[862.19] or reachableSet[1312.19]) then
+                return true
+            end
+            return false
+        end
+        return true
+    end
 end
 
 local function getEndCaveSite(currentZ)
@@ -10328,6 +10495,7 @@ function rafting.getNextTargetClearing(posX, currentZ)
     rafting.ensureDynamicSites()
     local route = rafting.route or "Hybrid Dynamic Explorer"
     if string.find(route, "Fast Sea Run", 1, true) then
+        rafting.isSelfCorrecting = false
         return nil
     end
 
@@ -10339,9 +10507,10 @@ function rafting.getNextTargetClearing(posX, currentZ)
         local isCandidate = rafting.isSiteSelected(site)
 
         if isCandidate and not rafting.visitedSites[site.Id] then
-            if posX <= site.MaxX + 25 then
+            if posX <= (site.MaxX or site.MinX) + 25 then
                 if currentZ == nil or rafting.isSiteReachable(site, posX, currentZ) then
-                    local dx = math.max(0, (site.Mouth and site.Mouth.X or site.MinX) - posX)
+                    local mouthX = site.Mouth and site.Mouth.X or site.MinX
+                    local dx = math.max(0, mouthX - posX)
                     local dz = math.abs((site.ShoreZ or -37.81) - (currentZ or -37.81))
                     local cost = dz * 1.2 + dx
                     if cost < bestCost then
@@ -10356,29 +10525,62 @@ function rafting.getNextTargetClearing(posX, currentZ)
     end
 
     if bestSite then
+        rafting.isSelfCorrecting = false
         return bestSite
     end
 
     -- End Cave fallback ONLY if route explicitly specifies caves or user selected caves
     if string.find(route, "Leftmost", 1, true) or string.find(route, "North Channels", 1, true) then
         local endSite = rafting.sitesById["ManatiteFjordCave"]
-        if endSite and not rafting.visitedSites[endSite.Id] and posX <= endSite.MaxX + 25 then
+        if endSite and not rafting.visitedSites[endSite.Id] and posX <= (endSite.MaxX or endSite.MinX) + 25 and rafting.isSiteReachable(endSite, posX, currentZ) then
+            rafting.isSelfCorrecting = false
             return endSite
         end
     elseif string.find(route, "South Channels", 1, true) then
         local endSite = rafting.sitesById["Cave_12"] or rafting.sitesById["Cave_11"]
-        if endSite and not rafting.visitedSites[endSite.Id] and posX <= endSite.MaxX + 25 then
+        if endSite and not rafting.visitedSites[endSite.Id] and posX <= (endSite.MaxX or endSite.MinX) + 25 and rafting.isSiteReachable(endSite, posX, currentZ) then
+            rafting.isSelfCorrecting = false
             return endSite
         end
     end
 
+    -- Opportunistic Self-Correction Fallback:
+    -- Raft in a channel where no user-selected sites are reachable.
+    -- Dock at nearest accessible clearing or cubby in this zone/reach!
+    if rafting.allSites then
+        local bestFallback = nil
+        local bestFallbackCost = math.huge
+        for _, site in ipairs(rafting.allSites) do
+            if not rafting.visitedSites[site.Id] and posX <= (site.MaxX or site.MinX) + 25 then
+                if rafting.isSiteReachable(site, posX, currentZ) then
+                    local mouthX = site.Mouth and site.Mouth.X or site.MinX
+                    local dx = math.max(0, mouthX - posX)
+                    local dz = math.abs((site.ShoreZ or -37.81) - (currentZ or -37.81))
+                    local cost = dz * 1.5 + dx
+                    if cost < bestFallbackCost then
+                        bestFallbackCost = cost
+                        bestFallback = site
+                    end
+                end
+            end
+        end
+        if bestFallback then
+            rafting.isSelfCorrecting = true
+            return bestFallback
+        end
+    end
+
+    rafting.isSelfCorrecting = false
+
     if rafting.selectAllSites then
-        return getEndCaveSite(currentZ)
+        local ec = getEndCaveSite(currentZ)
+        if ec and rafting.isSiteReachable(ec, posX, currentZ) then return ec end
     end
     if rafting.selectedClearings then
         for sId, active in pairs(rafting.selectedClearings) do
             if active and (string.sub(sId, 1, 4) == "Cave" or sId == "ManatiteFjordCave") then
-                return getEndCaveSite(currentZ)
+                local ec = getEndCaveSite(currentZ)
+                if ec and rafting.isSiteReachable(ec, posX, currentZ) then return ec end
             end
         end
     end
@@ -10639,46 +10841,15 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     local r = rafting.route or "Hybrid Dynamic Explorer"
 
     if not targetSite then
-        if r:find("Fast Sea") or r:find("Center") then
-            return -37.81
-        elseif r:find("Leftmost") or r:find("Left-Left") or r:find("North") then
-            local northChannels = { [-1] = -37.81, [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -1162.81, [7] = -1387.81 }
-            local chZ = northChannels[reachIdx] or -37.81
-            local forkX = rd.forkX[reachIdx]
-            if forkX and posX >= (forkX - 350) and posX <= forkX then
-                local nextChZ = northChannels[math.min(reachIdx + 1, rd.maxReach)] or chZ
-                local rawT = math.clamp((posX - (forkX - 350)) / 350, 0, 1)
-                local t = (1 - math.cos(rawT * math.pi)) * 0.5
-                return chZ + t * (nextChZ - chZ)
-            end
-            return chZ
-        elseif r:find("South") then
-            local southChannels = { [-1] = -37.81, [1] = -37.81, [2] = 187.19, [3] = 412.19, [4] = 637.19, [5] = 862.19, [6] = 1087.19, [7] = 1312.19 }
-            local chZ = southChannels[reachIdx] or -37.81
-            local forkX = rd.forkX[reachIdx]
-            if forkX and posX >= (forkX - 350) and posX <= forkX then
-                local nextChZ = southChannels[math.min(reachIdx + 1, rd.maxReach)] or chZ
-                local rawT = math.clamp((posX - (forkX - 350)) / 350, 0, 1)
-                local t = (1 - math.cos(rawT * math.pi)) * 0.5
-                return chZ + t * (nextChZ - chZ)
-            end
-            return chZ
+        local curChZ, rIdx = rafting.getCurrentChannel(posX, currentZ)
+        local forkX = rd.forkX[rIdx]
+        if forkX and posX >= (forkX - 350) and posX <= forkX then
+            local nextChZ = getDownstreamChannelZ(rIdx, curChZ, r)
+            local rawT = math.clamp((posX - (forkX - 350)) / 350, 0, 1)
+            local t = (1 - math.cos(rawT * math.pi)) * 0.5
+            return curChZ + t * (nextChZ - curChZ)
         end
-
-        -- Hybrid fallback: closest channel in current reach
-        local chs = rd.channelsByReach[reachIdx]
-        local bestFallbackZ = -37.81
-        if chs and #chs > 0 then
-            local minDiff = math.huge
-            for _, ch in ipairs(chs) do
-                local diff = math.abs(ch[2] - (currentZ or -37.81))
-                if diff < minDiff then
-                    minDiff = diff
-                    bestFallbackZ = ch[2]
-                end
-            end
-        end
-        return bestFallbackZ
+        return curChZ
     end
 
     local minX = targetSite.MinX
@@ -10688,6 +10859,12 @@ function rafting.getTargetZ(posX, currentZ, clearances)
 
     local corridors = siteCorridors[targetSite.Id]
     local currentChZ = (corridors and corridors[reachIdx]) or rafting.getSiteChannelZ(targetSite)
+
+    -- Physical channel clamp: prevent commanding cross-canyon Z if raft is in a different branch
+    local physicalChZ = rafting.getCurrentChannel(posX, currentZ)
+    if math.abs(physicalChZ - currentChZ) > 40 then
+        currentChZ = physicalChZ
+    end
 
     -- If approaching or inside cove: steer directly towards interior ShoreZ (landing dock)!
     local approachLead = 320.0
@@ -10701,7 +10878,7 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     local forkX = rd.forkX[reachIdx]
     if forkX and posX >= (forkX - 350) and posX <= forkX then
         local nextReach = math.min(reachIdx + 1, rd.maxReach)
-        local nextChZ = (corridors and corridors[nextReach]) or currentChZ
+        local nextChZ = (corridors and corridors[nextReach]) or getDownstreamChannelZ(reachIdx, currentChZ, r)
         local rawT = math.clamp((posX - (forkX - 350)) / 350, 0, 1)
         local t = (1 - math.cos(rawT * math.pi)) * 0.5
         return currentChZ + t * (nextChZ - currentChZ)
@@ -11017,6 +11194,9 @@ function rafting.updateCards()
     local statusTitle = "Fjord Rafting: " .. tostring(rafting.statusText)
     local nextSite = snap and snap.Frame and typeof(snap.Frame) == "CFrame" and rafting.getNextTargetClearing(snap.Frame.Position.X, snap.Frame.Position.Z)
     local nextSiteStr = nextSite and nextSite.Id or "Sea (Finish)"
+    if nextSite and rafting.isSelfCorrecting then
+        nextSiteStr = nextSiteStr .. " (Self-Corrected)"
+    end
     local statusContent = string.format("Session: %s | Auto-Pilot: %s | Target: %s\nRoute: %s | Natural: %s | Auto-Loop: %s",
         tostring(rafting.status),
         rafting.enabled and "Active" or "Disabled",
@@ -11868,11 +12048,24 @@ function rafting.stepSteering(dt)
     local forwardDist = math.min(clearances.Forward or 110, clearances.ForwardLeft or 95, clearances.ForwardRight or 95)
 
     local minX = nextSite and nextSite.MinX or 0
-    local mouthX = nextSite and nextSite.Mouth and nextSite.Mouth.X or ((minX + (nextSite and nextSite.MaxX or 0)) * 0.5)
+    local maxX = nextSite and nextSite.MaxX or minX
+    local mouthX = nextSite and nextSite.Mouth and nextSite.Mouth.X or ((minX + maxX) * 0.5)
+    local mouthZ = nextSite and nextSite.Mouth and nextSite.Mouth.Z or (nextSite and nextSite.ShoreZ or -37.81)
+    local shoreZ = nextSite and nextSite.ShoreZ or -37.81
     local isDeparting = (os.clock() - (rafting.lastCastOffTime or 0)) < 6.0
-    local inCoveZone = nextSite and (posX >= (nextSite.MinX - 50) and posX <= (nextSite.MaxX + 25))
-    local isHeadingToNorthCove = (not isDeparting) and nextSite and nextSite.BankSide == "North" and posX >= (mouthX - 320) and posX <= (nextSite.MaxX + 25)
-    local isHeadingToSouthCove = (not isDeparting) and nextSite and nextSite.BankSide == "South" and posX >= (mouthX - 320) and posX <= (nextSite.MaxX + 25)
+
+    -- True cove interior check (past the river bank line):
+    local isInsideCoveInterior = false
+    if nextSite and posX >= (minX - 10) and posX <= (maxX + 25) then
+        if nextSite.BankSide == "North" and posZ <= (mouthZ - 15) then
+            isInsideCoveInterior = true
+        elseif nextSite.BankSide == "South" and posZ >= (mouthZ + 15) then
+            isInsideCoveInterior = true
+        end
+    end
+
+    local isHeadingToNorthCove = (not isDeparting) and nextSite and nextSite.BankSide == "North" and posX >= (mouthX - 320) and posX <= (maxX + 25)
+    local isHeadingToSouthCove = (not isDeparting) and nextSite and nextSite.BankSide == "South" and posX >= (mouthX - 320) and posX <= (maxX + 25)
 
     -- Stand-Off Buffer: deck half-width is 7.0 studs.
     -- Begin repelling when wall is closer than 32 studs from center (25 studs from railing).
@@ -11937,7 +12130,7 @@ function rafting.stepSteering(dt)
     local targetDeckX = 0
     if isHeadingToNorthCove then
         -- Priority 1: Steer into North clearing cove along smooth curve while avoiding outer rock corner collisions
-        if leftMinDist < 12.0 or (whiskerRepulsion > 2.2 and not inCoveZone) then
+        if leftMinDist < 16.0 or (whiskerRepulsion > 1.8 and not isInsideCoveInterior) then
             targetDeckX = whiskerRepulsion
             rafting.statusText = "OBSTACLE NEAR COVE! Whiskers steering clear..."
         else
@@ -11946,7 +12139,7 @@ function rafting.stepSteering(dt)
         end
     elseif isHeadingToSouthCove then
         -- Priority 1: Steer into South clearing cove along smooth curve while avoiding outer rock corner collisions
-        if rightMinDist < 12.0 or (whiskerRepulsion < -2.2 and not inCoveZone) then
+        if rightMinDist < 16.0 or (whiskerRepulsion < -1.8 and not isInsideCoveInterior) then
             targetDeckX = whiskerRepulsion
             rafting.statusText = "OBSTACLE NEAR COVE! Whiskers steering clear..."
         else
@@ -11980,7 +12173,7 @@ function rafting.stepSteering(dt)
                 rafting.stuckDuration = (rafting.stuckDuration or 0) + timeSinceCheck
             else
                 rafting.stuckDuration = math.max(0, (rafting.stuckDuration or 0) - timeSinceCheck * 1.5)
-                if rafting.isUnsticking and distMoved >= 4.0 and not isScrapingWall then
+                if rafting.isUnsticking and distMoved >= 4.0 and not isScrapingWall and (not rafting.coveDislodgeUntil or now >= rafting.coveDislodgeUntil) then
                     rafting.isUnsticking = false
                     rafting.unstickDirection = 0
                 end
@@ -11990,8 +12183,29 @@ function rafting.stepSteering(dt)
         end
     end
 
+    -- Cove corner trap watchdog: if blocked attempting to enter a cove for >= 2.0s, abandon site & self-correct downriver
+    local isApproachingCoveMouth = nextSite and posX >= (minX - 80) and posX <= (maxX + 25) and not isInsideCoveInterior
+    local isCoveBlocked = isApproachingCoveMouth and (rafting.stuckDuration or 0) >= 2.0
+
+    if isCoveBlocked then
+        local blockedSiteId = nextSite.Id
+        rafting.visitedSites[blockedSiteId] = true
+        rafting.abandonedSiteId = blockedSiteId
+        rafting.coveDislodgeUntil = now + 2.5
+        rafting.coveDislodgeDir = if nextSite.BankSide == "North" then 5.8 else -5.8
+        rafting.stuckDuration = 0
+        rafting.isUnsticking = true
+        rafting.unstickStartTime = now
+        print(string.format("[Rafting] Cove corner blocked for >= 2.0s! Abandoning site %s, dislodging downstream...", blockedSiteId))
+    end
+
     local isWallStuck = (rafting.stuckDuration or 0) >= 0.6
-    if isWallStuck then
+    local isActivelyDislodging = (rafting.coveDislodgeUntil and now < rafting.coveDislodgeUntil) or isWallStuck
+
+    if rafting.coveDislodgeUntil and now < rafting.coveDislodgeUntil then
+        targetDeckX = rafting.coveDislodgeDir or 5.8
+        rafting.statusText = "DISLODGING FROM COVE CORNER! Pushing off bank..."
+    elseif isWallStuck then
         if not rafting.isUnsticking then
             rafting.isUnsticking = true
             rafting.unstickStartTime = now
@@ -12019,27 +12233,23 @@ function rafting.stepSteering(dt)
 
     -- 6. Check Hobgoblin Rock Threat (Prioritize landing at clearing over dodging)
     local evadeDeckX, shouldEvadeBoost, shouldEvadeJump = rafting.getHobgoblinEvasionOffset(deck, frame)
-    if evadeDeckX ~= nil then
-        if isHeadingToNorthCove or (inCoveZone and nextSite and nextSite.BankSide == "North") then
+    if evadeDeckX ~= nil and not isActivelyDislodging then
+        if isHeadingToNorthCove or (isInsideCoveInterior and nextSite and nextSite.BankSide == "North") then
             -- Landing at North clearing (cove is to the Left / -5.8)
             if evadeDeckX < 0 then
-                -- Dodge aligns with clearing!
                 targetDeckX = -5.8
                 rafting.statusText = "DODGING TOWARDS CLEARING! Steering into North cove..."
             else
-                -- Dodge pulls away from clearing: prioritize landing at clearing!
                 targetDeckX = -5.8
                 shouldEvadeJump = true
                 rafting.statusText = "PRIORITIZING CLEARING DOCK! Holding course into cove..."
             end
-        elseif isHeadingToSouthCove or (inCoveZone and nextSite and nextSite.BankSide == "South") then
+        elseif isHeadingToSouthCove or (isInsideCoveInterior and nextSite and nextSite.BankSide == "South") then
             -- Landing at South clearing (cove is to the Right / +5.8)
             if evadeDeckX > 0 then
-                -- Dodge aligns with clearing!
                 targetDeckX = 5.8
                 rafting.statusText = "DODGING TOWARDS CLEARING! Steering into South cove..."
             else
-                -- Dodge pulls away from clearing: prioritize landing at clearing!
                 targetDeckX = 5.8
                 shouldEvadeJump = true
                 rafting.statusText = "PRIORITIZING CLEARING DOCK! Holding course into cove..."
@@ -12069,7 +12279,7 @@ function rafting.stepSteering(dt)
 
     -- Active Steering via Humanoid:MoveTo & Overboard Safety Check
     if root and char and humanoid and humanoid.Health > 0 then
-        if shouldEvadeJump or isWallStuck then
+        if shouldEvadeJump or isActivelyDislodging then
             humanoid.Jump = true
         end
 
@@ -12117,7 +12327,7 @@ function rafting.stepSteering(dt)
 
             humanoid.WalkSpeed = 24
             humanoid.AutoRotate = true
-            local targetZOffset = if isWallStuck then 7.0 else 0.0
+            local targetZOffset = if isActivelyDislodging then 7.0 else 0.0
             local targetWorldPos = deck.CFrame:PointToWorldSpace(Vector3.new(rafting.targetDeckX, 3.45, targetZOffset))
             humanoid:MoveTo(targetWorldPos)
         end
@@ -12131,7 +12341,7 @@ function rafting.stepSteering(dt)
     local approachingFork = forkX and (posX >= forkX - 160) and (posX <= forkX)
     local approachingCove = nextSite and posX >= (minX - 80) and posX <= (nextSite.MaxX + 20)
     local nearFacade = (forwardDist < 75.0) or (leftMinDist < 22.0) or (rightMinDist < 22.0)
-    local suppressBoost = inCoveZone or approachingCove or approachingFork or nearFacade or isWallStuck or rafting.isUnsticking
+    local suppressBoost = isInsideCoveInterior or approachingCove or approachingFork or nearFacade or isWallStuck or rafting.isUnsticking or isActivelyDislodging
 
     if rafting.autoBoost and not suppressBoost then
         local energy = snap.Energy or 0
