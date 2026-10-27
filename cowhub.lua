@@ -979,6 +979,21 @@ function trickOrTreat.detectCooldown()
     return detected
 end
 
+local KNOWN_HOUSE_NAMES = {
+    "AppleOrchard_House1",
+    "CloverCreek_House1",
+    "CloverCreek_House2",
+    "FishermansForest_House1",
+    "FishermansForest_House2",
+    "FishermansForest_FishermansHouse",
+    "GoldenHill_House1",
+    "HomeMeadow_House1",
+    "HomeMeadow_House2",
+    "MountainsideMeadow_House1",
+    "SouthPastures_House1",
+}
+trickOrTreat.KNOWN_HOUSE_NAMES = KNOWN_HOUSE_NAMES
+
 function trickOrTreat.getHousesFolder()
     if trickOrTreat.cachedHousesFolder and trickOrTreat.cachedHousesFolder.Parent then
         return trickOrTreat.cachedHousesFolder
@@ -1014,39 +1029,74 @@ function trickOrTreat.getHousesFolder()
         return topFh
     end
 
-    -- 3. Throttled recursive search (at most once every 3.0s to avoid frame freezing)
-    local now = os.clock()
-    if not trickOrTreat.lastDeepSearch or (now - trickOrTreat.lastDeepSearch >= 3.0) then
-        trickOrTreat.lastDeepSearch = now
-        local fhDeep = nil
-        pcall(function()
-            fhDeep = (cowWorld and (cowWorld:FindFirstChild("FarmerHouses", true) or cowWorld:FindFirstChild("Houses", true)))
-                or workspace:FindFirstChild("FarmerHouses", true)
-                or workspace:FindFirstChild("Houses", true)
-        end)
-        if fhDeep then
-            trickOrTreat.cachedHousesFolder = fhDeep
-            return fhDeep
-        end
-    end
-
     return nil
 end
 
 function trickOrTreat.getHouseList()
-    local folder = trickOrTreat.getHousesFolder()
+    local seen = {}
     local list = {}
+
+    local function addCandidate(obj)
+        if not obj or not (obj:IsA("Model") or obj:IsA("Folder")) then return end
+        if seen[obj] or seen[obj.Name] then return end
+        local n = obj.Name
+        local nLower = n:lower()
+        if string.match(n, "^%w+_[Hh]ouse%d*$") or string.find(nLower, "house") or string.find(nLower, "farmer") then
+            seen[obj] = true
+            seen[obj.Name] = true
+            table.insert(list, obj)
+        end
+    end
+
+    -- 1. Scan dedicated folder if found
+    local folder = trickOrTreat.getHousesFolder()
     if folder then
         for _, child in ipairs(folder:GetChildren()) do
-            if child:IsA("Model") or child:IsA("Folder") then
-                local n = child.Name:lower()
-                if string.match(child.Name, "^%w+_House%d+$") or string.find(n, "house") or string.find(n, "farmer") then
-                    table.insert(list, child)
+            addCandidate(child)
+        end
+    end
+
+    -- 2. Scan CowWorld.Geometry and regional subfolders
+    local cowWorld = cache.cowWorldRef
+    if not cowWorld or not cowWorld.Parent then
+        cowWorld = workspace:FindFirstChild("CowWorld")
+        cache.cowWorldRef = cowWorld
+    end
+
+    local geometry = cowWorld and cowWorld:FindFirstChild("Geometry")
+    if geometry then
+        for _, child in ipairs(geometry:GetChildren()) do
+            addCandidate(child)
+            if child:IsA("Folder") or child:IsA("Model") then
+                for _, subChild in ipairs(child:GetChildren()) do
+                    addCandidate(subChild)
                 end
             end
         end
-        table.sort(list, function(a, b) return a.Name < b.Name end)
     end
+
+    -- 3. Direct lookup for any missing known houses
+    if #list < #KNOWN_HOUSE_NAMES then
+        for _, name in ipairs(KNOWN_HOUSE_NAMES) do
+            if not seen[name] then
+                local found = nil
+                if geometry then
+                    found = geometry:FindFirstChild(name, true)
+                end
+                if not found and cowWorld then
+                    found = cowWorld:FindFirstChild(name, true)
+                end
+                if not found then
+                    found = workspace:FindFirstChild(name, true)
+                end
+                if found then
+                    addCandidate(found)
+                end
+            end
+        end
+    end
+
+    table.sort(list, function(a, b) return a.Name < b.Name end)
     return list
 end
 
@@ -1833,8 +1883,8 @@ function trickOrTreat.runCycle()
         return
     end
 
-    -- Check if village houses are on cooldown before teleporting (unless this is a retry pass)
-    if not trickOrTreat.isSingleRun and not trickOrTreat.isRetryPass and trickOrTreat.houseCooldowns then
+    -- Check if village houses are on cooldown before teleporting (unless this is a retry pass or fresh session)
+    if not trickOrTreat.isSingleRun and not trickOrTreat.isRetryPass and trickOrTreat.houseCooldowns and (trickOrTreat.lastCycleCompletedTime or 0) > 0 then
         local anyReady = false
         local longestRemaining = 0
         local houseCount = 0
@@ -1916,7 +1966,8 @@ function trickOrTreat.runCycle()
 
         -- Wait for map to load (poll for houses)
         local barnStart = os.clock()
-        while (os.clock() - barnStart < trickOrTreat.barnLoadDelay) do
+        local maxWait = math.max(trickOrTreat.barnLoadDelay or 2.5, 4.0)
+        while (os.clock() - barnStart < maxWait) do
             if not trickOrTreat.auto and not trickOrTreat.isSingleRun then
                 cleanupCycle()
                 trickOrTreat.statusText = "Aborted"
@@ -1930,6 +1981,30 @@ function trickOrTreat.runCycle()
             end
         end
 
+        -- Fallback: If still 0 houses, attempt streaming at village center anchor (SouthPastures)
+        if #houses == 0 then
+            local villageCenter = Vector3.new(-100, 705, 1066)
+            pcall(function()
+                char:PivotTo(CFrame.new(villageCenter))
+                setRootCFrame(CFrame.new(villageCenter))
+                stopCharacterVelocity()
+            end)
+            local villageStart = os.clock()
+            while (os.clock() - villageStart < 2.5) do
+                if not trickOrTreat.auto and not trickOrTreat.isSingleRun then
+                    cleanupCycle()
+                    trickOrTreat.statusText = "Aborted"
+                    trickOrTreat.updateStatusUI()
+                    return
+                end
+                task.wait(0.4)
+                houses = trickOrTreat.getHouseList()
+                if #houses > 0 then
+                    break
+                end
+            end
+        end
+
         pcall(function() root.Anchored = false end)
         stopCharacterVelocity()
     end
@@ -1939,12 +2014,12 @@ function trickOrTreat.runCycle()
     end
 
     if #houses == 0 then
-        trickOrTreat.statusText = "Error: FarmerHouses not loaded"
+        trickOrTreat.statusText = "Error: Houses not loaded"
         trickOrTreat.nextCycleTime = os.clock() + 20
         trickOrTreat.updateStatusUI()
         safeNotify({
             Title = "Trick or Treat",
-            Content = "FarmerHouses folder not loaded yet! Retrying in 20s.",
+            Content = "Houses not loaded yet! Retrying in 20s.",
             Duration = 4,
         })
         cleanupCycle()
@@ -1999,7 +2074,7 @@ function trickOrTreat.runCycle()
 
         -- Check if this specific house is currently on cooldown:
         local houseExpiry = trickOrTreat.houseCooldowns and trickOrTreat.houseCooldowns[house.Name]
-        if houseExpiry and houseExpiry > os.clock() then
+        if not trickOrTreat.isSingleRun and houseExpiry and houseExpiry > os.clock() then
             local waitLeft = math.ceil(houseExpiry - os.clock())
             trickOrTreat.statusText = string.format("Skipping [%d/%d] %s (%ds cooldown left)", i, #housesToVisit, house.Name, waitLeft)
             trickOrTreat.updateStatusUI()
@@ -2187,7 +2262,9 @@ function trickOrTreat.toggle(Value)
         if trickOrTreat.autoDetectCooldown and (trickOrTreat.longestDetectedCooldown or 0) > 0 then
             cd = math.max(cd, trickOrTreat.longestDetectedCooldown)
         end
-        if trickOrTreat.nextCycleTime > now then
+        if (trickOrTreat.lastCycleCompletedTime or 0) == 0 then
+            trickOrTreat.nextCycleTime = 0
+        elseif trickOrTreat.nextCycleTime > now then
             -- Active scheduled cooldown in progress; do not wipe!
         elseif trickOrTreat.lastCycleCompletedTime > 0 and (now - trickOrTreat.lastCycleCompletedTime < cd) then
             trickOrTreat.nextCycleTime = trickOrTreat.lastCycleCompletedTime + cd
@@ -2196,7 +2273,7 @@ function trickOrTreat.toggle(Value)
         end
 
         -- Check if village houses are currently on cooldown:
-        if trickOrTreat.houseCooldowns then
+        if (trickOrTreat.lastCycleCompletedTime or 0) > 0 and trickOrTreat.houseCooldowns then
             local longestRemaining = 0
             for _, expiry in pairs(trickOrTreat.houseCooldowns) do
                 if expiry > now then
@@ -2412,14 +2489,12 @@ function afkRelog.triggerRejoin()
     local saved = afkRelog.saveState()
 
     -- 2. Notify player
-    if Window and Window.Notify then
-        Window:Notify({
-            Title = "6-Hour Auto-Rejoin",
-            Content = "AFK timer elapsed! Coordinates logged. Rejoining now...",
-            Duration = 6,
-            Image = 4483362458,
-        })
-    end
+    safeNotify({
+        Title = "6-Hour Auto-Rejoin",
+        Content = "AFK timer elapsed! Coordinates logged. Rejoining now...",
+        Duration = 6,
+        Image = 4483362458,
+    })
 
     -- 3. Hook queue_on_teleport so cowhub auto-executes on reconnect
     local qot = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
@@ -9289,9 +9364,15 @@ TotTab:CreateButton({
     Name = "Run Single Cycle Now",
     Callback = function()
         if trickOrTreat.isCycling then
-            safeNotify({ Title = "Already Running", Content = "A cycle is already in progress!", Duration = 3 })
-            return
+            if (os.clock() - (trickOrTreat.cycleStartTime or 0)) > 60 then
+                warn("[CowHub TrickOrTreat] Stuck isCycling flag detected (>60s). Resetting.")
+                trickOrTreat.isCycling = false
+            else
+                safeNotify({ Title = "Already Running", Content = "A cycle is already in progress!", Duration = 3 })
+                return
+            end
         end
+        safeNotify({ Title = "Trick or Treat", Content = "Starting single cycle...", Duration = 3 })
         trickOrTreat.initClientListener()
         if trickOrTreat.autoDetectCooldown then
             trickOrTreat.detectCooldown()
@@ -9301,6 +9382,7 @@ TotTab:CreateButton({
         trickOrTreat.erroredHouseNames = {}
         trickOrTreat.houseRetryAttempts = {}
         trickOrTreat.isSingleRun = true
+        trickOrTreat.startLoop()
         task.spawn(function()
             local success, err = xpcall(trickOrTreat.runCycle, function(e)
                 return debug.traceback(tostring(e), 2)
@@ -9396,9 +9478,7 @@ TotTab:CreateButton({
         trickOrTreat.sessionStartTime = os.clock()
         trickOrTreat.lastCycleDuration = 0
         trickOrTreat.updateStatusUI()
-        if Window and Window.Notify then
-            Window:Notify({ Title = "Telemetry Reset", Content = "Trick or Treat session counters reset.", Duration = 2 })
-        end
+        safeNotify({ Title = "Telemetry Reset", Content = "Trick or Treat session counters reset.", Duration = 2 })
     end,
 })
 
