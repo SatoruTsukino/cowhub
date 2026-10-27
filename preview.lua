@@ -9809,6 +9809,7 @@ local rafting = {
     lastSensorAt = 0,
     lastRemoteCalls = {},
     lastProgressPos = nil,
+    lastProgressX = nil,
     lastProgressTime = 0,
     stuckDuration = 0,
     isUnsticking = false,
@@ -10963,18 +10964,22 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     end
 
     -- Two-Stage Cove Approach:
-    -- Stage 1 (Approaching mouth from river): align with mouth opening in river bank
-    if posX >= (mouthX - 220.0) and posX < mouthX then
-        local rawT = math.clamp((posX - (mouthX - 220.0)) / 220.0, 0, 1)
-        local t = (1 - math.cos(rawT * math.pi)) * 0.5
-        return currentChZ + t * (mouthZ - currentChZ)
-    end
-    -- Stage 2 (Passing through mouth into interior): steer from mouth to landing dock
-    if posX >= mouthX and posX <= (maxX + 25) then
-        local leadIn = math.max(1.0, (maxX + 25) - mouthX)
-        local rawT = math.clamp((posX - mouthX) / leadIn, 0, 1)
-        local t = (1 - math.cos(rawT * math.pi)) * 0.5
-        return mouthZ + t * (shoreZ - mouthZ)
+    -- Only steer off river channel into cove if physical mooring is needed (e.g. naturalMode or not collectAllLootChests)
+    local shouldEnterCove = rafting.naturalMode or not rafting.collectAllLootChests
+    if shouldEnterCove then
+        -- Stage 1 (Approaching mouth from river): align with mouth opening in river bank
+        if posX >= (mouthX - 140.0) and posX < mouthX then
+            local rawT = math.clamp((posX - (mouthX - 140.0)) / 140.0, 0, 1)
+            local t = (1 - math.cos(rawT * math.pi)) * 0.5
+            return currentChZ + t * (mouthZ - currentChZ)
+        end
+        -- Stage 2 (Passing through mouth into interior): steer from mouth to landing dock
+        if posX >= mouthX and posX <= (maxX + 25) then
+            local leadIn = math.max(1.0, (maxX + 25) - mouthX)
+            local rawT = math.clamp((posX - mouthX) / leadIn, 0, 1)
+            local t = (1 - math.cos(rawT * math.pi)) * 0.5
+            return mouthZ + t * (shoreZ - mouthZ)
+        end
     end
 
     -- If in fork throat: gentle entry bias within the open throat (90 studs before divider nose)
@@ -11253,6 +11258,7 @@ function rafting.castOff()
     rafting.isCastingOff = true
     rafting.lastCastOffTime = os.clock()
     rafting.lastProgressPos = nil
+    rafting.lastProgressX = nil
     rafting.lastProgressTime = 0
     rafting.stuckDuration = 0
     rafting.isUnsticking = false
@@ -11796,38 +11802,34 @@ function rafting.lootSingleSite(targetSite)
     return true
 end
 
-function rafting.lootReachChests(dockSite, deck)
-    if rafting.isLootingChest or not root or not dockSite then return end
+function rafting.sweepZoneChests(zoneNum, deck)
+    if rafting.isLootingChest or not root or not zoneNum then return false end
     local curDeck = deck or rafting.getRaftDeck()
-    if not curDeck then return end
+    if not curDeck then return false end
+    local zoneList = zoneSites[zoneNum]
+    if not zoneList then return false end
+
+    local hasUnlooted = false
+    for _, siteId in ipairs(zoneList) do
+        if not rafting.lootedChestSites[siteId] then
+            hasUnlooted = true
+            break
+        end
+    end
+    if not hasUnlooted then return false end
+
     rafting.isLootingChest = true
-
     task.spawn(function()
-        local zoneNum = siteZoneMap[dockSite.Id] or (dockSite.FjordLevel and math.clamp(dockSite.FjordLevel, 1, 4)) or 1
-
-        if rafting.collectAllLootChests and not rafting.naturalMode then
-            -- Zone-wide sweep: Teleport to every clearing and cubby in this zone and loot teamchests!
-            local zoneList = zoneSites[zoneNum] or { dockSite.Id }
-            for _, siteId in ipairs(zoneList) do
-                local targetSite = rafting.sitesById[siteId]
-                if targetSite and not rafting.lootedChestSites[siteId] then
-                    rafting.statusText = string.format("Zone %d Sweep: Looting %s...", zoneNum, targetSite.Name or siteId)
-                    rafting.updateCards()
-                    rafting.lootSingleSite(targetSite)
-                    task.wait(0.4)
-                end
-            end
-        else
-            -- Loot ONLY the clearing where the raft is physically docked
-            if not rafting.lootedChestSites[dockSite.Id] then
-                rafting.statusText = string.format("Looting %s...", dockSite.Name or dockSite.Id)
+        for _, siteId in ipairs(zoneList) do
+            local targetSite = rafting.sitesById[siteId]
+            if targetSite and not rafting.lootedChestSites[siteId] then
+                rafting.statusText = string.format("Zone %d Sweep: Looting %s...", zoneNum, targetSite.Name or siteId)
                 rafting.updateCards()
-                rafting.lootSingleSite(dockSite)
-                task.wait(0.5)
+                rafting.lootSingleSite(targetSite)
+                task.wait(0.4)
             end
         end
 
-        -- Re-board boat deck
         local deckRef = rafting.getRaftDeck() or curDeck
         if deckRef and root then
             if rafting.naturalMode then
@@ -11845,6 +11847,47 @@ function rafting.lootReachChests(dockSite, deck)
                 placeCowAboveDeck(deckRef)
                 task.wait(0.4)
                 rafting.dismissChestRewardGui()
+            end
+        end
+
+        rafting.isLootingChest = false
+    end)
+    return true
+end
+
+function rafting.lootReachChests(dockSite, deck)
+    if rafting.isLootingChest or not root or not dockSite then return end
+    local curDeck = deck or rafting.getRaftDeck()
+    if not curDeck then return end
+
+    task.spawn(function()
+        local zoneNum = siteZoneMap[dockSite.Id] or (dockSite.FjordLevel and math.clamp(dockSite.FjordLevel, 1, 4)) or 1
+
+        if rafting.collectAllLootChests and not rafting.naturalMode then
+            rafting.sweepZoneChests(zoneNum, curDeck)
+            while rafting.isLootingChest do task.wait(0.2) end
+        else
+            -- Loot ONLY the clearing where the raft is physically docked
+            if not rafting.lootedChestSites[dockSite.Id] then
+                rafting.isLootingChest = true
+                rafting.statusText = string.format("Looting %s...", dockSite.Name or dockSite.Id)
+                rafting.updateCards()
+                rafting.lootSingleSite(dockSite)
+                task.wait(0.5)
+
+                local deckRef = rafting.getRaftDeck() or curDeck
+                if deckRef and root then
+                    if rafting.naturalMode then
+                        rafting.statusText = "Boarding raft..."
+                        rafting.updateCards()
+                        naturalWalkTo(deckRef.Position, 8.0, 3.5)
+                    else
+                        placeCowAboveDeck(deckRef)
+                    end
+                    task.wait(0.4)
+                    rafting.dismissChestRewardGui()
+                end
+                rafting.isLootingChest = false
             end
         end
 
@@ -11911,6 +11954,7 @@ function rafting.handleSnapshot(payload)
         rafting.currentDockSite = nil
         rafting.lastLootedSite = nil
         rafting.lastProgressPos = nil
+        rafting.lastProgressX = nil
         rafting.lastProgressTime = 0
         rafting.stuckDuration = 0
         rafting.isUnsticking = false
@@ -11979,6 +12023,7 @@ function rafting.handleSnapshot(payload)
             rafting.isUnsticking = false
             rafting.unstickDirection = 0
             rafting.lastProgressPos = nil
+            rafting.lastProgressX = nil
         end
 
         if rafting.status ~= "Docked" then
@@ -12115,6 +12160,23 @@ function rafting.stepSteering(dt)
     local posX = frame.Position.X
     local posZ = frame.Position.Z
 
+    -- In-Transit Zone Chest Sweep: when collectAllLootChests is enabled, sweep upcoming clearings and cubbies in active zone
+    if rafting.collectAllLootChests and not rafting.naturalMode and not rafting.isLootingChest and root then
+        local transitZone = nil
+        if posX >= 1150 and posX <= 1844 then
+            transitZone = 1
+        elseif posX >= 2800 and posX <= 3344 then
+            transitZone = 2
+        elseif posX >= 4200 and posX <= 4844 then
+            transitZone = 3
+        elseif posX >= 5800 and posX <= 6550 then
+            transitZone = 4
+        end
+        if transitZone then
+            rafting.sweepZoneChests(transitZone, deck)
+        end
+    end
+
     -- Reached the Sea? (SeaStartX = 6594.58)
     if posX >= 6590 and not rafting.isEndingVoyage then
         rafting.isEndingVoyage = true
@@ -12189,8 +12251,9 @@ function rafting.stepSteering(dt)
         end
     end
 
-    local isHeadingToNorthCove = (not isDeparting) and nextSite and nextSite.BankSide == "North" and posX >= (mouthX - 320) and posX <= (maxX + 25)
-    local isHeadingToSouthCove = (not isDeparting) and nextSite and nextSite.BankSide == "South" and posX >= (mouthX - 320) and posX <= (maxX + 25)
+    local shouldEnterCove = (rafting.naturalMode or not rafting.collectAllLootChests)
+    local isHeadingToNorthCove = shouldEnterCove and (not isDeparting) and nextSite and nextSite.BankSide == "North" and posX >= (mouthX - 140) and posX <= (maxX + 25)
+    local isHeadingToSouthCove = shouldEnterCove and (not isDeparting) and nextSite and nextSite.BankSide == "South" and posX >= (mouthX - 140) and posX <= (maxX + 25)
 
     -- Stand-Off Buffer: deck half-width is 7.0 studs.
     -- Begin repelling when wall is closer than 32 studs from center (25 studs from railing).
@@ -12280,37 +12343,37 @@ function rafting.stepSteering(dt)
 
     -- 5b. Wall Scraping / Contact Watchdog & Active Dislodge Maneuver
     local now = os.clock()
-    local currentPos2D = Vector3.new(posX, 0, posZ)
-    local isScrapingLeft = (leftMinDist < 14.0)
-    local isScrapingRight = (rightMinDist < 14.0)
+    local isScrapingLeft = (leftMinDist < 16.0)
+    local isScrapingRight = (rightMinDist < 16.0)
     local isScrapingWall = isScrapingLeft or isScrapingRight
 
-    if not rafting.lastProgressPos then
-        rafting.lastProgressPos = currentPos2D
+    if not rafting.lastProgressX then
+        rafting.lastProgressX = posX
         rafting.lastProgressTime = now
         rafting.stuckDuration = 0
         rafting.isUnsticking = false
     else
         local timeSinceCheck = now - (rafting.lastProgressTime or now)
         if timeSinceCheck >= 0.4 then
-            local distMoved = (currentPos2D - rafting.lastProgressPos).Magnitude
-            if (distMoved < 2.5 or isScrapingWall) and (snap.Status == "Travelling" or snap.Status == "Departing") then
+            local dxMoved = posX - (rafting.lastProgressX or posX)
+            -- River flows down +X. If dx < 1.5 studs over 0.4s while travelling, boat is stuck or wedged
+            if (dxMoved < 1.5 or isScrapingWall) and (snap.Status == "Travelling" or snap.Status == "Departing") then
                 rafting.stuckDuration = (rafting.stuckDuration or 0) + timeSinceCheck
             else
                 rafting.stuckDuration = math.max(0, (rafting.stuckDuration or 0) - timeSinceCheck * 1.5)
-                if rafting.isUnsticking and distMoved >= 4.0 and not isScrapingWall and (not rafting.coveDislodgeUntil or now >= rafting.coveDislodgeUntil) then
+                if rafting.isUnsticking and dxMoved >= 4.0 and not isScrapingWall and (not rafting.coveDislodgeUntil or now >= rafting.coveDislodgeUntil) then
                     rafting.isUnsticking = false
                     rafting.unstickDirection = 0
                 end
             end
-            rafting.lastProgressPos = currentPos2D
+            rafting.lastProgressX = posX
             rafting.lastProgressTime = now
         end
     end
 
-    -- Cove corner trap watchdog: if blocked attempting to enter a cove for >= 2.0s, abandon site & self-correct downriver
+    -- Cove corner trap watchdog: if blocked attempting to enter a cove for >= 1.5s, abandon site & self-correct downriver
     local isApproachingCoveMouth = nextSite and posX >= (minX - 80) and posX <= (maxX + 25) and not isInsideCoveInterior
-    local isCoveBlocked = isApproachingCoveMouth and (rafting.stuckDuration or 0) >= 2.0
+    local isCoveBlocked = isApproachingCoveMouth and (rafting.stuckDuration or 0) >= 1.5
 
     if isCoveBlocked then
         local blockedSiteId = nextSite.Id
@@ -12655,11 +12718,15 @@ function rafting.startVoyage()
     rafting.currentSnapshot = nil
     rafting.targetDeckX = 0
     rafting.lastProgressPos = nil
+    rafting.lastProgressX = nil
     rafting.lastProgressTime = 0
     rafting.stuckDuration = 0
     rafting.isUnsticking = false
     rafting.unstickDirection = 0
     rafting.unstickStartTime = 0
+    rafting.isSelfCorrecting = false
+    rafting.abandonedSiteId = nil
+    rafting.coveDislodgeUntil = nil
     rafting.isEndingVoyage = false
     rafting.isEndingVoyageInProgress = false
     rafting.emergencyDocked = false
@@ -12773,11 +12840,15 @@ function rafting.onSessionEnded(reason)
     rafting.targetDeckX = 0
     rafting.lastSnapshotTime = nil
     rafting.lastProgressPos = nil
+    rafting.lastProgressX = nil
     rafting.lastProgressTime = 0
     rafting.stuckDuration = 0
     rafting.isUnsticking = false
     rafting.unstickDirection = 0
     rafting.unstickStartTime = 0
+    rafting.isSelfCorrecting = false
+    rafting.abandonedSiteId = nil
+    rafting.coveDislodgeUntil = nil
     local oldDeck = rafting.deckPart
     rafting.deckPart = nil
     rafting.raftModel = nil
