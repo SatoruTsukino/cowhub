@@ -10389,6 +10389,20 @@ local function getReachableChannelsInReach(curReach, curChZ, targetReach)
     return currentSet
 end
 
+local zoneSites = {
+    [1] = { "Clearing_01", "Cave_Cubby02", "Cave_Cubby01", "Clearing_02" },
+    [2] = { "Clearing_03", "Cave_Cubby03", "Clearing_04" },
+    [3] = { "Clearing_05", "Clearing_07", "Clearing_06", "Cave_Cubby04", "Clearing_08" },
+    [4] = { "Clearing_09", "Cave_11", "Clearing_10", "Cave_12", "Cave_Cubby05", "ManatiteFjordCave" },
+}
+
+local siteZoneMap = {
+    ["Clearing_01"] = 1, ["Cave_Cubby02"] = 1, ["Cave_Cubby01"] = 1, ["Clearing_02"] = 1,
+    ["Clearing_03"] = 2, ["Cave_Cubby03"] = 2, ["Clearing_04"] = 2,
+    ["Clearing_05"] = 3, ["Clearing_07"] = 3, ["Clearing_06"] = 3, ["Cave_Cubby04"] = 3, ["Clearing_08"] = 3,
+    ["Clearing_09"] = 4, ["Cave_11"] = 4, ["Clearing_10"] = 4, ["Cave_12"] = 4, ["Cave_Cubby05"] = 4, ["ManatiteFjordCave"] = 4,
+}
+
 local siteReach = {
     ["Clearing_01"] = 1, ["Cave_Cubby02"] = 1, ["Clearing_02"] = 1, ["Cave_Cubby01"] = 1,
     ["Clearing_03"] = 3, ["Cave_Cubby03"] = 3, ["Clearing_04"] = 3,
@@ -10583,14 +10597,14 @@ function rafting.getNextTargetClearing(posX, currentZ)
                 local corridors = siteCorridors[site.Id]
                 local siteTargetChZ = (corridors and corridors[sReach]) or expectedChZ
 
-                -- Only candidate if on the active pipeline corridor (or in Reach 1)
-                local onPipeline = (sReach == 1) or (math.abs(siteTargetChZ - expectedChZ) <= 50)
-                if onPipeline and (currentZ == nil or rafting.isSiteReachable(site, posX, currentZ)) then
+                -- Dynamic reachability: site must be physically accessible downstream from current position
+                if currentZ == nil or rafting.isSiteReachable(site, posX, currentZ) then
                     local mouthX = site.Mouth and site.Mouth.X or site.MinX
                     local dx = math.max(0, mouthX - posX)
                     local dz = math.abs((site.ShoreZ or -37.81) - (currentZ or -37.81))
-                    -- Prioritize next downstream site along current pipeline
-                    local cost = dx + dz * 0.4
+                    -- Prefer sites aligned with active pipeline, but reachable sites are always valid (autocorrect for weather)
+                    local pipelinePenalty = (math.abs(siteTargetChZ - expectedChZ) <= 50) and 0 or 250
+                    local cost = dx + dz * 0.4 + pipelinePenalty
                     if cost < bestCost then
                         bestCost = cost
                         bestSite = site
@@ -11789,12 +11803,28 @@ function rafting.lootReachChests(dockSite, deck)
     rafting.isLootingChest = true
 
     task.spawn(function()
-        -- Loot ONLY the clearing where the raft is physically docked
-        if not rafting.lootedChestSites[dockSite.Id] then
-            rafting.statusText = string.format("Looting %s...", dockSite.Name or dockSite.Id)
-            rafting.updateCards()
-            rafting.lootSingleSite(dockSite)
-            task.wait(0.5)
+        local zoneNum = siteZoneMap[dockSite.Id] or (dockSite.FjordLevel and math.clamp(dockSite.FjordLevel, 1, 4)) or 1
+
+        if rafting.collectAllLootChests and not rafting.naturalMode then
+            -- Zone-wide sweep: Teleport to every clearing and cubby in this zone and loot teamchests!
+            local zoneList = zoneSites[zoneNum] or { dockSite.Id }
+            for _, siteId in ipairs(zoneList) do
+                local targetSite = rafting.sitesById[siteId]
+                if targetSite and not rafting.lootedChestSites[siteId] then
+                    rafting.statusText = string.format("Zone %d Sweep: Looting %s...", zoneNum, targetSite.Name or siteId)
+                    rafting.updateCards()
+                    rafting.lootSingleSite(targetSite)
+                    task.wait(0.4)
+                end
+            end
+        else
+            -- Loot ONLY the clearing where the raft is physically docked
+            if not rafting.lootedChestSites[dockSite.Id] then
+                rafting.statusText = string.format("Looting %s...", dockSite.Name or dockSite.Id)
+                rafting.updateCards()
+                rafting.lootSingleSite(dockSite)
+                task.wait(0.5)
+            end
         end
 
         -- Re-board boat deck
