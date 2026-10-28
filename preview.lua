@@ -817,6 +817,8 @@ trickOrTreat = {
     totalCycles = 0,
     totalHousesKnocked = 0,
     totalRewardsDismissed = 0,
+    lastRewardDismissTime = 0,
+    lastServerRewardTime = 0,
     currentPhase = "Idle",
     currentHouseIndex = 0,
     totalHousesInCycle = 0,
@@ -1518,7 +1520,9 @@ function trickOrTreat.initClientListener()
         if clientEvent and clientEvent:IsA("RemoteEvent") then
             trickOrTreat.clientEventConn = clientEvent.OnClientEvent:Connect(function(eventName, payload)
                 if eventName == "TrickOrTreat" and type(payload) == "table" then
-                    if payload.Kind == "Refused" and tostring(payload.Reason) == "Cooldown" and type(payload.Wait) == "number" then
+                    if payload.Kind == "Scene" and payload.Outcome == "Candy" then
+                        trickOrTreat.lastServerRewardTime = os.clock()
+                    elseif payload.Kind == "Refused" and tostring(payload.Reason) == "Cooldown" and type(payload.Wait) == "number" then
                         local waitSecs = math.ceil(payload.Wait)
                         local houseName = tostring(payload.House or payload.HouseName or trickOrTreat.lastHouseName or "")
                         if houseName ~= "" then
