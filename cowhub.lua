@@ -10119,6 +10119,13 @@ function rafting.ensureDynamicSites()
             mouthZ = -542.46
             mouthPos = Vector3.new(coveX, 700.5, mouthZ)
             landPos = Vector3.new(coveX, floorY + 1.8, coveZ)
+        elseif sid == "Clearing_09" then
+            bank = "South"
+            coveX = 6014.58
+            coveZ = -772.66
+            mouthZ = -885.26
+            mouthPos = Vector3.new(5920.0, 700.5, mouthZ)
+            landPos = Vector3.new(coveX, floorY + 1.8, coveZ)
         elseif sid == "Cave_Cubby05" then
             bank = "South"
             coveX = 6348.58
@@ -10719,25 +10726,27 @@ function rafting.getNextTargetClearing(posX, currentZ)
         return bestSite
     end
 
-    -- End Cave fallback if route explicitly specifies caves or pipeline ends at cave
-    if string.find(route, "Leftmost", 1, true) or string.find(route, "North Channels", 1, true) or pipeline:find("North") then
-        local endSite = rafting.sitesById["Cave_Cubby05"]
-        if endSite and not rafting.visitedSites[endSite.Id] and posX <= (endSite.MaxX or endSite.MinX) + 25 and rafting.isSiteReachable(endSite, posX, currentZ) then
-            rafting.isSelfCorrecting = false
-            return endSite
-        end
-    elseif string.find(route, "South Channels", 1, true) or pipeline:find("South") then
-        local endSite = rafting.sitesById["Cave_12"] or rafting.sitesById["Cave_11"]
-        if endSite and not rafting.visitedSites[endSite.Id] and posX <= (endSite.MaxX or endSite.MinX) + 25 and rafting.isSiteReachable(endSite, posX, currentZ) then
-            rafting.isSelfCorrecting = false
-            return endSite
-        end
+    -- End Cave fallback ONLY if route explicitly specifies caves OR site was selected by user
+    local routeWantsCaves = string.find(route, "Leftmost", 1, true) or string.find(route, "North Channels", 1, true)
+    local cubby05 = rafting.sitesById["Cave_Cubby05"]
+    local userSelectedCubby05 = cubby05 and rafting.isSiteSelected(cubby05)
+    if (routeWantsCaves or userSelectedCubby05) and cubby05 and not rafting.visitedSites[cubby05.Id] and posX <= (cubby05.MaxX or cubby05.MinX) + 25 and rafting.isSiteReachable(cubby05, posX, currentZ) then
+        rafting.isSelfCorrecting = false
+        return cubby05
+    end
+
+    local routeWantsSouthCaves = string.find(route, "South Channels", 1, true)
+    local southCave = rafting.sitesById["Cave_12"] or rafting.sitesById["Cave_11"]
+    local userSelectedSouthCave = southCave and rafting.isSiteSelected(southCave)
+    if (routeWantsSouthCaves or userSelectedSouthCave) and southCave and not rafting.visitedSites[southCave.Id] and posX <= (southCave.MaxX or southCave.MinX) + 25 and rafting.isSiteReachable(southCave, posX, currentZ) then
+        rafting.isSelfCorrecting = false
+        return southCave
     end
 
     -- Opportunistic Self-Correction Fallback:
-    -- Raft in a channel where no user-selected sites are reachable.
-    -- Dock at nearest accessible clearing or cubby in this zone/reach!
-    if rafting.allSites then
+    -- Only run when no specific sites are selected (e.g. general exploration or selectAllSites/selectAllClearings)
+    local hasSpecificSelections = rafting.selectedClearings and next(rafting.selectedClearings) ~= nil and not (rafting.selectAllSites or rafting.selectAllClearings)
+    if not hasSpecificSelections and rafting.allSites then
         local bestFallback = nil
         local bestFallbackCost = math.huge
         for _, site in ipairs(rafting.allSites) do
@@ -11075,18 +11084,21 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     end
 
     -- Two-Stage Cove Approach:
-    -- Stage 1 (Approaching mouth from river): align with mouth opening in river bank (220 studs lead)
-    if posX >= (mouthX - 220.0) and posX < mouthX then
-        local rawT = math.clamp((posX - (mouthX - 220.0)) / 220.0, 0, 1)
+    local approachLead = if targetSite.Id == "Clearing_09" then 320.0 else 220.0
+    -- Stage 1 (Approaching mouth from river): align with mouth opening in river bank
+    if posX >= (mouthX - approachLead) and posX < mouthX then
+        local rawT = math.clamp((posX - (mouthX - approachLead)) / approachLead, 0, 1)
         local t = (1 - math.cos(rawT * math.pi)) * 0.5
-        return currentChZ + t * (mouthZ - currentChZ)
+        local targetLeadZ = if targetSite.Id == "Clearing_09" then (mouthZ * 0.4 + shoreZ * 0.6) else mouthZ
+        return currentChZ + t * (targetLeadZ - currentChZ)
     end
     -- Stage 2 (Passing through mouth into interior): steer from mouth to landing dock
     if posX >= mouthX and posX <= (maxX + 25) then
         local leadIn = math.max(1.0, (maxX + 25) - mouthX)
         local rawT = math.clamp((posX - mouthX) / leadIn, 0, 1)
         local t = (1 - math.cos(rawT * math.pi)) * 0.5
-        return mouthZ + t * (shoreZ - mouthZ)
+        local startZ = if targetSite.Id == "Clearing_09" then (mouthZ * 0.4 + shoreZ * 0.6) else mouthZ
+        return startZ + t * (shoreZ - startZ)
     end
 
     -- Pre-Fork Spline Guidance: smooth continuous S-curve into the next reach channel (320 studs lead)
@@ -12175,14 +12187,15 @@ function rafting.handleSnapshot(payload)
 
                 local reachedShore = isServerDocked
                 if not reachedShore and site then
+                    local maxLandDist = if site.Id == "Clearing_09" then 95.0 else 75.0
                     if rafting.naturalMode then
                         reachedShore = inCoveInterior and inSiteX and (
-                            distToLand < 75
+                            distToLand < maxLandDist
                             or (distToMouth < 60 and (speed or 20) <= 14.0)
                             or ((rafting.stuckDuration or 0) >= 0.5)
                         )
                     else
-                        reachedShore = (inCoveInterior and inSiteX and (distToLand < 75 or (speed or 20) <= 8.0))
+                        reachedShore = (inCoveInterior and inSiteX and (distToLand < maxLandDist or (speed or 20) <= 8.0))
                             or (inSiteX and distToLand < 55.0 and (speed or 20) <= 6.0)
                             or (inCoveInterior and inSiteX and ((rafting.stuckDuration or 0) >= 0.5))
                     end
@@ -12422,22 +12435,25 @@ function rafting.stepSteering(dt)
         end
     end
 
-    local isHeadingToNorthCove = (not isDeparting) and nextSite and nextSite.BankSide == "North" and posX >= (mouthX - 220) and posX <= (maxX + 25)
-    local isHeadingToSouthCove = (not isDeparting) and nextSite and nextSite.BankSide == "South" and posX >= (mouthX - 220) and posX <= (maxX + 25)
+    local coveLeadIn = if (nextSite and nextSite.Id == "Clearing_09") then 320 else 220
+    local isHeadingToNorthCove = (not isDeparting) and nextSite and nextSite.BankSide == "North" and posX >= (mouthX - coveLeadIn) and posX <= (maxX + 25)
+    local isHeadingToSouthCove = (not isDeparting) and nextSite and nextSite.BankSide == "South" and posX >= (mouthX - coveLeadIn) and posX <= (maxX + 25)
 
     -- Stand-Off Buffer: deck half-width is 7.0 studs.
     -- Begin repelling when wall is closer than 32 studs from center (25 studs from railing).
     -- Full lock repel when closer than 18 studs from center (11 studs from railing).
     if leftMinDist < 32.0 then
         local push = math.clamp((32.0 - leftMinDist) / 14.0, 0, 1)
-        if not isHeadingToNorthCove or leftMinDist < 8.0 then
-            whiskerRepulsion = whiskerRepulsion + (if leftMinDist < 10.0 then 5.8 else push * 5.8)
+        if not isHeadingToNorthCove or leftMinDist < 6.0 then
+            local rep = if leftMinDist < 8.0 then 4.0 else push * 5.8
+            whiskerRepulsion = whiskerRepulsion + (if isHeadingToNorthCove then math.min(rep, 2.5) else rep)
         end
     end
     if rightMinDist < 32.0 then
         local push = math.clamp((32.0 - rightMinDist) / 14.0, 0, 1)
-        if not isHeadingToSouthCove or rightMinDist < 8.0 then
-            whiskerRepulsion = whiskerRepulsion - (if rightMinDist < 10.0 then 5.8 else push * 5.8)
+        if not isHeadingToSouthCove or rightMinDist < 6.0 then
+            local rep = if rightMinDist < 8.0 then 4.0 else push * 5.8
+            whiskerRepulsion = whiskerRepulsion - (if isHeadingToSouthCove then math.min(rep, 2.5) else rep)
         end
     end
 
@@ -12494,8 +12510,8 @@ function rafting.stepSteering(dt)
             if rem then pcall(function() rem:FireServer("BoostRelease") end) end
         end
         -- Priority 1: Steer into North clearing cove along smooth curve without bouncing off entrance bank
-        if leftMinDist < 8.0 then
-            targetDeckX = whiskerRepulsion
+        if leftMinDist < 6.0 then
+            targetDeckX = math.clamp(whiskerRepulsion, -2.5, 2.5)
             rafting.statusText = "CORNER PROXIMITY! Cushioning cove entry..."
         else
             targetDeckX = flowBias
@@ -12509,8 +12525,8 @@ function rafting.stepSteering(dt)
             if rem then pcall(function() rem:FireServer("BoostRelease") end) end
         end
         -- Priority 1: Steer into South clearing cove along smooth curve without bouncing off entrance bank
-        if rightMinDist < 8.0 then
-            targetDeckX = whiskerRepulsion
+        if rightMinDist < 6.0 then
+            targetDeckX = math.clamp(whiskerRepulsion, -2.5, 2.5)
             rafting.statusText = "CORNER PROXIMITY! Cushioning cove entry..."
         else
             targetDeckX = flowBias
@@ -12724,7 +12740,8 @@ function rafting.stepSteering(dt)
     local reachIdx = getReachIndex(posX)
     local forkX = rd and rd.forkX and rd.forkX[reachIdx]
     local approachingFork = forkX and (posX >= forkX - 160) and (posX <= forkX)
-    local approachingCove = nextSite and posX >= (mouthX - 140) and posX <= (nextSite.MaxX + 25)
+    local coveLead = if (nextSite and nextSite.Id == "Clearing_09") then 280 else 140
+    local approachingCove = nextSite and posX >= (mouthX - coveLead) and posX <= (nextSite.MaxX + 25)
     local nearFacade = (forwardDist < 75.0) or (leftMinDist < 22.0) or (rightMinDist < 22.0)
     local suppressBoost = isInsideCoveInterior or approachingCove or approachingFork or nearFacade or isWallStuck or rafting.isUnsticking or isActivelyDislodging
 
