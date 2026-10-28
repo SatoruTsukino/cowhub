@@ -11380,6 +11380,7 @@ function rafting.castOff()
     rafting.isUnsticking = false
     rafting.unstickDirection = 0
     rafting.unstickStartTime = 0
+    rafting.dockedStartTime = nil
     local wasDocked = (rafting.status == "Docked")
     rafting.statusText = "Boarding raft..."
     rafting.updateCards()
@@ -11396,13 +11397,32 @@ function rafting.castOff()
             -- Dispatch departure via native Key N (FjordRafting_Continue)
             sendRaftKey(Enum.KeyCode.N, 0.25)
             if wasDocked then
+                triggerRaftingCommand("Sail")
                 triggerRaftingCommand("Continue")
+                rafting.fireRemoteSafely("Sail", nil, 0.5)
             end
+        else
+            if deck then placeCowAboveDeck(deck) end
+            sendRaftKey(Enum.KeyCode.N, 0.25)
+            triggerRaftingCommand("Sail")
+            rafting.fireRemoteSafely("Sail", nil, 0.5)
+        end
+
+        -- Teleport unstick on departure in non-natural mode: nudge deck away from shore rock
+        if not rafting.naturalMode and deck and deck.Parent then
+            pcall(function()
+                local posX = deck.Position.X
+                local posZ = deck.Position.Z
+                local chZ = rafting.getCurrentChannel(posX, posZ) or -37.81
+                local nudgeZ = if posZ < chZ then 4.0 else -4.0
+                deck.CFrame = deck.CFrame + Vector3.new(4.0, 0, nudgeZ)
+            end)
+            placeCowAboveDeck(deck)
         end
 
         task.delay(1.5, function()
             if rafting.enabled and rafting.isDockedState then
-                rafting.fireRemoteSafely("Continue", nil, 2.0)
+                rafting.fireRemoteSafely("Sail", nil, 2.0)
             end
         end)
 
@@ -12045,6 +12065,10 @@ function rafting.handleSnapshot(payload)
         rafting.visitedSites = {}
         rafting.lootedChestSites = {}
         rafting.isLootingChest = false
+        rafting.cancelLooting = false
+        rafting.isEndingVoyage = false
+        rafting.isEndingVoyageInProgress = false
+        rafting.dockedStartTime = nil
         rafting.incomingRocks = {}
         rafting.isDockedState = false
         rafting.currentDockSite = nil
@@ -12065,6 +12089,10 @@ function rafting.handleSnapshot(payload)
 
     -- Auto-castoff when Ready
     if payload.Status == "Ready" and rafting.enabled and not rafting.isSailing then
+        rafting.cancelLooting = false
+        rafting.isEndingVoyage = false
+        rafting.isEndingVoyageInProgress = false
+        rafting.dockedStartTime = nil
         rafting.status = "Ready"
         rafting.isSailing = true
         rafting.statusText = "Raft Ready! Casting off..."
@@ -12074,6 +12102,10 @@ function rafting.handleSnapshot(payload)
             end
         end)
     elseif payload.Status == "Departing" then
+        rafting.cancelLooting = false
+        rafting.isEndingVoyage = false
+        rafting.isEndingVoyageInProgress = false
+        rafting.dockedStartTime = nil
         rafting.status = "Departing"
         rafting.isSailing = true
         if rafting.enabled and (not rafting.heartbeatConn or not rafting.renderSteppedConn) then
@@ -12081,6 +12113,10 @@ function rafting.handleSnapshot(payload)
         end
         rafting.statusText = "Departing dock..."
     elseif payload.Status == "Travelling" then
+        rafting.cancelLooting = false
+        rafting.isEndingVoyage = false
+        rafting.isEndingVoyageInProgress = false
+        rafting.dockedStartTime = nil
         if not rafting.isDockedState and not rafting.isLootingChest then
             rafting.status = "Travelling"
             rafting.isSailing = true
@@ -12160,6 +12196,7 @@ function rafting.handleSnapshot(payload)
                     rafting.currentDockSite = siteId
                     rafting.lastDepartSite = siteId
                     rafting.isSailing = false
+                    rafting.dockedStartTime = os.clock()
 
                     local hp = payload.Health or 100
                     if (hp <= rafting.emergencyReturnHp and hp > 0) or payload.Adrift then
@@ -12198,8 +12235,14 @@ function rafting.handleSnapshot(payload)
                     if site and curDeck then
                         -- Paced arrival settle: pause 0.5s for boat physics to settle against shore before looting
                         task.delay(0.5, function()
-                            if rafting.isDockedState and not rafting.cancelLooting and not rafting.isEndingVoyage then
+                            if rafting.isDockedState and not rafting.isEndingVoyage then
                                 rafting.lootReachChests(site, curDeck)
+                            else
+                                task.delay(3.0, function()
+                                    if rafting.isDockedState and not rafting.isLootingChest then
+                                        rafting.castOff()
+                                    end
+                                end)
                             end
                         end)
                     elseif curDeck then
@@ -12209,9 +12252,32 @@ function rafting.handleSnapshot(payload)
                             safeNotify({ Title = "Rafting Emergency", Content = "Emergency dock: returning to shore...", Duration = 4 })
                             task.wait(0.6)
                             rafting.endVoyage()
+                        else
+                            task.delay(3.0, function()
+                                if rafting.isDockedState and not rafting.isLootingChest then
+                                    rafting.castOff()
+                                end
+                            end)
                         end
                     end
                 end
+            end
+        end
+
+        -- Dock watchdog: if docked for >= 8.0s and not actively looting, force cast off
+        if (rafting.status == "Docked" or payload.Status == "Docked") and not rafting.isLootingChest and not rafting.isEndingVoyage then
+            if not rafting.dockedStartTime then
+                rafting.dockedStartTime = os.clock()
+            elseif (os.clock() - rafting.dockedStartTime) >= ((rafting.dockMaxWaitSeconds or 4) + 4.0) then
+                rafting.dockedStartTime = os.clock()
+                if rafting.enabled and not rafting.isCastingOff then
+                    rafting.isDockedState = false
+                    rafting.castOff()
+                end
+            end
+        else
+            if payload.Status ~= "Docked" and rafting.status ~= "Docked" then
+                rafting.dockedStartTime = nil
             end
         end
 
@@ -12236,6 +12302,10 @@ function rafting.handleSnapshot(payload)
 end
 
 function rafting.handleBoarding(payload)
+    rafting.cancelLooting = false
+    rafting.isEndingVoyage = false
+    rafting.isEndingVoyageInProgress = false
+    rafting.dockedStartTime = nil
     rafting.status = "Boarding"
     rafting.statusText = "Boarding raft (walking aboard)..."
     rafting.zone4Swept = false
@@ -12529,6 +12599,21 @@ function rafting.stepSteering(dt)
 
         targetDeckX = rafting.unstickDirection
         rafting.statusText = string.format("WALL SCRAPING! Dislodging: hard counter-steer (%+.1f)...", targetDeckX)
+
+        -- In non-natural mode, allow teleport unstick when wedged for >= 1.5s
+        if not rafting.naturalMode and (rafting.stuckDuration or 0) >= 1.5 then
+            local chZ = rafting.getCurrentChannel(posX, posZ) or -37.81
+            local nudgeZ = if posZ < chZ then 6.0 else -6.0
+            pcall(function()
+                if deck and deck.Parent then
+                    deck.CFrame = deck.CFrame + Vector3.new(6.0, 0, nudgeZ)
+                end
+            end)
+            placeCowAboveDeck(deck)
+            if humanoid then humanoid.Jump = true end
+            rafting.stuckDuration = 0
+            rafting.statusText = "UNSTICK: Teleport nudge towards channel center..."
+        end
     end
 
     -- 6. Check Hobgoblin Rock Threat (Prioritize landing at clearing over dodging)
@@ -13270,6 +13355,9 @@ RaftingTab:CreateToggle({
     Callback = function(Value)
         rafting.enabled = Value
         if Value then
+            rafting.cancelLooting = false
+            rafting.isEndingVoyage = false
+            rafting.isEndingVoyageInProgress = false
             rafting.initClientListener()
             rafting.startSteeringLoop()
             Window:Notify({ Title = "Rafting Auto-Pilot", Content = "Auto-Pilot enabled. Raft will steer along the selected route.", Duration = 3 })
