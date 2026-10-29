@@ -11083,6 +11083,10 @@ function rafting.getTargetZ(posX, currentZ, clearances)
         nominalChZ = physicalChZ
     end
 
+    -- Bank-Side Channel Lane Biasing: Pre-align raft with target site's bank side (North/South lane)
+    local bankLaneOffset = if targetSite.BankSide == "North" then -10.0 else 10.0
+    local channelBaselineZ = currentChZ + (if not nearFork and math.abs(physicalChZ - nominalChZ) <= 40 then bankLaneOffset else 0)
+
     -- Two-Stage Cove Approach:
     if targetSite.Id == "Clearing_09" then
         local fork6X = 5844.58
@@ -11100,19 +11104,24 @@ function rafting.getTargetZ(posX, currentZ, clearances)
             return -925.0 + t * (shoreZ - (-925.0))
         end
     else
-        local approachLead = 220.0
+        local approachLead = 360.0
+        local targetLeadZ = mouthZ
+        if targetSite.Kind == "Cave" then
+            -- Blend mouth with interior for cubbies so trajectory angles directly into throat
+            targetLeadZ = mouthZ * 0.7 + shoreZ * 0.3
+        end
         -- Stage 1 (Approaching mouth from river): align with mouth opening in river bank
         if posX >= (mouthX - approachLead) and posX < mouthX then
             local rawT = math.clamp((posX - (mouthX - approachLead)) / approachLead, 0, 1)
             local t = (1 - math.cos(rawT * math.pi)) * 0.5
-            return currentChZ + t * (mouthZ - currentChZ)
+            return channelBaselineZ + t * (targetLeadZ - channelBaselineZ)
         end
         -- Stage 2 (Passing through mouth into interior): steer from mouth to landing dock
         if posX >= mouthX and posX <= (maxX + 25) then
             local leadIn = math.max(1.0, (maxX + 25) - mouthX)
             local rawT = math.clamp((posX - mouthX) / leadIn, 0, 1)
             local t = (1 - math.cos(rawT * math.pi)) * 0.5
-            return mouthZ + t * (shoreZ - mouthZ)
+            return targetLeadZ + t * (shoreZ - targetLeadZ)
         end
     end
 
@@ -11138,7 +11147,7 @@ function rafting.getTargetZ(posX, currentZ, clearances)
         return currentChZ + t * (targetThroatZ - currentChZ)
     end
 
-    return currentChZ
+    return channelBaselineZ
 end
 
 local function walkToPosition(targetPos, timeout, stopDistance)
@@ -12451,7 +12460,7 @@ function rafting.stepSteering(dt)
         end
     end
 
-    local coveLeadIn = if (nextSite and nextSite.Id == "Clearing_09") then 320 else 220
+    local coveLeadIn = 360
     local isHeadingToNorthCove = (not isDeparting) and nextSite and nextSite.BankSide == "North" and posX >= (mouthX - coveLeadIn) and posX <= (maxX + 25)
     local isHeadingToSouthCove = (not isDeparting) and nextSite and nextSite.BankSide == "South" and posX >= (mouthX - coveLeadIn) and posX <= (maxX + 25)
 
@@ -12530,7 +12539,8 @@ function rafting.stepSteering(dt)
             targetDeckX = math.clamp(whiskerRepulsion, -2.5, 2.5)
             rafting.statusText = "CORNER PROXIMITY! Cushioning cove entry..."
         else
-            targetDeckX = flowBias
+            local steerMag = if absErr > 1.8 then math.clamp(3.8 + (absErr / 12.0) * 2.0, 3.8, 5.8) else math.abs(flowBias)
+            targetDeckX = if errorZ > 0 then steerMag else -steerMag
             rafting.statusText = string.format("Approaching %s! Tracking cove entry curve...", nextSite.Id)
         end
     elseif isHeadingToSouthCove then
@@ -12545,7 +12555,8 @@ function rafting.stepSteering(dt)
             targetDeckX = math.clamp(whiskerRepulsion, -2.5, 2.5)
             rafting.statusText = "CORNER PROXIMITY! Cushioning cove entry..."
         else
-            targetDeckX = flowBias
+            local steerMag = if absErr > 1.8 then math.clamp(3.8 + (absErr / 12.0) * 2.0, 3.8, 5.8) else math.abs(flowBias)
+            targetDeckX = if errorZ > 0 then steerMag else -steerMag
             rafting.statusText = string.format("Approaching %s! Tracking cove entry curve...", nextSite.Id)
         end
     elseif forwardDist < 60.0 or leftMinDist < 20.0 or rightMinDist < 20.0 or math.abs(whiskerRepulsion) > 1.2 then
@@ -12762,7 +12773,7 @@ function rafting.stepSteering(dt)
     local reachIdx = getReachIndex(posX)
     local forkX = rd and rd.forkX and rd.forkX[reachIdx]
     local approachingFork = forkX and (posX >= forkX - 160) and (posX <= forkX)
-    local coveLead = if (nextSite and nextSite.Id == "Clearing_09") then 280 else 140
+    local coveLead = 320
     local approachingCove = nextSite and posX >= (mouthX - coveLead) and posX <= (nextSite.MaxX + 25)
     local nearFacade = (forwardDist < 75.0) or (leftMinDist < 22.0) or (rightMinDist < 22.0)
     local suppressBoost = isInsideCoveInterior or approachingCove or approachingFork or nearFacade or isWallStuck or rafting.isUnsticking or isActivelyDislodging
