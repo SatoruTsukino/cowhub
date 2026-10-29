@@ -11084,21 +11084,36 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     end
 
     -- Two-Stage Cove Approach:
-    local approachLead = if targetSite.Id == "Clearing_09" then 320.0 else 220.0
-    -- Stage 1 (Approaching mouth from river): align with mouth opening in river bank
-    if posX >= (mouthX - approachLead) and posX < mouthX then
-        local rawT = math.clamp((posX - (mouthX - approachLead)) / approachLead, 0, 1)
-        local t = (1 - math.cos(rawT * math.pi)) * 0.5
-        local targetLeadZ = if targetSite.Id == "Clearing_09" then (mouthZ * 0.4 + shoreZ * 0.6) else mouthZ
-        return currentChZ + t * (targetLeadZ - currentChZ)
-    end
-    -- Stage 2 (Passing through mouth into interior): steer from mouth to landing dock
-    if posX >= mouthX and posX <= (maxX + 25) then
-        local leadIn = math.max(1.0, (maxX + 25) - mouthX)
-        local rawT = math.clamp((posX - mouthX) / leadIn, 0, 1)
-        local t = (1 - math.cos(rawT * math.pi)) * 0.5
-        local startZ = if targetSite.Id == "Clearing_09" then (mouthZ * 0.4 + shoreZ * 0.6) else mouthZ
-        return startZ + t * (shoreZ - startZ)
+    if targetSite.Id == "Clearing_09" then
+        local fork6X = 5844.58
+        -- Before Fork 6 in Reach 6: stay safely inside Channel 2, bias smoothly towards South lane (-925.0)
+        if posX >= (fork6X - 250.0) and posX < fork6X then
+            local rawT = math.clamp((posX - (fork6X - 250.0)) / 250.0, 0, 1)
+            local t = (1 - math.cos(rawT * math.pi)) * 0.5
+            return currentChZ + t * (-925.0 - currentChZ)
+        end
+        -- Past Fork 6 into Clearing 09: smoothly track through mouth opening directly to interior landing dock
+        if posX >= fork6X and posX <= (maxX + 25) then
+            local leadIn = math.max(1.0, (maxX + 25) - fork6X)
+            local rawT = math.clamp((posX - fork6X) / leadIn, 0, 1)
+            local t = (1 - math.cos(rawT * math.pi)) * 0.5
+            return -925.0 + t * (shoreZ - (-925.0))
+        end
+    else
+        local approachLead = 220.0
+        -- Stage 1 (Approaching mouth from river): align with mouth opening in river bank
+        if posX >= (mouthX - approachLead) and posX < mouthX then
+            local rawT = math.clamp((posX - (mouthX - approachLead)) / approachLead, 0, 1)
+            local t = (1 - math.cos(rawT * math.pi)) * 0.5
+            return currentChZ + t * (mouthZ - currentChZ)
+        end
+        -- Stage 2 (Passing through mouth into interior): steer from mouth to landing dock
+        if posX >= mouthX and posX <= (maxX + 25) then
+            local leadIn = math.max(1.0, (maxX + 25) - mouthX)
+            local rawT = math.clamp((posX - mouthX) / leadIn, 0, 1)
+            local t = (1 - math.cos(rawT * math.pi)) * 0.5
+            return mouthZ + t * (shoreZ - mouthZ)
+        end
     end
 
     -- Pre-Fork Spline Guidance: smooth continuous S-curve into the next reach channel (320 studs lead)
@@ -12187,7 +12202,8 @@ function rafting.handleSnapshot(payload)
 
                 local reachedShore = isServerDocked
                 if not reachedShore and site then
-                    local maxLandDist = if site.Id == "Clearing_09" then 95.0 else 75.0
+                    local maxLandDist = if site.Id == "Clearing_09" then 110.0 else 75.0
+                    local coveSpeedThreshold = if site.Id == "Clearing_09" then 10.0 else 8.0
                     if rafting.naturalMode then
                         reachedShore = inCoveInterior and inSiteX and (
                             distToLand < maxLandDist
@@ -12195,7 +12211,7 @@ function rafting.handleSnapshot(payload)
                             or ((rafting.stuckDuration or 0) >= 0.5)
                         )
                     else
-                        reachedShore = (inCoveInterior and inSiteX and (distToLand < maxLandDist or (speed or 20) <= 8.0))
+                        reachedShore = (inCoveInterior and inSiteX and (distToLand < maxLandDist or (speed or 20) <= coveSpeedThreshold))
                             or (inSiteX and distToLand < 55.0 and (speed or 20) <= 6.0)
                             or (inCoveInterior and inSiteX and ((rafting.stuckDuration or 0) >= 0.5))
                     end
@@ -12554,12 +12570,13 @@ function rafting.stepSteering(dt)
         local timeSinceCheck = now - (rafting.lastProgressTime or now)
         if timeSinceCheck >= 0.4 then
             local dxMoved = posX - (rafting.lastProgressX or posX)
-            -- River flows down +X. If dx < 1.5 studs over 0.4s while travelling, boat is stuck or wedged
-            if (dxMoved < 1.5 or isScrapingWall) and (snap.Status == "Travelling" or snap.Status == "Departing") then
+            -- River flows down +X. If dx < 1.2 studs over 0.4s while travelling, boat is not making progress
+            local isMakingProgress = dxMoved >= 1.2
+            if not isMakingProgress and (snap.Status == "Travelling" or snap.Status == "Departing") then
                 rafting.stuckDuration = (rafting.stuckDuration or 0) + timeSinceCheck
             else
                 rafting.stuckDuration = math.max(0, (rafting.stuckDuration or 0) - timeSinceCheck * 1.5)
-                if rafting.isUnsticking and dxMoved >= 4.0 and not isScrapingWall and (not rafting.coveDislodgeUntil or now >= rafting.coveDislodgeUntil) then
+                if rafting.isUnsticking and dxMoved >= 3.0 and (not rafting.coveDislodgeUntil or now >= rafting.coveDislodgeUntil) then
                     rafting.isUnsticking = false
                     rafting.unstickDirection = 0
                 end
@@ -12569,20 +12586,25 @@ function rafting.stepSteering(dt)
         end
     end
 
-    -- Cove corner trap watchdog: if blocked attempting to enter a cove for >= 1.5s, abandon site & self-correct downriver
+    -- Cove corner trap watchdog: if blocked attempting to enter an unselected cove or truly wedged for extended duration, abandon site
     local isApproachingCoveMouth = nextSite and posX >= (minX - 80) and posX <= (maxX + 25) and not isInsideCoveInterior
-    local isCoveBlocked = isApproachingCoveMouth and (rafting.stuckDuration or 0) >= 1.5
+    local isUserSelected = nextSite and rafting.isSiteSelected(nextSite)
+    local maxCoveWait = if isUserSelected then 6.0 else 1.8
+    local isCoveBlocked = isApproachingCoveMouth and (rafting.stuckDuration or 0) >= maxCoveWait
 
     if isCoveBlocked then
         local blockedSiteId = nextSite.Id
-        rafting.visitedSites[blockedSiteId] = true
+        -- Only permanently mark visited if boat is already past the mouth entrance or not a selected target
+        if not isUserSelected or posX >= (mouthX + 40) then
+            rafting.visitedSites[blockedSiteId] = true
+        end
         rafting.abandonedSiteId = blockedSiteId
         rafting.coveDislodgeUntil = now + 2.5
         rafting.coveDislodgeDir = if nextSite.BankSide == "North" then 5.8 else -5.8
         rafting.stuckDuration = 0
         rafting.isUnsticking = true
         rafting.unstickStartTime = now
-        print(string.format("[Rafting] Cove corner blocked for >= 2.0s! Abandoning site %s, dislodging downstream...", blockedSiteId))
+        print(string.format("[Rafting] Cove corner blocked for >= %.1fs! Dislodging downstream...", maxCoveWait))
     end
 
     local isWallStuck = (rafting.stuckDuration or 0) >= 0.6
