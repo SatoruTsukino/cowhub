@@ -17,6 +17,10 @@ if _G.CowHubLoaded then
             pcall(function() conn:Disconnect() end)
         end
     end
+    if _G.CowHubHeartbeat then
+        pcall(function() _G.CowHubHeartbeat:Disconnect() end)
+        _G.CowHubHeartbeat = nil
+    end
     _G.CowHubConnections = nil
     _G.CowHubRayfield = nil
     task.wait(0.3)
@@ -2777,7 +2781,6 @@ function afkRelog.checkAndResumeState()
         if f.GrassChompDelay then
             farm.grassChompDelay = math.max(0.01, tonumber(f.GrassChompDelay) or 0.4)
             farm.grassChompRepeatDelay = farm.grassChompDelay + 0.1
-            pcall(function() Window:Set("Slider_GrassChompDelay", farm.grassChompDelay) end)
         end
         if f.OnlyMatureGrass ~= nil then
             farm.onlyMatureGrass = f.OnlyMatureGrass
@@ -6862,6 +6865,7 @@ function updateHeartbeatConnection()
     if farm.on or farm.autoChomp or farm.autoFish or farm.autoChompMobs or dodge.auto or farm.goldenAura or (manatite and manatite.auto) or (mithril and mithril.auto) or (trickOrTreat and trickOrTreat.auto) then
         if not HeartbeatConnection then
             HeartbeatConnection = RunService.Heartbeat:Connect(function(dt)
+            _G.CowHubHeartbeat = HeartbeatConnection
                 if not root or not root.Parent or not root:IsA("BasePart") then
                     local currentCharacter = resolveCharacter()
                     if currentCharacter then
@@ -6972,6 +6976,7 @@ function updateHeartbeatConnection()
         if HeartbeatConnection then
             HeartbeatConnection:Disconnect()
             HeartbeatConnection = nil
+            _G.CowHubHeartbeat = nil
         end
         if dodge.isUnderground and root and dodge.lastSurfaceCFrame then
             setRootCFrame(dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0))
@@ -7192,7 +7197,6 @@ MainTab:CreateDropdown({
             farm.grassChompDelay = math.max(0.01, tonumber(string.match(selStr, "(%d+%.?%d*)")) or 0.4)
             farm.grassChompRepeatDelay = farm.grassChompDelay + 0.1
         end
-        pcall(function() Window:Set("Slider_GrassChompDelay", farm.grassChompDelay) end)
         if farm.grassChompDelay < 0.4 then
             pcall(function()
                 Window:Notify({
@@ -13892,6 +13896,7 @@ SettingsTab:CreateButton({
             _G.CowHubLoaded = nil
             _G.CowHubRayfield = nil
             _G.CowHubConnections = nil
+            _G.CowHubHeartbeat = nil
         end)
 
         task.delay(0.05, function()

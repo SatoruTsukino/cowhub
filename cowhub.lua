@@ -17,6 +17,10 @@ if _G.CowHubLoaded then
             pcall(function() conn:Disconnect() end)
         end
     end
+    if _G.CowHubHeartbeat then
+        pcall(function() _G.CowHubHeartbeat:Disconnect() end)
+        _G.CowHubHeartbeat = nil
+    end
     _G.CowHubConnections = nil
     _G.CowHubRayfield = nil
     task.wait(0.3)
@@ -2777,7 +2781,6 @@ function afkRelog.checkAndResumeState()
         if f.GrassChompDelay then
             farm.grassChompDelay = math.max(0.01, tonumber(f.GrassChompDelay) or 0.4)
             farm.grassChompRepeatDelay = farm.grassChompDelay + 0.1
-            pcall(function() Window:Set("Slider_GrassChompDelay", farm.grassChompDelay) end)
         end
         if f.OnlyMatureGrass ~= nil then
             farm.onlyMatureGrass = f.OnlyMatureGrass
@@ -6862,6 +6865,7 @@ function updateHeartbeatConnection()
     if farm.on or farm.autoChomp or farm.autoFish or farm.autoChompMobs or dodge.auto or farm.goldenAura or (manatite and manatite.auto) or (mithril and mithril.auto) or (trickOrTreat and trickOrTreat.auto) then
         if not HeartbeatConnection then
             HeartbeatConnection = RunService.Heartbeat:Connect(function(dt)
+            _G.CowHubHeartbeat = HeartbeatConnection
                 if not root or not root.Parent or not root:IsA("BasePart") then
                     local currentCharacter = resolveCharacter()
                     if currentCharacter then
@@ -6972,6 +6976,7 @@ function updateHeartbeatConnection()
         if HeartbeatConnection then
             HeartbeatConnection:Disconnect()
             HeartbeatConnection = nil
+            _G.CowHubHeartbeat = nil
         end
         if dodge.isUnderground and root and dodge.lastSurfaceCFrame then
             setRootCFrame(dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0))
@@ -7192,7 +7197,6 @@ MainTab:CreateDropdown({
             farm.grassChompDelay = math.max(0.01, tonumber(string.match(selStr, "(%d+%.?%d*)")) or 0.4)
             farm.grassChompRepeatDelay = farm.grassChompDelay + 0.1
         end
-        pcall(function() Window:Set("Slider_GrassChompDelay", farm.grassChompDelay) end)
         if farm.grassChompDelay < 0.4 then
             pcall(function()
                 Window:Notify({
@@ -13294,247 +13298,6 @@ RaftingTab:CreateDropdown({
         "[Right] Clearing 02 (Level 2, South Bank)"
     },
     CurrentOption = {
-   
-function rafting.startSteeringLoop()
-    if rafting.heartbeatConn or rafting.renderSteppedConn then return end
-    rafting.lastStepTime = os.clock()
-
-    if humanoid then
-        if rafting.diedConn then pcall(function() rafting.diedConn:Disconnect() end) end
-        rafting.diedConn = humanoid.Died:Connect(function()
-            rafting.onSessionEnded("Player died. Automated rafting stopped.")
-        end)
-        table.insert(rafting.connections, rafting.diedConn)
-    end
-
-    rafting.heartbeatConn = RunService.Heartbeat:Connect(function(dt)
-        if rafting.enabled then
-            pcall(rafting.stepSteering, dt)
-        end
-    end)
-    table.insert(rafting.connections, rafting.heartbeatConn)
-
-    rafting.renderSteppedConn = RunService.RenderStepped:Connect(function(dt)
-        if rafting.enabled then
-            pcall(rafting.stepSteeringAnimation, dt)
-        end
-    end)
-    table.insert(rafting.connections, rafting.renderSteppedConn)
-end
-
-function rafting.stopSteeringLoop()
-    if rafting.diedConn then
-        pcall(function() rafting.diedConn:Disconnect() end)
-        rafting.diedConn = nil
-    end
-    if rafting.isBoosting then
-        rafting.isBoosting = false
-        rafting.nextBoostAt = 0
-        local rem = rafting.getRemote()
-        if rem then pcall(function() rem:FireServer("BoostRelease") end) end
-    end
-    if VirtualInput and VirtualInput.SendKeyEvent then
-        pcall(function()
-            VirtualInput:SendKeyEvent(false, Enum.KeyCode.A, false, game)
-            VirtualInput:SendKeyEvent(false, Enum.KeyCode.D, false, game)
-        end)
-        rafting.lastSteerKey = nil
-    end
-    if rafting.heartbeatConn then
-        pcall(function() rafting.heartbeatConn:Disconnect() end)
-        rafting.heartbeatConn = nil
-    end
-    if rafting.renderSteppedConn then
-        pcall(function() rafting.renderSteppedConn:Disconnect() end)
-        rafting.renderSteppedConn = nil
-    end
-    if root then pcall(function() root.Anchored = false end) end
-    if humanoid then
-        pcall(function()
-            humanoid:Move(Vector3.zero, false)
-            humanoid.AutoRotate = true
-        end)
-    end
-end
-
-function rafting.cleanup()
-    rafting.enabled = false
-    rafting.autoLoop = false
-    rafting.visitedSites = {}
-    rafting.isDockedState = false
-    rafting.currentDockSite = nil
-    rafting.teamChests = nil
-    rafting.teamChestSite = nil
-    rafting.lastLootedChestId = nil
-    rafting.isCastingOff = false
-    rafting.incomingRocks = {}
-    rafting.isEvadingRock = false
-    rafting.stopSteeringLoop()
-    if root then pcall(function() root.Anchored = false end) end
-    if humanoid then
-        pcall(function()
-            humanoid:Move(Vector3.zero, false)
-            humanoid.AutoRotate = true
-        end)
-    end
-    for _, conn in ipairs(rafting.connections) do
-        if conn and conn.Disconnect then
-            pcall(function() conn:Disconnect() end)
-        end
-    end
-    table.clear(rafting.connections)
-    rafting.clientEventConn = nil
-    rafting.heartbeatConn = nil
-    rafting.renderSteppedConn = nil
-    rafting.currentSnapshot = nil
-    rafting.deckPart = nil
-    rafting.raftModel = nil
-end
-
--- ==========================
--- UI SETUP: Fjord Rafting Tab
--- ==========================
-local RaftingTab = Window:CreateTab({ Name = "Fjord Rafting", Icon = 4483362458 })
-
-RaftingTab:CreateSection({ Name = "Live Voyage Telemetry" })
-
-local initialRaftStatusTitle = "Fjord Rafting: Idle at Raft Yard"
-local initialRaftStatusBody = "Rafting inactive. Click 'Start Rafting Voyage' to begin."
-if RaftingTab.CreateText then
-    pcall(function()
-        rafting.statusCard = RaftingTab:CreateText({
-            name = initialRaftStatusTitle,
-            text = initialRaftStatusBody
-        })
-    end)
-end
-if not rafting.statusCard and RaftingTab.CreateParagraph then
-    pcall(function()
-        rafting.statusCard = RaftingTab:CreateParagraph({
-            Title = initialRaftStatusTitle,
-            Content = initialRaftStatusBody
-        })
-    end)
-end
-
-local initialTelemTitle = "Raft Telemetry | HP: --/-- | Energy: --/--"
-local initialTelemBody = "Speed: 0.0 kts | Steering: 0.00 | Pos: N/A\nReach: Harbour | Boosting: false | Adrift: false"
-if RaftingTab.CreateText then
-    pcall(function()
-        rafting.telemetryCard = RaftingTab:CreateText({
-            name = initialTelemTitle,
-            text = initialTelemBody
-        })
-    end)
-end
-if not rafting.telemetryCard and RaftingTab.CreateParagraph then
-    pcall(function()
-        rafting.telemetryCard = RaftingTab:CreateParagraph({
-            Title = initialTelemTitle,
-            Content = initialTelemBody
-        })
-    end)
-end
-
-RaftingTab:CreateSection({ Name = "Session Controls" })
-
-RaftingTab:CreateToggle({
-    Name = "Enable Automated Rafting",
-    CurrentValue = false,
-    Flag = "Toggle_Rafting_Enabled",
-    Callback = function(Value)
-        rafting.enabled = Value
-        if Value then
-            rafting.cancelLooting = false
-            rafting.isEndingVoyage = false
-            rafting.isEndingVoyageInProgress = false
-            rafting.initClientListener()
-            rafting.startSteeringLoop()
-            Window:Notify({ Title = "Rafting Auto-Pilot", Content = "Auto-Pilot enabled. Raft will steer along the selected route.", Duration = 3 })
-        else
-            rafting.stopSteeringLoop()
-        end
-        rafting.updateCards()
-    end,
-})
-
-RaftingTab:CreateToggle({
-    Name = "Auto-Loop Voyages (Repeat Runs)",
-    CurrentValue = false,
-    Flag = "Toggle_Rafting_AutoLoop",
-    Callback = function(Value)
-        rafting.autoLoop = Value
-    end,
-})
-
-RaftingTab:CreateButton({
-    Name = "Start Rafting Voyage",
-    Callback = function()
-        rafting.startVoyage()
-    end,
-})
-
-RaftingTab:CreateButton({
-    Name = "Sail Now / Cast Off",
-    Callback = function()
-        rafting.castOff()
-        Window:Notify({ Title = "Sailing", Content = "Cast off signal sent!", Duration = 3 })
-    end,
-})
-
-RaftingTab:CreateButton({
-    Name = "Return to Shore / Dock",
-    Callback = function()
-        rafting.endVoyage()
-    end,
-})
-
-RaftingTab:CreateButton({
-    Name = "Teleport to Raft Yard Dock",
-    Callback = function()
-        rafting.teleportToRaftYard()
-    end,
-})
-
-RaftingTab:CreateButton({
-    Name = "Teleport Above Raft Deck",
-    Callback = function()
-        rafting.teleportToDeck()
-    end,
-})
-
-RaftingTab:CreateSection({ Name = "Route Navigation Settings" })
-
-RaftingTab:CreateDropdown({
-    Name = "Rafting Route Profile",
-    Options = {
-        "Leftmost Clearings & Caves (Far-North / Left-Left-Forward)",
-        "Hybrid Dynamic Explorer (Custom Selection)",
-        "Clearing & Chest Explorer (All Clearings)",
-        "North Channels (Caves & Drops)",
-        "South Channels (Scenic & Clearings)",
-        "Fast Sea Run (Center/Direct)"
-    },
-    CurrentOption = {"Hybrid Dynamic Explorer (Custom Selection)"},
-    Flag = "Dropdown_Rafting_Route",
-    Callback = function(Option)
-        local chosen = type(Option) == "table" and Option[1] or Option
-        rafting.route = chosen or "Hybrid Dynamic Explorer (Custom Selection)"
-        rafting.updateCards()
-    end,
-})
-
-RaftingTab:CreateSection({ Name = "Target Sites Selection by Level & River Bank" })
-
-RaftingTab:CreateDropdown({
-    Name = "Zone 1: Level 1 & 2 Sites (Upper Fjord - Reach 1)",
-    Options = {
-        "[Left] Clearing 01 (Level 1, North Bank)",
-        "[Left] Cubby 01 Cave (Level 2, North Bank)",
-        "[Right] Cubby 02 Cave (Level 1, South Bank)",
-        "[Right] Clearing 02 (Level 2, South Bank)"
-    },
-    CurrentOption = {
         "[Right] Clearing 02 (Level 2, South Bank)"
     },
     MultipleOptions = true,
@@ -14133,6 +13896,7 @@ SettingsTab:CreateButton({
             _G.CowHubLoaded = nil
             _G.CowHubRayfield = nil
             _G.CowHubConnections = nil
+            _G.CowHubHeartbeat = nil
         end)
 
         task.delay(0.05, function()
