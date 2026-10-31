@@ -1,5 +1,5 @@
--- HangingHoneyHive Model ESP
--- Mirrors LocalTeamChest ESP pattern from CowHub for workspace.LocalCowBeeHives.HangingHoneyHive
+-- HangingHoneyHive Multi-Model ESP
+-- Highlights all visible HangingHoneyHive models simultaneously in workspace.LocalCowBeeHives
 
 if not game:IsLoaded() then
     game.Loaded:Wait()
@@ -22,14 +22,12 @@ end
 
 local hiveESP = {
     enabled = true,
-    highlight = nil,
-    billboard = nil,
-    espConn = nil,
-    ancestryConn = nil,
+    visuals = {}, -- [Instance] = { highlight, billboard, label, targetPart, lastDist, ancestryConn }
+    heartbeatConn = nil,
     wsChildAddedConn = nil,
     wsChildRemovedConn = nil,
-    folderChildAddedConn = nil,
-    folderChildRemovedConn = nil,
+    folderDescendantAddedConn = nil,
+    folderDescendantRemovingConn = nil,
 }
 
 local function getRootPos()
@@ -40,28 +38,73 @@ local function getRootPos()
     return root.Position
 end
 
-local function cleanupVisuals()
-    if hiveESP.espConn then
-        pcall(function() hiveESP.espConn:Disconnect() end)
-        hiveESP.espConn = nil
+local function isHiveModel(child)
+    if not child then return false end
+    if not (child:IsA("Model") or child:IsA("BasePart")) then return false end
+    if child.Name == "HangingHoneyHive" or child.Name:find("HangingHoneyHive") then
+        return true
     end
-    if hiveESP.ancestryConn then
-        pcall(function() hiveESP.ancestryConn:Disconnect() end)
-        hiveESP.ancestryConn = nil
+    local parent = child.Parent
+    if parent and parent.Name == "LocalCowBeeHives" then
+        if child.Name:find("Hive") or child:IsA("Model") then
+            return true
+        end
     end
-    if hiveESP.highlight then
-        pcall(function() hiveESP.highlight:Destroy() end)
-        hiveESP.highlight = nil
+    return false
+end
+
+local function isModelVisible(model, targetPart)
+    if not model or not model.Parent then return false end
+    if not model:IsDescendantOf(Workspace) then return false end
+
+    if targetPart and targetPart.Parent and targetPart.Transparency < 0.95 then
+        return true
     end
-    if hiveESP.billboard then
-        pcall(function() hiveESP.billboard:Destroy() end)
-        hiveESP.billboard = nil
+
+    local hasBasePart = false
+    local hasVisiblePart = false
+    for _, desc in ipairs(model:GetDescendants()) do
+        if desc:IsA("BasePart") then
+            hasBasePart = true
+            if desc.Transparency < 0.95 then
+                hasVisiblePart = true
+                break
+            end
+        end
     end
+
+    if hasBasePart and not hasVisiblePart then
+        return false
+    end
+    return true
+end
+
+local function removeVisual(model)
+    local visual = hiveESP.visuals[model]
+    if not visual then return end
+
+    if visual.ancestryConn then
+        pcall(function() visual.ancestryConn:Disconnect() end)
+    end
+    if visual.highlight then
+        pcall(function() visual.highlight:Destroy() end)
+    end
+    if visual.billboard then
+        pcall(function() visual.billboard:Destroy() end)
+    end
+    hiveESP.visuals[model] = nil
+end
+
+local function cleanupAllVisuals()
+    for model in pairs(hiveESP.visuals) do
+        removeVisual(model)
+    end
+    table.clear(hiveESP.visuals)
 end
 
 local function attach(trackedHive)
-    cleanupVisuals()
-    if not trackedHive or not trackedHive.Parent then return end
+    if not hiveESP.enabled or not trackedHive or not trackedHive.Parent then return end
+    if hiveESP.visuals[trackedHive] then return end
 
     local hivePart = trackedHive:IsA("Model") and (trackedHive.PrimaryPart or trackedHive:FindFirstChildWhichIsA("BasePart")) or (trackedHive:IsA("BasePart") and trackedHive)
     if not hivePart then
@@ -77,7 +120,6 @@ local function attach(trackedHive)
     highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
     highlight.OutlineTransparency = 0
     highlight.Parent = trackedHive
-    hiveESP.highlight = highlight
 
     local billboard = Instance.new("BillboardGui")
     billboard.Name = "HoneyHiveESPText"
@@ -94,70 +136,58 @@ local function attach(trackedHive)
     textLabel.TextStrokeTransparency = 0
     textLabel.TextSize = 14
     textLabel.Font = Enum.Font.GothamBold
-    textLabel.Text = "🍯 Hanging Honey Hive"
+    local displayName = trackedHive.Name == "HangingHoneyHive" and "Hanging Honey Hive" or trackedHive.Name
+    textLabel.Text = "🍯 " .. displayName
     textLabel.Parent = billboard
     billboard.Parent = trackedHive
-    hiveESP.billboard = billboard
 
-    hiveESP.ancestryConn = trackedHive.AncestryChanged:Connect(function(_, parent)
+    local visual = {
+        highlight = highlight,
+        billboard = billboard,
+        label = textLabel,
+        targetPart = hivePart,
+        displayName = displayName,
+        lastDist = -1,
+        ancestryConn = nil,
+    }
+
+    visual.ancestryConn = trackedHive.AncestryChanged:Connect(function(_, parent)
         if not parent then
-            cleanupVisuals()
+            removeVisual(trackedHive)
         end
     end)
 
-    local lastDist = -1
-    local lastHiveUpdate = 0
-    hiveESP.espConn = RunService.Heartbeat:Connect(function()
-        if not hiveESP.enabled or not trackedHive.Parent or not hivePart.Parent then
-            cleanupVisuals()
-            return
-        end
-        local now = os.clock()
-        if now - lastHiveUpdate > 0.1 then
-            lastHiveUpdate = now
-            local rPos = getRootPos()
-            if rPos and hivePart.Parent then
-                local hPos = hivePart.Position
-                local dx = rPos.X - hPos.X
-                local dy = rPos.Y - hPos.Y
-                local dz = rPos.Z - hPos.Z
-                local dist = math.floor(math.sqrt(dx * dx + dy * dy + dz * dz))
-                if dist ~= lastDist then
-                    lastDist = dist
-                    textLabel.Text = "🍯 Hanging Honey Hive\n[" .. dist .. " studs]"
-                end
-            end
-        end
-    end)
+    hiveESP.visuals[trackedHive] = visual
 end
 
 local function hookFolder(folder)
     if not folder then return end
 
-    if hiveESP.folderChildAddedConn then
-        pcall(function() hiveESP.folderChildAddedConn:Disconnect() end)
-        hiveESP.folderChildAddedConn = nil
+    if hiveESP.folderDescendantAddedConn then
+        pcall(function() hiveESP.folderDescendantAddedConn:Disconnect() end)
+        hiveESP.folderDescendantAddedConn = nil
     end
-    if hiveESP.folderChildRemovedConn then
-        pcall(function() hiveESP.folderChildRemovedConn:Disconnect() end)
-        hiveESP.folderChildRemovedConn = nil
-    end
-
-    local currentHive = folder:FindFirstChild("HangingHoneyHive")
-    if currentHive then
-        attach(currentHive)
+    if hiveESP.folderDescendantRemovingConn then
+        pcall(function() hiveESP.folderDescendantRemovingConn:Disconnect() end)
+        hiveESP.folderDescendantRemovingConn = nil
     end
 
-    hiveESP.folderChildAddedConn = folder.ChildAdded:Connect(function(child)
-        if child.Name == "HangingHoneyHive" and hiveESP.enabled then
+    for _, desc in ipairs(folder:GetDescendants()) do
+        if isHiveModel(desc) then
+            attach(desc)
+        end
+    end
+
+    hiveESP.folderDescendantAddedConn = folder.DescendantAdded:Connect(function(desc)
+        if isHiveModel(desc) and hiveESP.enabled then
             task.wait(0.1)
-            attach(child)
+            attach(desc)
         end
     end)
 
-    hiveESP.folderChildRemovedConn = folder.ChildRemoved:Connect(function(child)
-        if child.Name == "HangingHoneyHive" then
-            cleanupVisuals()
+    hiveESP.folderDescendantRemovingConn = folder.DescendantRemoving:Connect(function(desc)
+        if hiveESP.visuals[desc] then
+            removeVisual(desc)
         end
     end)
 end
@@ -177,21 +207,83 @@ local function initWatcher()
 
     hiveESP.wsChildRemovedConn = Workspace.ChildRemoved:Connect(function(child)
         if child.Name == "LocalCowBeeHives" then
-            if hiveESP.folderChildAddedConn then
-                pcall(function() hiveESP.folderChildAddedConn:Disconnect() end)
-                hiveESP.folderChildAddedConn = nil
+            if hiveESP.folderDescendantAddedConn then
+                pcall(function() hiveESP.folderDescendantAddedConn:Disconnect() end)
+                hiveESP.folderDescendantAddedConn = nil
             end
-            if hiveESP.folderChildRemovedConn then
-                pcall(function() hiveESP.folderChildRemovedConn:Disconnect() end)
-                hiveESP.folderChildRemovedConn = nil
+            if hiveESP.folderDescendantRemovingConn then
+                pcall(function() hiveESP.folderDescendantRemovingConn:Disconnect() end)
+                hiveESP.folderDescendantRemovingConn = nil
             end
-            cleanupVisuals()
+            cleanupAllVisuals()
+        end
+    end)
+end
+
+local function startLoop()
+    local lastUpdate = 0
+    local lastScan = 0
+
+    hiveESP.heartbeatConn = RunService.Heartbeat:Connect(function()
+        if not hiveESP.enabled then
+            cleanupAllVisuals()
+            return
+        end
+
+        local now = os.clock()
+
+        -- Periodic sync for streamed instances
+        if now - lastScan > 1.0 then
+            lastScan = now
+            local folder = Workspace:FindFirstChild("LocalCowBeeHives")
+            if folder then
+                for _, child in ipairs(folder:GetChildren()) do
+                    if isHiveModel(child) and not hiveESP.visuals[child] then
+                        attach(child)
+                    end
+                end
+            end
+        end
+
+        if now - lastUpdate <= 0.1 then return end
+        lastUpdate = now
+
+        local rPos = getRootPos()
+
+        for model, visual in pairs(hiveESP.visuals) do
+            if not model or not model.Parent or not visual.targetPart or not visual.targetPart.Parent then
+                removeVisual(model)
+            else
+                local visible = isModelVisible(model, visual.targetPart)
+                if visual.highlight.Enabled ~= visible then
+                    visual.highlight.Enabled = visible
+                end
+                if visual.billboard.Enabled ~= visible then
+                    visual.billboard.Enabled = visible
+                end
+
+                if visible and rPos then
+                    local hPos = visual.targetPart.Position
+                    local dx = rPos.X - hPos.X
+                    local dy = rPos.Y - hPos.Y
+                    local dz = rPos.Z - hPos.Z
+                    local dist = math.floor(math.sqrt(dx * dx + dy * dy + dz * dz))
+                    if dist ~= visual.lastDist then
+                        visual.lastDist = dist
+                        visual.label.Text = "🍯 " .. visual.displayName .. "\n[" .. dist .. " studs]"
+                    end
+                end
+            end
         end
     end)
 end
 
 function hiveESP.destroy()
     hiveESP.enabled = false
+    if hiveESP.heartbeatConn then
+        pcall(function() hiveESP.heartbeatConn:Disconnect() end)
+        hiveESP.heartbeatConn = nil
+    end
     if hiveESP.wsChildAddedConn then
         pcall(function() hiveESP.wsChildAddedConn:Disconnect() end)
         hiveESP.wsChildAddedConn = nil
@@ -200,21 +292,21 @@ function hiveESP.destroy()
         pcall(function() hiveESP.wsChildRemovedConn:Disconnect() end)
         hiveESP.wsChildRemovedConn = nil
     end
-    if hiveESP.folderChildAddedConn then
-        pcall(function() hiveESP.folderChildAddedConn:Disconnect() end)
-        hiveESP.folderChildAddedConn = nil
+    if hiveESP.folderDescendantAddedConn then
+        pcall(function() hiveESP.folderDescendantAddedConn:Disconnect() end)
+        hiveESP.folderDescendantAddedConn = nil
     end
-    if hiveESP.folderChildRemovedConn then
-        pcall(function() hiveESP.folderChildRemovedConn:Disconnect() end)
-        hiveESP.folderChildRemovedConn = nil
+    if hiveESP.folderDescendantRemovingConn then
+        pcall(function() hiveESP.folderDescendantRemovingConn:Disconnect() end)
+        hiveESP.folderDescendantRemovingConn = nil
     end
-    cleanupVisuals()
+    cleanupAllVisuals()
     if _G.HangingHoneyHiveESP == hiveESP then
         _G.HangingHoneyHiveESP = nil
     end
 end
 
 initWatcher()
+startLoop()
 _G.HangingHoneyHiveESP = hiveESP
 return hiveESP
-
