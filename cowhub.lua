@@ -5,6 +5,24 @@ if not game:IsLoaded() then
     game.Loaded:Wait()
 end
 
+-- 0. Prevent Hub Duplication on Rejoin
+if _G.CowHubLoaded then
+    pcall(function()
+        if _G.CowHubRayfield and _G.CowHubRayfield.Destroy then
+            _G.CowHubRayfield:Destroy()
+        end
+    end)
+    if _G.CowHubConnections then
+        for _, conn in ipairs(_G.CowHubConnections) do
+            pcall(function() conn:Disconnect() end)
+        end
+    end
+    _G.CowHubConnections = nil
+    _G.CowHubRayfield = nil
+    task.wait(0.3)
+end
+_G.CowHubLoaded = true
+
 -- 1. The Server-Hop Queue Hook
 local queueOnTeleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
 if queueOnTeleport then
@@ -18,6 +36,7 @@ end
 
 -- 2. Build the Hub
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
+_G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
     Name = "Cow Hub",
@@ -189,6 +208,7 @@ if not humanoid then
 end
 
 local scriptConnections = {}
+_G.CowHubConnections = scriptConnections
 
 -- Pre-cached character baseparts for zero-allocation collision toggling
 local charBaseParts = {}
@@ -266,30 +286,26 @@ local charConn = plr.CharacterAdded:Connect(function(newChar)
             end
         end)
     end
+    local function setupHumanoid(h)
+        if not h then return end
+        if dodge and (dodge.originalWalkSpeed == nil or dodge.originalWalkSpeed == 16) then
+            dodge.originalWalkSpeed = h.WalkSpeed
+        end
+        h.Died:Connect(function()
+            if rafting and rafting.onSessionEnded and (rafting.isSailing or (rafting.status and rafting.status ~= "Idle")) then
+                rafting.onSessionEnded("Player died. Automated rafting stopped.")
+            end
+        end)
+    end
     humanoid = resolveHumanoid(newChar)
-    if not humanoid then
+    if humanoid then
+        setupHumanoid(humanoid)
+    else
         task.spawn(function()
             local waited = newChar:WaitForChild("Humanoid", 2)
             if waited and waited:IsA("Humanoid") then
                 humanoid = waited
-                if dodge and (dodge.originalWalkSpeed == nil or dodge.originalWalkSpeed == 16) then
-                    dodge.originalWalkSpeed = humanoid.WalkSpeed
-                end
-                humanoid.Died:Connect(function()
-                    if rafting and rafting.onSessionEnded and (rafting.isSailing or (rafting.status and rafting.status ~= "Idle")) then
-                        rafting.onSessionEnded("Player died. Automated rafting stopped.")
-                    end
-                end)
-            end
-        end)
-    end
-    if humanoid and dodge and (dodge.originalWalkSpeed == nil or dodge.originalWalkSpeed == 16) then
-        dodge.originalWalkSpeed = humanoid.WalkSpeed
-    end
-    if humanoid then
-        humanoid.Died:Connect(function()
-            if rafting and rafting.onSessionEnded and (rafting.isSailing or (rafting.status and rafting.status ~= "Idle")) then
-                rafting.onSessionEnded("Player died. Automated rafting stopped.")
+                setupHumanoid(humanoid)
             end
         end)
     end
@@ -2387,13 +2403,9 @@ function trickOrTreat.toggle(Value)
     if trickOrTreat.auto == Value then return end
     trickOrTreat.auto = Value
 
-    -- Synchronize UI buttons/toggles across tabs without recursive loops
     if Window and Window.Flags then
         if Window.Flags.Toggle_TrickOrTreat ~= Value then
             pcall(function() Window:Set("Toggle_TrickOrTreat", Value) end)
-        end
-        if Window.Flags.Toggle_TrickOrTreat_Main ~= Value then
-            pcall(function() Window:Set("Toggle_TrickOrTreat_Main", Value) end)
         end
     end
 
@@ -2896,7 +2908,6 @@ function afkRelog.checkAndResumeState()
             if data.TrickOrTreat.Auto and trickOrTreat then
                 trickOrTreat.toggle(true)
                 pcall(function() Window:Set("Toggle_TrickOrTreat", true) end)
-                pcall(function() Window:Set("Toggle_TrickOrTreat_Main", true) end)
             end
         end
 
@@ -3777,16 +3788,14 @@ function manatite.getGrazeTargetYield(target, model)
     return 0, false
 end
 
-function manatite.isAvailable(target, model)
-    if not target or not target.Parent then return false end
+local function isOreAvailable(targetPart, model, checkYield)
+    if not targetPart or not targetPart.Parent then return false end
     if model and not model.Parent then return false end
 
-    -- Check attribute "Available" / "available" directly on GrazeTarget
-    local attr = target:GetAttribute("Available")
+    local attr = targetPart:GetAttribute("Available")
     if attr == nil then
-        attr = target:GetAttribute("available")
+        attr = targetPart:GetAttribute("available")
     end
-    -- Fallback to model attribute
     if attr == nil and model then
         attr = model:GetAttribute("Available")
         if attr == nil then
@@ -3800,13 +3809,18 @@ function manatite.isAvailable(target, model)
         end
     end
 
-    -- If a crystal yield attribute is present and explicitly <= 0, cluster is depleted
-    local yieldVal, hasYield = manatite.getGrazeTargetYield(target, model)
-    if hasYield and yieldVal <= 0 then
-        return false
+    if checkYield then
+        local yieldVal, hasYield = manatite.getGrazeTargetYield(targetPart, model)
+        if hasYield and yieldVal <= 0 then
+            return false
+        end
     end
 
     return true
+end
+
+function manatite.isAvailable(target, model)
+    return isOreAvailable(target, model, true)
 end
 
 function manatite.getPayload(modelName)
@@ -3834,18 +3848,22 @@ function manatite.getPayload(modelName)
     return payload
 end
 
-function manatite.cleanupBlacklist(now)
-    if now - manatite.lastBlacklistCleanup > 10 then
-        manatite.lastBlacklistCleanup = now
-        for model, timestamp in pairs(manatite.blacklist) do
+local function cleanupOreBlacklist(oreState, now)
+    if now - oreState.lastBlacklistCleanup > 10 then
+        oreState.lastBlacklistCleanup = now
+        for model, timestamp in pairs(oreState.blacklist) do
             if not model or not model.Parent or (now - timestamp > 20) then
-                manatite.blacklist[model] = nil
+                oreState.blacklist[model] = nil
             end
         end
     end
 end
 
-function manatite.isPositionNearMob(pos, distSq)
+function manatite.cleanupBlacklist(now)
+    cleanupOreBlacklist(manatite, now)
+end
+
+local function isPositionNearThreatMob(pos, distSq)
     if not pos then return false end
     distSq = distSq or (dodge.manatiteThreatRadiusSq or 225)
     for _, mob in ipairs(cache.activeAuraMobs) do
@@ -3859,8 +3877,10 @@ function manatite.isPositionNearMob(pos, distSq)
     return false
 end
 
-function manatite.findNext(searchOrigin, avoidMobs)
-    local models = manatite.getModels()
+manatite.isPositionNearMob = isPositionNearThreatMob
+
+local function findNextOreCandidate(oreState, getTargetFn, checkYield, searchOrigin, avoidMobs)
+    local models = oreState.getModels()
     if not models or #models == 0 then return nil, nil end
 
     local now = os.clock()
@@ -3872,17 +3892,17 @@ function manatite.findNext(searchOrigin, avoidMobs)
 
     for _, model in ipairs(models) do
         if model.Parent then
-            local blacklistedAt = manatite.blacklist[model]
+            local blacklistedAt = oreState.blacklist[model]
             if not blacklistedAt or (now - blacklistedAt > 20) then
-                local target = manatite.getGrazeTarget(model)
-                if target and manatite.isAvailable(target, model) then
-                    local isNear = manatite.isPositionNearMob(target.Position, dodge.manatiteThreatRadiusSq or 225)
+                local target = getTargetFn(model)
+                if target and oreState.isAvailable(target, model) then
+                    local isNear = isPositionNearThreatMob(target.Position, dodge.manatiteThreatRadiusSq or 225)
                     local item = {
                         model = model,
                         target = target,
                         isNearMob = isNear,
                         distSq = get3DDistanceSq(origin, target.Position),
-                        yield = (manatite.order == "Largest Crystal Yield") and manatite.getGrazeTargetYield(target, model) or 0
+                        yield = (checkYield and oreState.order == "Largest Crystal Yield") and oreState.getGrazeTargetYield(target, model) or 0
                     }
                     table.insert(allCandidates, item)
                     if not isNear then
@@ -3896,10 +3916,10 @@ function manatite.findNext(searchOrigin, avoidMobs)
     local pool = (requireSafe and #safeCandidates > 0) and safeCandidates or allCandidates
     if #pool == 0 then return nil, nil end
 
-    if manatite.order == "Alphabetical (A-Z)" then
+    if oreState.order == "Alphabetical (A-Z)" then
         table.sort(pool, function(a, b) return a.model.Name < b.model.Name end)
         return pool[1].model, pool[1].target
-    elseif manatite.order == "Largest Crystal Yield" then
+    elseif checkYield and oreState.order == "Largest Crystal Yield" then
         table.sort(pool, function(a, b)
             if a.yield ~= b.yield then return a.yield > b.yield end
             if a.distSq ~= b.distSq then return a.distSq < b.distSq end
@@ -3914,57 +3934,18 @@ function manatite.findNext(searchOrigin, avoidMobs)
     end
 end
 
-function manatite.retreatToSafeCrystal(now, rootPos)
-    local currentModel = manatite.model
-    if currentModel then
-        manatite.blacklist[currentModel] = now
-    end
-
-    manatite.model = nil
-    manatite.target = nil
-    manatite.payload = nil
-
-    if root then
-        pcall(function() root.Anchored = false end)
-    end
-
-    local nextModel, nextTarget = manatite.findNext(rootPos or getRootPos(root), true)
-    if nextModel and nextTarget then
-        manatite.model = nextModel
-        manatite.target = nextTarget
-        manatite.payload = manatite.getPayload(nextModel.Name)
-        manatite.startTime = now
-        manatite.teleport(nextTarget, nextModel)
-        manatite.lastTeleportTime = now
-        manatite.lastChompTime = 0
-        manatite.lastSearchTime = now
-
-        if dodge.notifyOnDodge then
-            Window:Notify({
-                Title = "Manatite Retreat",
-                Content = "Spiders nearby! Relocated to a safe crystal.",
-                Duration = 2,
-            })
-        end
-        return true
-    end
-    return false
+function manatite.findNext(searchOrigin, avoidMobs)
+    return findNextOreCandidate(manatite, manatite.getGrazeTarget, true, searchOrigin, avoidMobs)
 end
 
-function manatite.teleport(grazeTarget, model)
-    if not root or not char or not grazeTarget or not grazeTarget.Parent then return end
+local function teleportToOreNode(oreState, targetPart, model)
+    if not root or not char or not targetPart or not targetPart.Parent then return end
 
-    local targetPos = grazeTarget.Position + Vector3.new(0, manatite.heightOffset, 0)
-    local modelPos = model and model:GetPivot().Position or grazeTarget.Position
+    local targetPos = targetPart.Position + Vector3.new(0, oreState.heightOffset, 0)
+    local modelPos = model and model:GetPivot().Position or targetPart.Position
     local lookDir = Vector3.new(modelPos.X - targetPos.X, 0, modelPos.Z - targetPos.Z)
-    local targetCFrame
-    if lookDir.Magnitude > 0.5 then
-        targetCFrame = CFrame.lookAt(targetPos, targetPos + lookDir.Unit)
-    else
-        targetCFrame = CFrame.new(targetPos)
-    end
+    local targetCFrame = (lookDir.Magnitude > 0.5) and CFrame.lookAt(targetPos, targetPos + lookDir.Unit) or CFrame.new(targetPos)
 
-    stopCharacterVelocity()
     char:PivotTo(targetCFrame)
     root.CFrame = targetCFrame
     stopCharacterVelocity()
@@ -3978,9 +3959,62 @@ function manatite.teleport(grazeTarget, model)
         humanoid:Move(Vector3.zero, false)
     end
 
-    if manatite.anchor then
+    if oreState.anchor then
         pcall(function() root.Anchored = true end)
     end
+end
+
+function manatite.teleport(grazeTarget, model)
+    teleportToOreNode(manatite, grazeTarget, model)
+end
+
+local function retreatOreNode(oreState, isMithril, title, content, now, rootPos)
+    local currentModel = oreState.model
+    if currentModel then
+        oreState.blacklist[currentModel] = now
+    end
+
+    oreState.model = nil
+    if isMithril then
+        oreState.orePart = nil
+    else
+        oreState.target = nil
+    end
+    oreState.payload = nil
+
+    if root then
+        pcall(function() root.Anchored = false end)
+    end
+
+    local nextModel, nextPart = oreState.findNext(rootPos or getRootPos(root), true)
+    if nextModel and nextPart then
+        oreState.model = nextModel
+        if isMithril then
+            oreState.orePart = nextPart
+        else
+            oreState.target = nextPart
+        end
+        oreState.payload = oreState.getPayload(nextModel.Name)
+        oreState.startTime = now
+        oreState.teleport(nextPart, nextModel)
+        oreState.lastTeleportTime = now
+        oreState.lastChompTime = 0
+        oreState.lastSearchTime = now
+
+        if dodge.notifyOnDodge and Window and Window.Notify then
+            Window:Notify({
+                Title = title,
+                Content = content,
+                Duration = 2,
+            })
+        end
+        return true
+    end
+    return false
+end
+
+function manatite.retreatToSafeCrystal(now, rootPos)
+    return retreatOreNode(manatite, false, "Manatite Retreat", "Spiders nearby! Relocated to a safe crystal.", now, rootPos)
 end
 
 -- Mithril Ore Farm Helpers (Crystal Geode Ores)
@@ -4101,27 +4135,7 @@ function mithril.getOrePart(model)
 end
 
 function mithril.isAvailable(orePart, model)
-    if not orePart or not orePart.Parent then return false end
-    if model and not model.Parent then return false end
-
-    -- Check attribute "Available" / "available" directly on Ore part
-    local attr = orePart:GetAttribute("Available")
-    if attr == nil then
-        attr = orePart:GetAttribute("available")
-    end
-    -- Fallback to model attribute
-    if attr == nil and model then
-        attr = model:GetAttribute("Available")
-        if attr == nil then
-            attr = model:GetAttribute("available")
-        end
-    end
-
-    if attr ~= nil then
-        return (attr == true or attr == "true" or attr == 1)
-    end
-
-    return true
+    return isOreAvailable(orePart, model, false)
 end
 
 function mithril.getPayload(modelName)
@@ -4151,144 +4165,21 @@ function mithril.getPayload(modelName)
 end
 
 function mithril.cleanupBlacklist(now)
-    if now - mithril.lastBlacklistCleanup > 10 then
-        mithril.lastBlacklistCleanup = now
-        for model, timestamp in pairs(mithril.blacklist) do
-            if not model or not model.Parent or (now - timestamp > 20) then
-                mithril.blacklist[model] = nil
-            end
-        end
-    end
+    cleanupOreBlacklist(mithril, now)
 end
 
-function mithril.isPositionNearMob(pos, distSq)
-    if not pos then return false end
-    distSq = distSq or (dodge.manatiteThreatRadiusSq or 225)
-    for _, mob in ipairs(cache.activeAuraMobs) do
-        if mob.Parent and dodge.isMobAlive(mob) then
-            local mobPos = dodge.getMobAttackOrigin(mob)
-            if mobPos and get3DDistanceSq(pos, mobPos) <= distSq then
-                return true
-            end
-        end
-    end
-    return false
-end
+mithril.isPositionNearMob = isPositionNearThreatMob
 
 function mithril.findNext(searchOrigin, avoidMobs)
-    local models = mithril.getModels()
-    if not models or #models == 0 then return nil, nil end
-
-    local now = os.clock()
-    local origin = searchOrigin or getRootPos(root) or Vector3.zero
-    local requireSafe = (avoidMobs == true) or (avoidMobs == nil and dodge.retreatOnThreat)
-
-    local safeCandidates = {}
-    local allCandidates = {}
-
-    for _, model in ipairs(models) do
-        if model.Parent then
-            local blacklistedAt = mithril.blacklist[model]
-            if not blacklistedAt or (now - blacklistedAt > 20) then
-                local orePart = mithril.getOrePart(model)
-                if orePart and mithril.isAvailable(orePart, model) then
-                    local isNear = mithril.isPositionNearMob(orePart.Position, dodge.manatiteThreatRadiusSq or 225)
-                    local item = {
-                        model = model,
-                        target = orePart,
-                        isNearMob = isNear,
-                        distSq = get3DDistanceSq(origin, orePart.Position),
-                    }
-                    table.insert(allCandidates, item)
-                    if not isNear then
-                        table.insert(safeCandidates, item)
-                    end
-                end
-            end
-        end
-    end
-
-    local pool = (requireSafe and #safeCandidates > 0) and safeCandidates or allCandidates
-    if #pool == 0 then return nil, nil end
-
-    if mithril.order == "Alphabetical (A-Z)" then
-        table.sort(pool, function(a, b) return a.model.Name < b.model.Name end)
-        return pool[1].model, pool[1].target
-    else
-        table.sort(pool, function(a, b)
-            return a.distSq < b.distSq
-        end)
-        return pool[1].model, pool[1].target
-    end
+    return findNextOreCandidate(mithril, mithril.getOrePart, false, searchOrigin, avoidMobs)
 end
 
 function mithril.retreatToSafeOre(now, rootPos)
-    local currentModel = mithril.model
-    if currentModel then
-        mithril.blacklist[currentModel] = now
-    end
-
-    mithril.model = nil
-    mithril.orePart = nil
-    mithril.payload = nil
-
-    if root then
-        pcall(function() root.Anchored = false end)
-    end
-
-    local nextModel, nextOre = mithril.findNext(rootPos or getRootPos(root), true)
-    if nextModel and nextOre then
-        mithril.model = nextModel
-        mithril.orePart = nextOre
-        mithril.payload = mithril.getPayload(nextModel.Name)
-        mithril.startTime = now
-        mithril.teleport(nextOre, nextModel)
-        mithril.lastTeleportTime = now
-        mithril.lastChompTime = 0
-        mithril.lastSearchTime = now
-
-        if dodge.notifyOnDodge then
-            Window:Notify({
-                Title = "Mithril Retreat",
-                Content = "Spiders nearby! Relocated to safe ore.",
-                Duration = 2,
-            })
-        end
-        return true
-    end
-    return false
+    return retreatOreNode(mithril, true, "Mithril Retreat", "Spiders nearby! Relocated to safe ore.", now, rootPos)
 end
 
 function mithril.teleport(orePart, model)
-    if not root or not char or not orePart or not orePart.Parent then return end
-
-    local targetPos = orePart.Position + Vector3.new(0, mithril.heightOffset, 0)
-    local modelPos = model and model:GetPivot().Position or orePart.Position
-    local lookDir = Vector3.new(modelPos.X - targetPos.X, 0, modelPos.Z - targetPos.Z)
-    local targetCFrame
-    if lookDir.Magnitude > 0.5 then
-        targetCFrame = CFrame.lookAt(targetPos, targetPos + lookDir.Unit)
-    else
-        targetCFrame = CFrame.new(targetPos)
-    end
-
-    stopCharacterVelocity()
-    char:PivotTo(targetCFrame)
-    root.CFrame = targetCFrame
-    stopCharacterVelocity()
-
-    for _, part in ipairs(charBaseParts) do
-        part.AssemblyLinearVelocity = Vector3.zero
-        part.AssemblyAngularVelocity = Vector3.zero
-    end
-
-    if humanoid then
-        humanoid:Move(Vector3.zero, false)
-    end
-
-    if mithril.anchor then
-        pcall(function() root.Anchored = true end)
-    end
+    teleportToOreNode(mithril, orePart, model)
 end
 
 -- Gets the cached attacking part (Head for snakes, CavernBodyVisual for spiders)
@@ -6878,134 +6769,90 @@ function farm.processFishing(now, rootPos)
     end
 end
 
-function manatite.process(now, rootPos)
-    manatite.cleanupBlacklist(now)
+local function processOreFarm(oreState, isMithril, now, rootPos)
+    oreState.cleanupBlacklist(now)
 
-    local targetValid = manatite.model
-        and manatite.target
-        and manatite.model.Parent
-        and manatite.target.Parent
-        and manatite.isAvailable(manatite.target, manatite.model)
-        and (now - manatite.startTime <= 15)
+    local targetPart = isMithril and oreState.orePart or oreState.target
+    local targetValid = oreState.model
+        and targetPart
+        and oreState.model.Parent
+        and targetPart.Parent
+        and oreState.isAvailable(targetPart, oreState.model)
+        and (now - oreState.startTime <= 15)
 
     if not targetValid then
-        if manatite.model and (now - manatite.startTime > 15) then
-            manatite.blacklist[manatite.model] = now
+        if oreState.model and (now - oreState.startTime > 15) then
+            oreState.blacklist[oreState.model] = now
         end
 
-        manatite.model = nil
-        manatite.target = nil
-        manatite.payload = nil
+        oreState.model = nil
+        if isMithril then
+            oreState.orePart = nil
+        else
+            oreState.target = nil
+        end
+        oreState.payload = nil
 
-        if manatite.anchor and root then
+        if oreState.anchor and root then
             pcall(function() root.Anchored = false end)
         end
 
-        if (now - manatite.lastSearchTime > 0.1) then
-            manatite.lastSearchTime = now
-            local nextModel, nextTarget = manatite.findNext(rootPos)
-            if nextModel and nextTarget then
-                manatite.model = nextModel
-                manatite.target = nextTarget
-                manatite.payload = manatite.getPayload(nextModel.Name)
-                manatite.startTime = now
-                manatite.teleport(nextTarget, nextModel)
-                manatite.lastTeleportTime = now
-                manatite.lastChompTime = 0
+        if (now - oreState.lastSearchTime > 0.1) then
+            oreState.lastSearchTime = now
+            local nextModel, nextPart = oreState.findNext(rootPos)
+            if nextModel and nextPart then
+                oreState.model = nextModel
+                if isMithril then
+                    oreState.orePart = nextPart
+                else
+                    oreState.target = nextPart
+                end
+                oreState.payload = oreState.getPayload(nextModel.Name)
+                oreState.startTime = now
+                oreState.teleport(nextPart, nextModel)
+                oreState.lastTeleportTime = now
+                oreState.lastChompTime = 0
             end
         end
     else
-        local targetPos = manatite.target.Position + Vector3.new(0, manatite.heightOffset, 0)
+        local targetPos = targetPart.Position + Vector3.new(0, oreState.heightOffset, 0)
 
-        if dodge.retreatOnThreat and (now - manatite.lastSearchTime > 0.25) then
-            local checkPos = manatite.target.Position
-            if manatite.isPositionNearMob(checkPos, dodge.manatiteThreatRadiusSq) or manatite.isPositionNearMob(rootPos, dodge.manatiteThreatRadiusSq) then
-                manatite.retreatToSafeCrystal(now, rootPos)
+        if dodge.retreatOnThreat and (now - oreState.lastSearchTime > 0.25) then
+            local checkPos = targetPart.Position
+            if isPositionNearThreatMob(checkPos, dodge.manatiteThreatRadiusSq) or isPositionNearThreatMob(rootPos, dodge.manatiteThreatRadiusSq) then
+                if isMithril then
+                    oreState.retreatToSafeOre(now, rootPos)
+                else
+                    oreState.retreatToSafeCrystal(now, rootPos)
+                end
                 return
             end
         end
 
         if get3DDistanceSq(rootPos, targetPos) > 36 then
-            if (now - manatite.lastTeleportTime > 0.4) then
-                manatite.teleport(manatite.target, manatite.model)
-                manatite.lastTeleportTime = now
+            if (now - oreState.lastTeleportTime > 0.4) then
+                oreState.teleport(targetPart, oreState.model)
+                oreState.lastTeleportTime = now
             end
         else
-            if manatite.anchor and not root.Anchored and not dodge.isDodging and not dodge.isUnderground and not dodge.hasNearbyThreat then
+            if oreState.anchor and not root.Anchored and not dodge.isDodging and not dodge.isUnderground and not dodge.hasNearbyThreat then
                 pcall(function() root.Anchored = true end)
             end
         end
 
-        if (now - manatite.lastChompTime >= manatite.delay) then
-            manatite.lastChompTime = now
-            chompEvent:FireServer(manatite.payload)
+        if (now - oreState.lastChompTime >= oreState.delay) then
+            oreState.lastChompTime = now
+            chompEvent:FireServer(oreState.payload)
         end
     end
 end
 
+function manatite.process(now, rootPos)
+    processOreFarm(manatite, false, now, rootPos)
+end
+
 function mithril.process(now, rootPos)
-    mithril.cleanupBlacklist(now)
-
-    local targetValid = mithril.model
-        and mithril.orePart
-        and mithril.model.Parent
-        and mithril.orePart.Parent
-        and mithril.isAvailable(mithril.orePart, mithril.model)
-        and (now - mithril.startTime <= 15)
-
-    if not targetValid then
-        if mithril.model and (now - mithril.startTime > 15) then
-            mithril.blacklist[mithril.model] = now
-        end
-
-        mithril.model = nil
-        mithril.orePart = nil
-        mithril.payload = nil
-
-        if mithril.anchor and root then
-            pcall(function() root.Anchored = false end)
-        end
-
-        if (now - mithril.lastSearchTime > 0.1) then
-            mithril.lastSearchTime = now
-            local nextModel, nextOre = mithril.findNext(rootPos)
-            if nextModel and nextOre then
-                mithril.model = nextModel
-                mithril.orePart = nextOre
-                mithril.payload = mithril.getPayload(nextModel.Name)
-                mithril.startTime = now
-                mithril.teleport(nextOre, nextModel)
-                mithril.lastTeleportTime = now
-                mithril.lastChompTime = 0
-            end
-        end
-    else
-        local targetPos = mithril.orePart.Position + Vector3.new(0, mithril.heightOffset, 0)
-
-        if dodge.retreatOnThreat and (now - mithril.lastSearchTime > 0.25) then
-            local checkPos = mithril.orePart.Position
-            if mithril.isPositionNearMob(checkPos, dodge.manatiteThreatRadiusSq) or mithril.isPositionNearMob(rootPos, dodge.manatiteThreatRadiusSq) then
-                mithril.retreatToSafeOre(now, rootPos)
-                return
-            end
-        end
-
-        if get3DDistanceSq(rootPos, targetPos) > 36 then
-            if (now - mithril.lastTeleportTime > 0.4) then
-                mithril.teleport(mithril.orePart, mithril.model)
-                mithril.lastTeleportTime = now
-            end
-        else
-            if mithril.anchor and not root.Anchored and not dodge.isDodging and not dodge.isUnderground and not dodge.hasNearbyThreat then
-                pcall(function() root.Anchored = true end)
-            end
-        end
-
-        if (now - mithril.lastChompTime >= mithril.delay) then
-            mithril.lastChompTime = now
-            chompEvent:FireServer(mithril.payload)
-        end
-    end
+    processOreFarm(mithril, true, now, rootPos)
 end
 
 -- ==========================
@@ -7252,15 +7099,6 @@ MainTab:CreateToggle({
 })
 
 MainTab:CreateToggle({
-    Name = "Enable Trick or Treat Autofarm",
-    CurrentValue = false,
-    Flag = "Toggle_TrickOrTreat_Main",
-    Callback = function(Value)
-        trickOrTreat.toggle(Value)
-    end,
-})
-
-MainTab:CreateToggle({
     Name = "Enable Mob Attack Dodge",
     CurrentValue = false,
     Flag = "Toggle_AutoDodge",
@@ -7438,6 +7276,34 @@ MainTab:CreateButton({
     end,
 })
 
+MainTab:CreateSlider({
+    Name = "Farm Radius (Studs)",
+    Range = {10, 300},
+    Increment = 1,
+    Suffix = "Studs",
+    CurrentValue = 75,
+    Flag = "Slider_Radius",
+    Callback = function(Value)
+        farm.radius = Value
+        farm.radiusSq = farm.radius * farm.radius
+        if penESP and penESP.update then
+            pcall(penESP.update)
+        end
+    end,
+})
+
+MainTab:CreateSlider({
+    Name = "Golden Aura Radius",
+    Range = {10, 150},
+    Increment = 5,
+    Suffix = "Studs",
+    CurrentValue = 60,
+    Flag = "Slider_GoldenRadius",
+    Callback = function(Value)
+        farm.goldenAuraRadius = Value
+    end,
+})
+
 MainTab:CreateSection({ Name = "Mob Attack Dodge Configuration" })
 
 MainTab:CreateDropdown({
@@ -7471,6 +7337,79 @@ MainTab:CreateToggle({
     Flag = "Toggle_DodgeHearts",
     Callback = function(Value)
         dodge.dodgeOnHeartsDecreased = Value
+    end,
+})
+
+MainTab:CreateSlider({
+    Name = "Dodge Detection Range (Studs)",
+    Range = {10, 50},
+    Increment = 1,
+    Suffix = "Studs",
+    CurrentValue = 15,
+    Flag = "Slider_DodgeRange",
+    Callback = function(Value)
+        dodge.detectionRadius = Value
+        dodge.detectionRadiusSq = Value * Value
+    end,
+})
+
+MainTab:CreateSlider({
+    Name = "Retreat Distance (Studs)",
+    Range = {10, 60},
+    Increment = 1,
+    Suffix = "Studs",
+    CurrentValue = 25,
+    Flag = "Slider_DodgeRetreat",
+    Callback = function(Value)
+        dodge.retreatDistance = Value
+    end,
+})
+
+MainTab:CreateSlider({
+    Name = "Retreat Angle (Degrees)",
+    Range = {0, 90},
+    Increment = 5,
+    Suffix = "°",
+    CurrentValue = 45,
+    Flag = "Slider_DodgeAngle",
+    Callback = function(Value)
+        dodge.retreatAngle = Value
+    end,
+})
+
+MainTab:CreateSlider({
+    Name = "Retreat Walk Speed",
+    Range = {16, 50},
+    Increment = 1,
+    Suffix = "studs/s",
+    CurrentValue = 26,
+    Flag = "Slider_DodgeSpeed",
+    Callback = function(Value)
+        dodge.walkSpeed = Value
+    end,
+})
+
+MainTab:CreateSlider({
+    Name = "Underground Depth (Studs)",
+    Range = {0, 50},
+    Increment = 1,
+    Suffix = "Studs",
+    CurrentValue = 20,
+    Flag = "Slider_DodgeDepth",
+    Callback = function(Value)
+        dodge.undergroundDepth = Value
+    end,
+})
+
+MainTab:CreateSlider({
+    Name = "Dodge Return Delay (Seconds)",
+    Range = {0.05, 2.5},
+    Increment = 0.05,
+    Suffix = "s",
+    CurrentValue = 0.6,
+    Flag = "Slider_DodgeLinger",
+    Callback = function(Value)
+        dodge.lingerDelay = Value
     end,
 })
 
@@ -7510,194 +7449,6 @@ MainTab:CreateToggle({
     CurrentValue = false,
     Flag = "Toggle_Spam_Q",
     Callback = function(Value) HandleSpam("Q", Value, 0.05) end,
-})
-
--- ==========================
--- UI SETUP: Sliders Tab
--- ==========================
-local SlidersTab = Window:CreateTab({ Name = "Sliders", Icon = 4483362458 })
-
-SlidersTab:CreateSection({ Name = "Autofarm & Movement Sliders" })
-
-SlidersTab:CreateSlider({
-    Name = "Farm Radius (Studs)",
-    Range = {10, 300},
-    Increment = 1,
-    Suffix = "Studs",
-    CurrentValue = 75,
-    Flag = "Slider_Radius",
-    Callback = function(Value)
-        farm.radius = Value
-        farm.radiusSq = farm.radius * farm.radius
-        if penESP and penESP.update then
-            pcall(penESP.update)
-        end
-    end,
-})
-
-SlidersTab:CreateSlider({
-    Name = "Golden Aura Radius",
-    Range = {10, 150},
-    Increment = 5,
-    Suffix = "Studs",
-    CurrentValue = 60,
-    Flag = "Slider_GoldenRadius",
-    Callback = function(Value)
-        farm.goldenAuraRadius = Value
-    end,
-})
-
-SlidersTab:CreateSlider({
-    Name = "Grass Chomp Delay (<0.4s Unsafe: Faster than Server Intends)",
-    Range = {0.05, 2.0},
-    Increment = 0.05,
-    Suffix = "s",
-    CurrentValue = farm.grassChompDelay or 0.4,
-    Flag = "Slider_GrassChompDelay",
-    Callback = function(Value)
-        farm.grassChompDelay = Value
-        farm.grassChompRepeatDelay = Value + 0.1
-    end,
-})
-
-SlidersTab:CreateSection({ Name = "Mob Attack Dodge Sliders" })
-
-SlidersTab:CreateSlider({
-    Name = "Dodge Detection Range (Studs)",
-    Range = {10, 50},
-    Increment = 1,
-    Suffix = "Studs",
-    CurrentValue = 15,
-    Flag = "Slider_DodgeRange",
-    Callback = function(Value)
-        dodge.detectionRadius = Value
-        dodge.detectionRadiusSq = Value * Value
-    end,
-})
-
-SlidersTab:CreateSlider({
-    Name = "Retreat Distance (Studs)",
-    Range = {10, 60},
-    Increment = 1,
-    Suffix = "Studs",
-    CurrentValue = 25,
-    Flag = "Slider_DodgeRetreat",
-    Callback = function(Value)
-        dodge.retreatDistance = Value
-    end,
-})
-
-SlidersTab:CreateSlider({
-    Name = "Retreat Angle (Degrees)",
-    Range = {0, 90},
-    Increment = 5,
-    Suffix = "°",
-    CurrentValue = 45,
-    Flag = "Slider_DodgeAngle",
-    Callback = function(Value)
-        dodge.retreatAngle = Value
-    end,
-})
-
-SlidersTab:CreateSlider({
-    Name = "Retreat Walk Speed",
-    Range = {16, 50},
-    Increment = 1,
-    Suffix = "studs/s",
-    CurrentValue = 26,
-    Flag = "Slider_DodgeSpeed",
-    Callback = function(Value)
-        dodge.walkSpeed = Value
-    end,
-})
-
-SlidersTab:CreateSlider({
-    Name = "Underground Depth (Studs)",
-    Range = {0, 50},
-    Increment = 1,
-    Suffix = "Studs",
-    CurrentValue = 20,
-    Flag = "Slider_DodgeDepth",
-    Callback = function(Value)
-        dodge.undergroundDepth = Value
-    end,
-})
-
-SlidersTab:CreateSlider({
-    Name = "Dodge Return Delay (Seconds)",
-    Range = {0.05, 2.5},
-    Increment = 0.05,
-    Suffix = "s",
-    CurrentValue = 0.6,
-    Flag = "Slider_DodgeLinger",
-    Callback = function(Value)
-        dodge.lingerDelay = Value
-    end,
-})
-
-SlidersTab:CreateSection({ Name = "Mining Sliders (Manatite & Mithril)" })
-
-SlidersTab:CreateSlider({
-    Name = "Manatite Chomp Delay",
-    Range = {0.05, 0.5},
-    Increment = 0.01,
-    Suffix = "s",
-    CurrentValue = 0.1,
-    Flag = "Slider_ManatiteDelay",
-    Callback = function(Value)
-        manatite.delay = Value
-    end,
-})
-
-SlidersTab:CreateSlider({
-    Name = "Manatite Teleport Height Offset",
-    Range = {0, 8},
-    Increment = 0.5,
-    Suffix = "Studs",
-    CurrentValue = 2.5,
-    Flag = "Slider_ManatiteHeight",
-    Callback = function(Value)
-        manatite.heightOffset = Value
-    end,
-})
-
-SlidersTab:CreateSlider({
-    Name = "Mithril Chomp Delay",
-    Range = {0.05, 0.5},
-    Increment = 0.01,
-    Suffix = "s",
-    CurrentValue = 0.1,
-    Flag = "Slider_MithrilDelay",
-    Callback = function(Value)
-        mithril.delay = Value
-    end,
-})
-
-SlidersTab:CreateSlider({
-    Name = "Mithril Teleport Height Offset",
-    Range = {0, 8},
-    Increment = 0.5,
-    Suffix = "Studs",
-    CurrentValue = 2.5,
-    Flag = "Slider_MithrilHeight",
-    Callback = function(Value)
-        mithril.heightOffset = Value
-    end,
-})
-
-SlidersTab:CreateSection({ Name = "Performance Sliders" })
-
-SlidersTab:CreateSlider({
-    Name = "FPS Cap Limit",
-    Range = {15, 60},
-    Increment = 1,
-    Suffix = "FPS",
-    CurrentValue = 60,
-    Flag = "Slider_FPSCap",
-    Callback = function(Value)
-        fps.currentCap = Value
-        if fps.capEnabled and setfpscap then pcall(function() setfpscap(fps.currentCap) end) end
-    end,
 })
 
 -- ==========================
@@ -7807,6 +7558,30 @@ MiningTab:CreateToggle({
     end,
 })
 
+MiningTab:CreateSlider({
+    Name = "Manatite Chomp Delay",
+    Range = {0.05, 0.5},
+    Increment = 0.01,
+    Suffix = "s",
+    CurrentValue = 0.1,
+    Flag = "Slider_ManatiteDelay",
+    Callback = function(Value)
+        manatite.delay = Value
+    end,
+})
+
+MiningTab:CreateSlider({
+    Name = "Manatite Teleport Height Offset",
+    Range = {0, 8},
+    Increment = 0.5,
+    Suffix = "Studs",
+    CurrentValue = 2.5,
+    Flag = "Slider_ManatiteHeight",
+    Callback = function(Value)
+        manatite.heightOffset = Value
+    end,
+})
+
 MiningTab:CreateSection({ Name = "Mithril Farm (Crystal Geode)" })
 
 MiningTab:CreateToggle({
@@ -7894,6 +7669,30 @@ MiningTab:CreateToggle({
     Flag = "Toggle_MithrilReturn",
     Callback = function(Value)
         mithril.returnOnDisable = Value
+    end,
+})
+
+MiningTab:CreateSlider({
+    Name = "Mithril Chomp Delay",
+    Range = {0.05, 0.5},
+    Increment = 0.01,
+    Suffix = "s",
+    CurrentValue = 0.1,
+    Flag = "Slider_MithrilDelay",
+    Callback = function(Value)
+        mithril.delay = Value
+    end,
+})
+
+MiningTab:CreateSlider({
+    Name = "Mithril Teleport Height Offset",
+    Range = {0, 8},
+    Increment = 0.5,
+    Suffix = "Studs",
+    CurrentValue = 2.5,
+    Flag = "Slider_MithrilHeight",
+    Callback = function(Value)
+        mithril.heightOffset = Value
     end,
 })
 
@@ -13495,6 +13294,247 @@ RaftingTab:CreateDropdown({
         "[Right] Clearing 02 (Level 2, South Bank)"
     },
     CurrentOption = {
+   
+function rafting.startSteeringLoop()
+    if rafting.heartbeatConn or rafting.renderSteppedConn then return end
+    rafting.lastStepTime = os.clock()
+
+    if humanoid then
+        if rafting.diedConn then pcall(function() rafting.diedConn:Disconnect() end) end
+        rafting.diedConn = humanoid.Died:Connect(function()
+            rafting.onSessionEnded("Player died. Automated rafting stopped.")
+        end)
+        table.insert(rafting.connections, rafting.diedConn)
+    end
+
+    rafting.heartbeatConn = RunService.Heartbeat:Connect(function(dt)
+        if rafting.enabled then
+            pcall(rafting.stepSteering, dt)
+        end
+    end)
+    table.insert(rafting.connections, rafting.heartbeatConn)
+
+    rafting.renderSteppedConn = RunService.RenderStepped:Connect(function(dt)
+        if rafting.enabled then
+            pcall(rafting.stepSteeringAnimation, dt)
+        end
+    end)
+    table.insert(rafting.connections, rafting.renderSteppedConn)
+end
+
+function rafting.stopSteeringLoop()
+    if rafting.diedConn then
+        pcall(function() rafting.diedConn:Disconnect() end)
+        rafting.diedConn = nil
+    end
+    if rafting.isBoosting then
+        rafting.isBoosting = false
+        rafting.nextBoostAt = 0
+        local rem = rafting.getRemote()
+        if rem then pcall(function() rem:FireServer("BoostRelease") end) end
+    end
+    if VirtualInput and VirtualInput.SendKeyEvent then
+        pcall(function()
+            VirtualInput:SendKeyEvent(false, Enum.KeyCode.A, false, game)
+            VirtualInput:SendKeyEvent(false, Enum.KeyCode.D, false, game)
+        end)
+        rafting.lastSteerKey = nil
+    end
+    if rafting.heartbeatConn then
+        pcall(function() rafting.heartbeatConn:Disconnect() end)
+        rafting.heartbeatConn = nil
+    end
+    if rafting.renderSteppedConn then
+        pcall(function() rafting.renderSteppedConn:Disconnect() end)
+        rafting.renderSteppedConn = nil
+    end
+    if root then pcall(function() root.Anchored = false end) end
+    if humanoid then
+        pcall(function()
+            humanoid:Move(Vector3.zero, false)
+            humanoid.AutoRotate = true
+        end)
+    end
+end
+
+function rafting.cleanup()
+    rafting.enabled = false
+    rafting.autoLoop = false
+    rafting.visitedSites = {}
+    rafting.isDockedState = false
+    rafting.currentDockSite = nil
+    rafting.teamChests = nil
+    rafting.teamChestSite = nil
+    rafting.lastLootedChestId = nil
+    rafting.isCastingOff = false
+    rafting.incomingRocks = {}
+    rafting.isEvadingRock = false
+    rafting.stopSteeringLoop()
+    if root then pcall(function() root.Anchored = false end) end
+    if humanoid then
+        pcall(function()
+            humanoid:Move(Vector3.zero, false)
+            humanoid.AutoRotate = true
+        end)
+    end
+    for _, conn in ipairs(rafting.connections) do
+        if conn and conn.Disconnect then
+            pcall(function() conn:Disconnect() end)
+        end
+    end
+    table.clear(rafting.connections)
+    rafting.clientEventConn = nil
+    rafting.heartbeatConn = nil
+    rafting.renderSteppedConn = nil
+    rafting.currentSnapshot = nil
+    rafting.deckPart = nil
+    rafting.raftModel = nil
+end
+
+-- ==========================
+-- UI SETUP: Fjord Rafting Tab
+-- ==========================
+local RaftingTab = Window:CreateTab({ Name = "Fjord Rafting", Icon = 4483362458 })
+
+RaftingTab:CreateSection({ Name = "Live Voyage Telemetry" })
+
+local initialRaftStatusTitle = "Fjord Rafting: Idle at Raft Yard"
+local initialRaftStatusBody = "Rafting inactive. Click 'Start Rafting Voyage' to begin."
+if RaftingTab.CreateText then
+    pcall(function()
+        rafting.statusCard = RaftingTab:CreateText({
+            name = initialRaftStatusTitle,
+            text = initialRaftStatusBody
+        })
+    end)
+end
+if not rafting.statusCard and RaftingTab.CreateParagraph then
+    pcall(function()
+        rafting.statusCard = RaftingTab:CreateParagraph({
+            Title = initialRaftStatusTitle,
+            Content = initialRaftStatusBody
+        })
+    end)
+end
+
+local initialTelemTitle = "Raft Telemetry | HP: --/-- | Energy: --/--"
+local initialTelemBody = "Speed: 0.0 kts | Steering: 0.00 | Pos: N/A\nReach: Harbour | Boosting: false | Adrift: false"
+if RaftingTab.CreateText then
+    pcall(function()
+        rafting.telemetryCard = RaftingTab:CreateText({
+            name = initialTelemTitle,
+            text = initialTelemBody
+        })
+    end)
+end
+if not rafting.telemetryCard and RaftingTab.CreateParagraph then
+    pcall(function()
+        rafting.telemetryCard = RaftingTab:CreateParagraph({
+            Title = initialTelemTitle,
+            Content = initialTelemBody
+        })
+    end)
+end
+
+RaftingTab:CreateSection({ Name = "Session Controls" })
+
+RaftingTab:CreateToggle({
+    Name = "Enable Automated Rafting",
+    CurrentValue = false,
+    Flag = "Toggle_Rafting_Enabled",
+    Callback = function(Value)
+        rafting.enabled = Value
+        if Value then
+            rafting.cancelLooting = false
+            rafting.isEndingVoyage = false
+            rafting.isEndingVoyageInProgress = false
+            rafting.initClientListener()
+            rafting.startSteeringLoop()
+            Window:Notify({ Title = "Rafting Auto-Pilot", Content = "Auto-Pilot enabled. Raft will steer along the selected route.", Duration = 3 })
+        else
+            rafting.stopSteeringLoop()
+        end
+        rafting.updateCards()
+    end,
+})
+
+RaftingTab:CreateToggle({
+    Name = "Auto-Loop Voyages (Repeat Runs)",
+    CurrentValue = false,
+    Flag = "Toggle_Rafting_AutoLoop",
+    Callback = function(Value)
+        rafting.autoLoop = Value
+    end,
+})
+
+RaftingTab:CreateButton({
+    Name = "Start Rafting Voyage",
+    Callback = function()
+        rafting.startVoyage()
+    end,
+})
+
+RaftingTab:CreateButton({
+    Name = "Sail Now / Cast Off",
+    Callback = function()
+        rafting.castOff()
+        Window:Notify({ Title = "Sailing", Content = "Cast off signal sent!", Duration = 3 })
+    end,
+})
+
+RaftingTab:CreateButton({
+    Name = "Return to Shore / Dock",
+    Callback = function()
+        rafting.endVoyage()
+    end,
+})
+
+RaftingTab:CreateButton({
+    Name = "Teleport to Raft Yard Dock",
+    Callback = function()
+        rafting.teleportToRaftYard()
+    end,
+})
+
+RaftingTab:CreateButton({
+    Name = "Teleport Above Raft Deck",
+    Callback = function()
+        rafting.teleportToDeck()
+    end,
+})
+
+RaftingTab:CreateSection({ Name = "Route Navigation Settings" })
+
+RaftingTab:CreateDropdown({
+    Name = "Rafting Route Profile",
+    Options = {
+        "Leftmost Clearings & Caves (Far-North / Left-Left-Forward)",
+        "Hybrid Dynamic Explorer (Custom Selection)",
+        "Clearing & Chest Explorer (All Clearings)",
+        "North Channels (Caves & Drops)",
+        "South Channels (Scenic & Clearings)",
+        "Fast Sea Run (Center/Direct)"
+    },
+    CurrentOption = {"Hybrid Dynamic Explorer (Custom Selection)"},
+    Flag = "Dropdown_Rafting_Route",
+    Callback = function(Option)
+        local chosen = type(Option) == "table" and Option[1] or Option
+        rafting.route = chosen or "Hybrid Dynamic Explorer (Custom Selection)"
+        rafting.updateCards()
+    end,
+})
+
+RaftingTab:CreateSection({ Name = "Target Sites Selection by Level & River Bank" })
+
+RaftingTab:CreateDropdown({
+    Name = "Zone 1: Level 1 & 2 Sites (Upper Fjord - Reach 1)",
+    Options = {
+        "[Left] Clearing 01 (Level 1, North Bank)",
+        "[Left] Cubby 01 Cave (Level 2, North Bank)",
+        "[Right] Cubby 02 Cave (Level 1, South Bank)",
+        "[Right] Clearing 02 (Level 2, South Bank)"
+    },
+    CurrentOption = {
         "[Right] Clearing 02 (Level 2, South Bank)"
     },
     MultipleOptions = true,
@@ -13790,6 +13830,19 @@ SettingsTab:CreateToggle({
     end,
 })
 
+SettingsTab:CreateSlider({
+    Name = "FPS Cap Limit",
+    Range = {15, 60},
+    Increment = 1,
+    Suffix = "FPS",
+    CurrentValue = 60,
+    Flag = "Slider_FPSCap",
+    Callback = function(Value)
+        fps.currentCap = Value
+        if fps.capEnabled and setfpscap then pcall(function() setfpscap(fps.currentCap) end) end
+    end,
+})
+
 SettingsTab:CreateSection({ Name = "AFK Anti-Cheat & Auto-Rejoin" })
 
 SettingsTab:CreateToggle({
@@ -14076,11 +14129,17 @@ SettingsTab:CreateButton({
                 HeartbeatConnection = nil
             end
             pcall(function() if humanoid then humanoid:Move(Vector3.zero, false) end end)
+
+            _G.CowHubLoaded = nil
+            _G.CowHubRayfield = nil
+            _G.CowHubConnections = nil
         end)
 
         task.delay(0.05, function()
             pcall(function()
-                if Window and Window.Unload then
+                if Rayfield and Rayfield.Destroy then
+                    Rayfield:Destroy()
+                elseif Window and Window.Unload then
                     Window:Unload()
                 end
             end)
