@@ -9868,6 +9868,35 @@ local function isCowOnDeck(deck)
 end
 rafting.isCowOnDeck = isCowOnDeck
 
+-- A cave can have several entrances. Use one that opens onto the channel the site's corridor arrives in,
+-- and the widest of those: a 32-long raft fits a 120-wide door far more reliably than a 42-wide one.
+function rafting.pickCaveEntrance(siteId, coves)
+    local caveSub = string.gsub(siteId, "^Cave_", "")
+    local corridor = rafting.siteCorridors and rafting.siteCorridors[siteId]
+    local arrivalZ = nil
+    if corridor then
+        local lastReach = 0
+        for reachIdx, chZ in pairs(corridor) do
+            if reachIdx > lastReach then
+                lastReach = reachIdx
+                arrivalZ = chZ
+            end
+        end
+    end
+
+    local best, bestFacing, bestWidth = nil, false, -1
+    for _, c in ipairs(coves) do
+        local owner = c[6] == "Cave" and string.match(c[7], "^(.-)::")
+        if owner == caveSub or (caveSub == "12" and owner == "Cubby06") then
+            local facing = arrivalZ ~= nil and math.abs(c[2] - arrivalZ) <= 90
+            if (facing and not bestFacing) or (facing == bestFacing and c[3] > bestWidth) then
+                best, bestFacing, bestWidth = c, facing, c[3]
+            end
+        end
+    end
+    return best
+end
+
 function rafting.ensureDynamicSites()
     if rafting.sitesInitialized and #clearingSites > 0 then return end
     if not FjordZones then
@@ -9894,17 +9923,14 @@ function rafting.ensureDynamicSites()
         local floorY = s.FloorY or 700.7
 
         local matchedCove = nil
-        for _, c in ipairs(coves) do
-            if c[6] == kind then
-                if kind == "Clearing" and c[7] == string.gsub(sid, "^Clearing_", "") then
+        if kind == "Cave" then
+            matchedCove = rafting.pickCaveEntrance(sid, coves)
+        else
+            local clearingSub = string.gsub(sid, "^Clearing_", "")
+            for _, c in ipairs(coves) do
+                if c[6] == kind and c[7] == clearingSub then
                     matchedCove = c
                     break
-                elseif kind == "Cave" then
-                    local caveSub = string.gsub(sid, "^Cave_", "")
-                    if string.find(c[7], caveSub, 1, true) or (caveSub == "12" and string.find(c[7], "Cubby06", 1, true)) then
-                        matchedCove = c
-                        break
-                    end
                 end
             end
         end
@@ -9951,6 +9977,7 @@ function rafting.ensureDynamicSites()
             FloorY = floorY,
             LandPos = landPos,
             ShoreZ = coveZ,
+            MouthHalfWidth = matchedCove and (matchedCove[3] * 0.5) or nil,
             FjordLevel = getFjordLevel(coveX),
             Reach = (getReachIndex and getReachIndex(coveX)) or 1,
         }
@@ -10028,9 +10055,12 @@ getReachData = function()
                 reachData.channelsByReach[rIdx] = {}
             end
             table.insert(reachData.channelsByReach[rIdx], ch)
-            local endX = ch[1] + ch[5]
-            if not reachData.forkX[rIdx] or endX > reachData.forkX[rIdx] then
-                reachData.forkX[rIdx] = endX
+            -- Only straight channels define a fork: HalfLength on a diagonal runs along its sloped axis
+            if math.abs(ch[4] or 0) < 0.001 then
+                local endX = ch[1] + ch[5]
+                if not reachData.forkX[rIdx] or endX > reachData.forkX[rIdx] then
+                    reachData.forkX[rIdx] = endX
+                end
             end
         end
         reachData.maxReach = maxR
@@ -10058,42 +10088,78 @@ local reachChannelZ = {
     [7] = { -1387.81, -937.81, -487.81, -37.81, 412.19, 862.19, 1312.19 },
 }
 
+function rafting.findChannel(reachIdx, nominalChZ)
+    if not (FjordZones and FjordZones.Channels and nominalChZ) then return nil end
+    local bestCh = nil
+    local minDiff = 40
+    for _, ch in ipairs(FjordZones.Channels) do
+        if ch[7] == reachIdx then
+            local diff = math.abs(ch[2] - nominalChZ)
+            if diff < minDiff then
+                minDiff = diff
+                bestCh = ch
+            end
+        end
+    end
+    return bestCh
+end
+
 function rafting.getChannelCenterZ(reachIdx, nominalChZ, posX)
     if not nominalChZ then return -37.81 end
-    if reachIdx == 2 then
-        if math.abs(nominalChZ - (-262.81)) <= 40 then
-            local x = posX or 2344.58
-            return -262.81 - 0.315 * (x - 2344.58)
-        elseif math.abs(nominalChZ - 187.19) <= 40 then
-            local x = posX or 2344.58
-            return 187.19 + 0.324 * (x - 2344.58)
+    local ch = rafting.findChannel(reachIdx, nominalChZ)
+    if ch then
+        local dirX = ch[3] or 1
+        local dirZ = ch[4] or 0
+        if math.abs(dirX) > 0.01 and math.abs(dirZ) > 0.001 and posX then
+            return ch[2] + (dirZ / dirX) * (posX - ch[1])
         end
-    end
-    if FjordZones and FjordZones.Channels then
-        local bestCh = nil
-        local minDiff = 40
-        for _, ch in ipairs(FjordZones.Channels) do
-            if ch[7] == reachIdx then
-                local diff = math.abs(ch[2] - nominalChZ)
-                if diff < minDiff then
-                    minDiff = diff
-                    bestCh = ch
-                end
-            end
-        end
-        if bestCh then
-            local midX = bestCh[1]
-            local midZ = bestCh[2]
-            local dirX = bestCh[3] or 1
-            local dirZ = bestCh[4] or 0
-            if math.abs(dirX) > 0.01 and math.abs(dirZ) > 0.001 and posX then
-                local slope = dirZ / dirX
-                return midZ + slope * (posX - midX)
-            end
-            return midZ
-        end
+        return ch[2]
     end
     return nominalChZ
+end
+
+-- Centre line the raft should follow on a route. Differs from the geometric centre in two places:
+-- * Crossovers overlap the middle channel before they cross it, so hold the middle until the crossing.
+-- * Diagonals leave a fork from the same centre as the straight branch, so start on the branch's own
+--   side and ease back, putting the hull on the correct side of the divider before it begins.
+function rafting.getRouteCenterZ(reachIdx, nominalChZ, posX)
+    local center = rafting.getChannelCenterZ(reachIdx, nominalChZ, posX)
+    local ch = rafting.findChannel(reachIdx, nominalChZ)
+    local dirZ = ch and ch[4] or 0
+    if math.abs(dirZ) < 0.001 then return center end
+
+    if type(ch[8]) == "string" then
+        local middleZ = (FjordZones and FjordZones.CenterlineZ) or -37.81
+        return if dirZ < 0 then math.min(center, middleZ) else math.max(center, middleZ)
+    end
+
+    local prevForkX = reachIdx > 1 and getReachData().forkX[reachIdx - 1]
+    if prevForkX and posX then
+        local past = posX - prevForkX
+        if past >= -0.5 and past < 200 then
+            local side = if dirZ < 0 then -25 else 25
+            return center + side * (1 - math.max(past, 0) / 200)
+        end
+    end
+    return center
+end
+
+-- Channel the raft is physically in. Uses the nearest route centre rather than FjordZones.ChannelAt,
+-- which returns the first overlapping rectangle and so picks the north branch at every fork.
+-- Returns axisX, axisZ, cross-channel offset, along-channel offset; a straight +X axis outside a channel.
+function rafting.channelFrame(posX, posZ)
+    local chZ, reachIdx = rafting.getCurrentChannel(posX, posZ)
+    local ch = rafting.findChannel(reachIdx, chZ)
+    if ch then
+        local dx = posX - ch[1]
+        local dz = posZ - ch[2]
+        local along = dx * ch[3] + dz * ch[4]
+        local cross = -dx * ch[4] + dz * ch[3]
+        if math.abs(along) <= ch[5] + 10 and math.abs(cross) <= ch[6] + 10 then
+            return ch[3], ch[4], cross, along
+        end
+    end
+    return 1, 0, nil, nil
 end
 
 function rafting.getCurrentChannel(posX, posZ)
@@ -10102,12 +10168,18 @@ function rafting.getCurrentChannel(posX, posZ)
     local bestZ = channels[1]
     local minDiff = math.huge
     local z = posZ or -37.81
+    local middleZ = (FjordZones and FjordZones.CenterlineZ) or -37.81
     for _, chZ in ipairs(channels) do
-        local centerZ = rafting.getChannelCenterZ(reachIdx, chZ, posX)
-        local diff = math.abs(centerZ - z)
-        if diff < minDiff then
-            minDiff = diff
-            bestZ = chZ
+        -- A crossover overlaps the middle channel, so a raft inside the middle channel is in the middle channel
+        local ch = rafting.findChannel(reachIdx, chZ)
+        local isCrossover = ch and type(ch[8]) == "string"
+        if not (isCrossover and math.abs(z - middleZ) <= 54.65) then
+            local centerZ = rafting.getRouteCenterZ(reachIdx, chZ, posX)
+            local diff = math.abs(centerZ - z)
+            if diff < minDiff then
+                minDiff = diff
+                bestZ = chZ
+            end
         end
     end
     return bestZ, reachIdx
@@ -10336,16 +10408,19 @@ local siteCorridors = {
     ["Clearing_05"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81 },
     ["Clearing_06"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -487.81, [5] = -487.81 },
     ["Cave_Cubby04"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -487.81, [5] = -487.81 },
-    ["Clearing_07"] = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 412.19,  [5] = 412.19 },
+    -- Clearing 07 opens onto the 862 channel (its MaxZ is that channel's north wall), not the 412 channel
+    ["Clearing_07"] = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 637.19,  [5] = 862.19 },
     ["Clearing_08"] = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 637.19,  [5] = 862.19 },
 
     -- Level 4 Terminus (Reach 7)
     ["Cave_Cubby05"]      = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -937.81,  [7] = -937.81 },
     ["Clearing_09"]       = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -937.81,  [7] = -937.81 },
-    ["Clearing_10"]       = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -487.81, [5] = -487.81, [6] = -487.81,  [7] = -487.81 },
+    -- Clearing 10 opens onto the centre channel (its MaxZ is that channel's north wall), not the -487 channel
+    ["Clearing_10"]       = { [1] = -37.81, [2] = -37.81,  [3] = -37.81,  [4] = -37.81,  [5] = -37.81,  [6] = -37.81,   [7] = -37.81 },
     ["Cave_11"]           = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 412.19,  [5] = 412.19,  [6] = 412.19,   [7] = 412.19 },
     ["Cave_12"]           = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 637.19,  [5] = 862.19,  [6] = 1087.19,  [7] = 1312.19 },
 }
+rafting.siteCorridors = siteCorridors
 
 function rafting.isSiteReachable(site, posX, currentZ)
     if not site then return false end
@@ -10379,9 +10454,6 @@ function rafting.isSiteReachable(site, posX, currentZ)
 
     if curReach == sReach then
         if siteTargetChZ and math.abs(curChZ - siteTargetChZ) > 40 then
-            if site.Id == "Clearing_10" and (math.abs(curChZ - (-487.81)) <= 40 or math.abs(curChZ - (-37.81)) <= 40) then
-                return true
-            end
             if site.Id == "Cave_12" and (math.abs(curChZ - 862.19) <= 40 or math.abs(curChZ - 1312.19) <= 40) then
                 return true
             end
@@ -10392,9 +10464,6 @@ function rafting.isSiteReachable(site, posX, currentZ)
         local reachableSet = getReachableChannelsInReach(curReach, curChZ, sReach)
         if siteTargetChZ then
             if reachableSet[siteTargetChZ] then
-                return true
-            end
-            if site.Id == "Clearing_10" and (reachableSet[-487.81] or reachableSet[-37.81]) then
                 return true
             end
             if site.Id == "Cave_12" and (reachableSet[862.19] or reachableSet[1312.19]) then
@@ -10811,13 +10880,20 @@ end
 function rafting.getTargetZ(posX, currentZ, clearances)
     -- In Harbour canal (Dock at -241 to Reach 1 Canyon entrance at 200), follow official canal ribbon
     if posX <= 200 then
-        if FjordZones and FjordZones.RibbonAt then
-            local z = FjordZones.RibbonAt(posX)
-            if z then return z end
-        end
         return getHarbourZ(posX)
     end
+    local riverZ = rafting.getRiverTargetZ(posX, currentZ, clearances)
+    -- Ease from the ribbon onto the river route so the hand-over is not a step in the steering target
+    if posX < 400 then
+        local rawT = (posX - 200) / 200
+        local t = (1 - math.cos(rawT * math.pi)) * 0.5
+        local harbourZ = getHarbourZ(posX)
+        return harbourZ + t * (riverZ - harbourZ)
+    end
+    return riverZ
+end
 
+function rafting.getRiverTargetZ(posX, currentZ, clearances)
     -- If currently inside or departing a visited clearing cove, steer back towards the reach channel
     local departSiteId = rafting.currentDockSite or rafting.lastDepartSite
     local departSite = departSiteId and (rafting.sitesById[departSiteId] or rafting.getClearingById(departSiteId))
@@ -10841,24 +10917,13 @@ function rafting.getTargetZ(posX, currentZ, clearances)
 
     if not targetSite then
         local curChZ, rIdx = rafting.getCurrentChannel(posX, currentZ)
-        local curCenterZ = rafting.getChannelCenterZ(rIdx, curChZ, posX)
+        local curCenterZ = rafting.getRouteCenterZ(rIdx, curChZ, posX)
         local forkX = rd.forkX[rIdx]
         local forkLead = 320.0
         if forkX and posX >= (forkX - forkLead) and posX <= forkX then
             local nextReach = math.min(rIdx + 1, rd.maxReach)
             local nextChZ = getDownstreamChannelZ(rIdx, curChZ, r)
-            local targetThroatZ = nextChZ
-            if rIdx == 1 then
-                if nextChZ < -100 then
-                    targetThroatZ = -105.0
-                elseif nextChZ > 100 then
-                    targetThroatZ = 25.0
-                else
-                    targetThroatZ = -37.81
-                end
-            else
-                targetThroatZ = rafting.getChannelCenterZ(nextReach, nextChZ, forkX)
-            end
+            local targetThroatZ = rafting.getRouteCenterZ(nextReach, nextChZ, forkX)
             local rawT = math.clamp((posX - (forkX - forkLead)) / forkLead, 0, 1)
             local t = (1 - math.cos(rawT * math.pi)) * 0.5
             return curCenterZ + t * (targetThroatZ - curCenterZ)
@@ -10874,7 +10939,7 @@ function rafting.getTargetZ(posX, currentZ, clearances)
 
     local corridors = siteCorridors[targetSite.Id]
     local nominalChZ = (corridors and corridors[reachIdx]) or rafting.getSiteChannelZ(targetSite)
-    local currentChZ = rafting.getChannelCenterZ(reachIdx, nominalChZ, posX)
+    local currentChZ = rafting.getRouteCenterZ(reachIdx, nominalChZ, posX)
 
     -- Physical channel clamp: prevent commanding cross-canyon Z if raft is in a different branch.
     -- Suppressed during fork transitions (320 studs before fork and 150 studs after fork).
@@ -10882,13 +10947,35 @@ function rafting.getTargetZ(posX, currentZ, clearances)
     local forkX = rd.forkX[reachIdx]
     local nearFork = (forkX and posX >= (forkX - 320)) or (reachIdx > 1 and posX <= ((rd.forkX[reachIdx - 1] or 0) + 150))
     if not nearFork and math.abs(physicalChZ - nominalChZ) > 40 then
-        currentChZ = rafting.getChannelCenterZ(reachIdx, physicalChZ, posX)
+        currentChZ = rafting.getRouteCenterZ(reachIdx, physicalChZ, posX)
         nominalChZ = physicalChZ
     end
 
     -- Bank-Side Channel Lane Biasing: Pre-align raft with target site's bank side (North/South lane)
     local bankLaneOffset = if targetSite.BankSide == "North" then -10.0 else 10.0
-    local channelBaselineZ = currentChZ + (if not nearFork and math.abs(physicalChZ - nominalChZ) <= 40 then bankLaneOffset else 0)
+    -- Fade the lane in and out around forks so entering or leaving a fork zone is not a 10-stud step
+    local laneWeight = 0
+    if not nearFork and math.abs(physicalChZ - nominalChZ) <= 40 then
+        laneWeight = 1
+        if forkX then
+            laneWeight = math.min(laneWeight, math.clamp((forkX - 320 - posX) / 100, 0, 1))
+        end
+        if reachIdx > 1 and rd.forkX[reachIdx - 1] then
+            laneWeight = math.min(laneWeight, math.clamp((posX - (rd.forkX[reachIdx - 1] + 150)) / 100, 0, 1))
+        end
+    end
+    local channelBaselineZ = currentChZ + bankLaneOffset * laneWeight
+
+    -- Pre-Fork Spline Guidance: smooth continuous S-curve into the next reach channel (320 studs lead)
+    local forkLead = 320.0
+    if forkX and posX >= (forkX - forkLead) and posX <= forkX then
+        local nextReach = math.min(reachIdx + 1, rd.maxReach)
+        local nextNominalZ = (corridors and corridors[nextReach]) or getDownstreamChannelZ(reachIdx, nominalChZ, r)
+        local targetThroatZ = rafting.getRouteCenterZ(nextReach, nextNominalZ, forkX)
+        local rawT = math.clamp((posX - (forkX - forkLead)) / forkLead, 0, 1)
+        local t = (1 - math.cos(rawT * math.pi)) * 0.5
+        channelBaselineZ = currentChZ + t * (targetThroatZ - currentChZ)
+    end
 
     -- Two-Stage Cove Approach:
     if targetSite.Id == "Clearing_09" then
@@ -10913,11 +11000,27 @@ function rafting.getTargetZ(posX, currentZ, clearances)
             -- Blend mouth with interior for cubbies so trajectory angles directly into throat
             targetLeadZ = mouthZ * 0.7 + shoreZ * 0.3
         end
-        -- Stage 1 (Approaching mouth from river): align with mouth opening in river bank
-        if posX >= (mouthX - approachLead) and posX < mouthX then
-            local rawT = math.clamp((posX - (mouthX - approachLead)) / approachLead, 0, 1)
+        -- Stage 1 (Approaching mouth from river): align with mouth opening in river bank.
+        -- A mouth just past a fork must wait for the fork, or the blend cuts the corner into the divider.
+        local approachStartX = mouthX - approachLead
+        local mouthReach = getReachIndex(mouthX)
+        local mouthPrevForkX = mouthReach > 1 and rd.forkX[mouthReach - 1]
+        if mouthPrevForkX and mouthPrevForkX > approachStartX and mouthPrevForkX < mouthX then
+            approachStartX = mouthPrevForkX
+        end
+        if posX >= approachStartX and posX < mouthX then
+            local rawT = math.clamp((posX - approachStartX) / (mouthX - approachStartX), 0, 1)
             local t = (1 - math.cos(rawT * math.pi)) * 0.5
-            return channelBaselineZ + t * (targetLeadZ - channelBaselineZ)
+            local approachZ = channelBaselineZ + t * (targetLeadZ - channelBaselineZ)
+            -- Until the whole hull is past the start of the opening, keep it clear of the facade beside it:
+            -- 6 studs of panel thickness + 7 of half-beam. The stern needs 16 more studs (half-length).
+            local openingStartX = mouthX - (targetSite.MouthHalfWidth or 0) + 16
+            local laneCh = rafting.findChannel(reachIdx, nominalChZ)
+            if laneCh and posX < openingStartX then
+                local clearHalfWidth = (laneCh[6] - 13) / math.max(laneCh[3], 0.1)
+                approachZ = math.clamp(approachZ, currentChZ - clearHalfWidth, currentChZ + clearHalfWidth)
+            end
+            return approachZ
         end
         -- Stage 2 (Passing through mouth into interior): steer from mouth to landing dock
         if posX >= mouthX and posX <= (maxX + 25) then
@@ -10926,28 +11029,6 @@ function rafting.getTargetZ(posX, currentZ, clearances)
             local t = (1 - math.cos(rawT * math.pi)) * 0.5
             return targetLeadZ + t * (shoreZ - targetLeadZ)
         end
-    end
-
-    -- Pre-Fork Spline Guidance: smooth continuous S-curve into the next reach channel (320 studs lead)
-    local forkLead = 320.0
-    if forkX and posX >= (forkX - forkLead) and posX <= forkX then
-        local nextReach = math.min(reachIdx + 1, rd.maxReach)
-        local nextNominalZ = (corridors and corridors[nextReach]) or getDownstreamChannelZ(reachIdx, nominalChZ, r)
-        local targetThroatZ = nextNominalZ
-        if reachIdx == 1 then
-            if nextNominalZ < -100 then
-                targetThroatZ = -105.0
-            elseif nextNominalZ > 100 then
-                targetThroatZ = 25.0
-            else
-                targetThroatZ = -37.81
-            end
-        else
-            targetThroatZ = rafting.getChannelCenterZ(nextReach, nextNominalZ, forkX)
-        end
-        local rawT = math.clamp((posX - (forkX - forkLead)) / forkLead, 0, 1)
-        local t = (1 - math.cos(rawT * math.pi)) * 0.5
-        return currentChZ + t * (targetThroatZ - currentChZ)
     end
 
     return channelBaselineZ
@@ -11887,6 +11968,237 @@ end
 
 rafting.lootSiteChest = rafting.lootReachChests
 
+-- Voyage telemetry: appends to a workspace file so a crash, sink or logger backlog cannot lose the record.
+-- Lines are "S,..." for samples (see the header line) and "E,..." for events.
+rafting.telemetry = {
+    fileName = nil,
+    pending = {},
+    allLines = {},
+    lastSampleAt = 0,
+    lastFlushAt = 0,
+    lastSurveyAt = 0,
+    lastObserved = {},
+    knownKeys = {},
+    lastCross = nil,
+    lastCrossAt = 0,
+    facades = nil,
+    facadeCells = {},
+    facadesDirty = false,
+    facadesSavedAt = 0,
+}
+
+local telemetryIgnoredEvents = { RaftingSnapshot = true, RaftRiverLoad = true, RaftRiverKeep = true, RaftYard = true }
+
+function rafting.telemetryText(value, depth)
+    depth = depth or 0
+    if type(value) ~= "table" then return tostring(value) end
+    if depth >= 3 then return "{...}" end
+    local parts = {}
+    for k, v in pairs(value) do
+        table.insert(parts, tostring(k) .. "=" .. rafting.telemetryText(v, depth + 1))
+    end
+    return "{" .. table.concat(parts, " ") .. "}"
+end
+
+function rafting.telemetryLine(line)
+    local tel = rafting.telemetry
+    if not tel.fileName then return end
+    table.insert(tel.pending, line)
+end
+
+function rafting.telemetryFlush(force)
+    local tel = rafting.telemetry
+    local now = os.clock()
+    if not tel.fileName or #tel.pending == 0 then return end
+    if not force and (now - tel.lastFlushAt) < 5 then return end
+    tel.lastFlushAt = now
+    local chunk = table.concat(tel.pending, "\n") .. "\n"
+    tel.pending = {}
+    pcall(function()
+        if appendfile then
+            appendfile(tel.fileName, chunk)
+        elseif writefile then
+            -- No append support: rewrite the file, capped so a long voyage cannot stall on it
+            table.insert(tel.allLines, chunk)
+            if #tel.allLines > 400 then table.remove(tel.allLines, 1) end
+            writefile(tel.fileName, table.concat(tel.allLines))
+        end
+    end)
+end
+
+function rafting.telemetryStart(sessionId)
+    local tel = rafting.telemetry
+    if not writefile then return end
+    tel.fileName = string.format("cowhub_raft_%d_%s.log", os.time(), string.sub(tostring(sessionId), 1, 8))
+    tel.pending = {}
+    tel.allLines = {}
+    tel.lastObserved = {}
+    tel.knownKeys = {}
+    tel.lastCross = nil
+    pcall(function() writefile(tel.fileName, "") end)
+    rafting.telemetryLine("H,t,x,z,headingDeg,cross,along,steering,targetDeckX,targetZ,errorZ,left,right,forward,status,health,energy,speed,crash,bump,weather,gust,drift,statusText")
+    local cg = game:GetService("ReplicatedStorage"):FindFirstChild("CowGame")
+    if cg then
+        rafting.telemetryEvent("StormAttributes", {
+            Seed = cg:GetAttribute("FjordStormSeed"),
+            Epoch = cg:GetAttribute("FjordStormEpoch"),
+            Mask = cg:GetAttribute("FjordStormMask"),
+        })
+    end
+    rafting.telemetryFlush(true)
+end
+
+function rafting.telemetryEvent(name, payload)
+    if not rafting.telemetry.fileName or telemetryIgnoredEvents[name] then return end
+    if type(name) ~= "string" then return end
+    local isRelevant = name == "SessionEnded" or name == "StormAttributes" or name == "Snapshot"
+        or string.find(name, "Raft", 1, true) or string.find(name, "Storm", 1, true) or string.find(name, "TeamChest", 1, true)
+        or string.find(name, "Hobgoblin", 1, true) or string.find(name, "Hazard", 1, true) or string.find(name, "Weather", 1, true)
+    if not isRelevant then return end
+    local ok, text = pcall(rafting.telemetryText, payload)
+    rafting.telemetryLine(string.format("E,%.2f,%s,%s", os.clock(), name, ok and text or "?"))
+    rafting.telemetryFlush(true)
+end
+
+-- Records snapshot transitions, and any snapshot field not seen before, as events.
+function rafting.telemetryObserve(payload)
+    local tel = rafting.telemetry
+    if payload.Id and payload.Id ~= tel.sessionId then
+        tel.sessionId = payload.Id
+        rafting.telemetryStart(payload.Id)
+    end
+    if not tel.fileName then return end
+    local seen = tel.lastObserved
+    local changed = false
+    for _, key in ipairs({ "Status", "Health", "CrashSerial", "BumpSerial", "Adrift", "Overboard", "LowEnergy", "Reach", "SiteKind", "Level", "AllAboard" }) do
+        if payload[key] ~= seen[key] then
+            rafting.telemetryLine(string.format("E,%.2f,Change,%s %s->%s", os.clock(), key, tostring(seen[key]), tostring(payload[key])))
+            seen[key] = payload[key]
+            changed = true
+        end
+    end
+    for key in pairs(payload) do
+        if not tel.knownKeys[key] then
+            tel.knownKeys[key] = true
+            rafting.telemetryLine(string.format("E,%.2f,NewKey,%s", os.clock(), tostring(key)))
+        end
+    end
+    if changed and payload.Status == "Docked" then
+        rafting.telemetryEvent("Snapshot", payload)
+    end
+    if changed then rafting.telemetryFlush(true) end
+end
+
+-- Current weather and predicted gust at a position, using the game's own rules. Logged only for now:
+-- comparing the prediction with measured drift shows whether gusts can be fed into steering.
+function rafting.telemetryWeather(pos)
+    local tel = rafting.telemetry
+    if tel.stormRules == nil then
+        tel.stormRules = false
+        pcall(function()
+            local shared = game:GetService("ReplicatedStorage").CowGame.Shared
+            tel.stormRules = require(shared.FjordStormRules)
+        end)
+    end
+    if not tel.stormRules then return "?", 0 end
+    local kind, gust = "Clear", 0
+    pcall(function()
+        local cg = game:GetService("ReplicatedStorage").CowGame
+        local mask = cg:GetAttribute("FjordStormMask")
+        local passage = tel.stormRules.WeatherAt(pos, mask)
+        if passage then
+            kind = tel.stormRules.Kind(passage, mask) or "Clear"
+            local seed = cg:GetAttribute("FjordStormSeed")
+            local epoch = cg:GetAttribute("FjordStormEpoch")
+            if seed and epoch then
+                gust = tel.stormRules.Gust(passage, seed, workspace:GetServerTimeNow() - epoch)
+            end
+        end
+    end)
+    return kind, gust
+end
+
+function rafting.telemetrySample(snap, deck, targetZ, errorZ, clearances)
+    local tel = rafting.telemetry
+    local now = os.clock()
+    if not tel.fileName or (now - tel.lastSampleAt) < 0.2 then return end
+    local dt = now - tel.lastSampleAt
+    tel.lastSampleAt = now
+
+    local ok, line = pcall(function()
+        local pos = deck.Position
+        local axisX, axisZ, cross, along = rafting.channelFrame(pos.X, pos.Z)
+        local steering = snap.Steering or 0
+        local drift = 0
+        if cross and tel.lastCross and dt < 1 then
+            drift = (cross - tel.lastCross) / dt - 10 * steering
+        end
+        tel.lastCross = cross
+        local look = deck.CFrame.LookVector
+        local kind, gust = rafting.telemetryWeather(pos)
+        local left = math.min(clearances.LeftLateral or 45, clearances.LeftStern or 40)
+        local right = math.min(clearances.RightLateral or 45, clearances.RightStern or 40)
+        local forward = math.min(clearances.Forward or 110, clearances.ForwardLeft or 95, clearances.ForwardRight or 95)
+        return string.format(
+            "S,%.2f,%.1f,%.1f,%.1f,%.1f,%.1f,%.2f,%.2f,%.1f,%.1f,%.0f,%.0f,%.0f,%s,%s,%.0f,%.1f,%s,%s,%s,%.2f,%.1f,%s",
+            now, pos.X, pos.Z, math.deg(math.atan2(look.Z, look.X)), cross or 0, along or 0, steering,
+            rafting.targetDeckX or 0, targetZ, errorZ, left, right, forward, tostring(snap.Status), tostring(snap.Health),
+            snap.Energy or 0, snap.Speed or 0, tostring(snap.CrashSerial), tostring(snap.BumpSerial), kind, gust, drift,
+            (string.gsub(tostring(rafting.statusText or ""), ",", ";"))
+        )
+    end)
+    if ok and line then rafting.telemetryLine(line) end
+    rafting.telemetryFlush(false)
+
+    if (now - tel.lastSurveyAt) >= 3 then
+        tel.lastSurveyAt = now
+        pcall(rafting.surveyFacades)
+    end
+end
+
+-- Maps the cliff facades as streaming loads them, merged across voyages, so wall positions along the
+-- whole river can be checked against the channel rectangles.
+function rafting.surveyFacades()
+    local tel = rafting.telemetry
+    if not writefile then return end
+    local fileName = "cowhub_raft_facades.json"
+    if not tel.facades then
+        tel.facades = {}
+        if isfile and readfile and isfile(fileName) then
+            local ok, decoded = pcall(function() return HttpService:JSONDecode(readfile(fileName)) end)
+            if ok and type(decoded) == "table" then tel.facades = decoded end
+        end
+    end
+
+    local fjord = workspace:FindFirstChild("FjordDelta") or (cache.cowWorldRef and cache.cowWorldRef:FindFirstChild("FjordDelta"))
+    local wall = fjord and fjord:FindFirstChild("Cliff Wall")
+    if not wall then return end
+    for _, cell in ipairs(wall:GetChildren()) do
+        local children = cell:GetChildren()
+        if #children ~= tel.facadeCells[cell.Name] then
+            tel.facadeCells[cell.Name] = #children
+            for _, part in ipairs(children) do
+                if part:IsA("BasePart") and not tel.facades[part.Name] then
+                    local look = part.CFrame.LookVector
+                    tel.facades[part.Name] = {
+                        x = part.Position.X, y = part.Position.Y, z = part.Position.Z,
+                        sx = part.Size.X, sy = part.Size.Y, sz = part.Size.Z,
+                        yaw = math.deg(math.atan2(look.X, look.Z)),
+                    }
+                    tel.facadesDirty = true
+                end
+            end
+        end
+    end
+
+    if tel.facadesDirty and (os.clock() - tel.facadesSavedAt) >= 15 then
+        tel.facadesDirty = false
+        tel.facadesSavedAt = os.clock()
+        local encoded = HttpService:JSONEncode(tel.facades)
+        writefile(fileName, encoded)
+    end
+end
+
 function rafting.handleSnapshot(payload)
     if not payload or type(payload) ~= "table" then return end
     rafting.lastSnapshotTime = os.clock()
@@ -11925,6 +12237,7 @@ function rafting.handleSnapshot(payload)
     end
 
     rafting.currentSnapshot = payload
+    rafting.telemetryObserve(payload)
 
     -- Auto-castoff when Ready
     if payload.Status == "Ready" and rafting.enabled and not rafting.isSailing then
@@ -12215,7 +12528,11 @@ function rafting.stepSteering(dt)
 
     -- 2. Hybrid Target Z
     local targetZ = rafting.getTargetZ(lookAheadX, posZ, clearances)
-    local errorZ = targetZ - posZ
+    -- The raft's heading follows its channel, so steering only has to correct movement across the channel.
+    -- Remove the channel's own slope over the lookahead (otherwise a diagonal reads as a constant error)
+    -- and measure what is left across the channel axis.
+    local axisX, axisZ = rafting.channelFrame(posX, posZ)
+    local errorZ = (targetZ - (axisZ / axisX) * lookAhead - posZ) * axisX
     rafting.errorZ = errorZ
 
     -- 3. Flow Guidance Bias (-5.8 to +5.8 with smooth proportional ramp & deadband)
@@ -12513,6 +12830,7 @@ function rafting.stepSteering(dt)
     end
 
     rafting.targetDeckX = math.clamp(targetDeckX, -5.8, 5.8)
+    rafting.telemetrySample(snap, deck, targetZ, errorZ, clearances)
 
     -- Active Steering via Humanoid:MoveTo & Overboard Safety Check
     if root and char and humanoid and humanoid.Health > 0 then
@@ -12882,6 +13200,8 @@ function rafting.startVoyage()
 end
 
 function rafting.onSessionEnded(reason)
+    rafting.telemetryEvent("SessionEnded", reason)
+    rafting.telemetryFlush(true)
     rafting.isSailing = false
     rafting.isEndingVoyage = false
     rafting.isEndingVoyageInProgress = false
@@ -13023,6 +13343,7 @@ function rafting.initClientListener()
     end
     if clientEvent then
         rafting.clientEventConn = clientEvent.OnClientEvent:Connect(function(eventName, payload)
+            rafting.telemetryEvent(eventName, payload)
             if eventName == "RaftingSnapshot" then
                 rafting.handleSnapshot(payload)
             elseif eventName == "RaftingBoard" then
