@@ -9048,24 +9048,37 @@ local function naturalWalkTo(targetWorldPos, timeout, stopDistance)
     timeout = timeout or 8.0
     stopDistance = stopDistance or 3.5
 
+    -- ComputeAsync has no timeout of its own and the caller holds the loot lock, so wait for it 2.5 s at most
+    -- and walk straight there otherwise
     local path = nil
     if PathfindingService then
-        pcall(function()
-            path = PathfindingService:CreatePath({
-                AgentRadius = 3.0,
-                AgentHeight = 5.0,
-                AgentCanJump = true,
-                WaypointSpacing = 4.0,
-                Costs = { Water = math.huge }
-            })
-            path:ComputeAsync(root.Position, targetWorldPos)
+        local candidate, computed = nil, false
+        local fromPos = root.Position
+        task.spawn(function()
+            pcall(function()
+                candidate = PathfindingService:CreatePath({
+                    AgentRadius = 3.0,
+                    AgentHeight = 5.0,
+                    AgentCanJump = true,
+                    WaypointSpacing = 4.0,
+                    Costs = { Water = math.huge }
+                })
+                candidate:ComputeAsync(fromPos, targetWorldPos)
+            end)
+            computed = true
         end)
+        local computeStart = os.clock()
+        while not computed and (os.clock() - computeStart) < 2.5 do task.wait(0.05) end
+        if computed then path = candidate end
     end
 
     if path and path.Status == Enum.PathStatus.Success then
         local waypoints = path:GetWaypoints()
+        -- Each waypoint may take 2 s, so bound the whole walk as well
+        local walkDeadline = os.clock() + timeout + (root.Position - targetWorldPos).Magnitude / 12
         for _, wp in ipairs(waypoints) do
             if not root or not humanoid then return false end
+            if os.clock() > walkDeadline then break end
             if wp.Action == Enum.PathWaypointAction.Jump then
                 humanoid.Jump = true
             end
@@ -9665,14 +9678,17 @@ function rafting.lootSingleSite(targetSite)
     if not root or not targetSite or rafting.cancelLooting or rafting.isEndingVoyage then return false end
     local landPos = targetSite.LandPos or Vector3.new((targetSite.MinX + targetSite.MaxX) * 0.5, targetSite.FloorY + 2.5, (targetSite.MinZ + targetSite.MaxZ) * 0.5)
 
-    -- Request stream replication for distant / unrendered clearings
-    pcall(function()
+    -- Request stream replication for distant / unrendered clearings. In its own thread: the call yields, and
+    -- the snapshot poll below already waits for the site.
+    rafting.lootStep = "Stream " .. targetSite.Id
+    task.spawn(pcall, function()
         local lp = game:GetService("Players").LocalPlayer
         if lp and lp.RequestStreamAroundAsync then
             lp:RequestStreamAroundAsync(landPos, 5)
         end
     end)
 
+    rafting.lootStep = "Land " .. targetSite.Id
     if rafting.naturalMode then
         -- Natural mode: debark and walk from raft deck onto shore landing
         naturalWalkTo(landPos, 8.0, 3.5)
@@ -9694,6 +9710,7 @@ function rafting.lootSingleSite(targetSite)
     -- Only this site's own snapshot names its chest. The LocalTeamChest model and the latest snapshot can still
     -- belong to the previous site, which opened the wrong chest and marked this one as looted.
     local chest, wasOpened
+    rafting.lootStep = "Snapshot " .. targetSite.Id
     local pollStart = os.clock()
     while (os.clock() - pollStart) < 4.0 do
         if rafting.cancelLooting or rafting.isEndingVoyage then return false end
@@ -9706,6 +9723,7 @@ function rafting.lootSingleSite(targetSite)
     local attempts = 0
     while chest and attempts < 3 and not (rafting.cancelLooting or rafting.isEndingVoyage or rafting.abortSweep) do
         attempts = attempts + 1
+        rafting.lootStep = "Open " .. targetSite.Id
         local opened, detail = rafting.openChest(chest)
         result = detail
         if not opened then
@@ -9815,6 +9833,44 @@ function rafting.openChest(chest)
     return false, "NoResponse"
 end
 
+-- An error inside a spawned loot thread is otherwise silent and leaves isLootingChest set for good, which
+-- also stops the steering and the dock watchdog. Two voyages sat docked at their first clearing this way.
+function rafting.lootSiteGuarded(targetSite)
+    local ok, result = pcall(rafting.lootSingleSite, targetSite)
+    if not ok then
+        rafting.telemetryEvent("RaftLootError", { Site = targetSite.Id, Step = rafting.lootStep, Error = tostring(result) })
+        return false
+    end
+    return result
+end
+
+-- Backstop for a loot run that stalls anyway: past the deadline the cow is put back aboard and the raft sails on.
+-- A full zone sweep takes about 30 s and a natural-mode walk about 25 s.
+rafting.LOOT_DEADLINE = 90
+
+function rafting.armLootDeadline(siteId)
+    local run = (rafting.lootRun or 0) + 1
+    rafting.lootRun = run
+    rafting.lootStep = "Start"
+    rafting.telemetryEvent("RaftLootStart", { Site = siteId, Sweep = rafting.collectAllLootChests and not rafting.naturalMode })
+    task.delay(rafting.LOOT_DEADLINE, function()
+        if rafting.lootRun ~= run then return end
+        rafting.lootRun = run + 1
+        rafting.abortSweep = true
+        rafting.isLootingChest = false
+        rafting.telemetryEvent("RaftLootTimeout", { Site = siteId, Step = rafting.lootStep })
+        if rafting.enabled and rafting.isDockedState and not rafting.isEndingVoyage then
+            local deck = rafting.getRaftDeck()
+            if deck and root then placeCowAboveDeck(deck) end
+            local rem = rafting.getRemote()
+            if rem then pcall(function() rem:FireServer("Boarded") end) end
+            rafting.isDockedState = false
+            rafting.castOff()
+        end
+    end)
+    return run
+end
+
 function rafting.sweepZoneChests(zoneNum, deck)
     if rafting.isLootingChest or not root or not zoneNum or rafting.cancelLooting or rafting.isEndingVoyage then return false end
     local curDeck = deck or rafting.getRaftDeck()
@@ -9845,7 +9901,7 @@ function rafting.sweepZoneChests(zoneNum, deck)
             if targetSite and not rafting.lootedChestSites[siteId] then
                 rafting.statusText = string.format("Zone %d Sweep: Looting %s...", zoneNum, targetSite.Name or siteId)
                 rafting.updateCards()
-                rafting.lootSingleSite(targetSite)
+                rafting.lootSiteGuarded(targetSite)
                 task.wait(0.4)
             end
         end
@@ -10024,6 +10080,7 @@ function rafting.lootReachChests(dockSite, deck)
     if not curDeck then return end
 
     task.spawn(function()
+        local run = rafting.armLootDeadline(dockSite.Id)
         local zoneNum = siteZoneMap[dockSite.Id] or (dockSite.FjordLevel and math.clamp(dockSite.FjordLevel, 1, 4)) or 1
 
         if rafting.collectAllLootChests and not rafting.naturalMode then
@@ -10035,7 +10092,7 @@ function rafting.lootReachChests(dockSite, deck)
                 rafting.isLootingChest = true
                 rafting.statusText = string.format("Looting %s...", dockSite.Name or dockSite.Id)
                 rafting.updateCards()
-                rafting.lootSingleSite(dockSite)
+                rafting.lootSiteGuarded(dockSite)
                 task.wait(0.5)
 
                 local deckRef = rafting.getRaftDeck() or curDeck
@@ -10055,6 +10112,11 @@ function rafting.lootReachChests(dockSite, deck)
                 rafting.isLootingChest = false
             end
         end
+
+        -- Past the deadline the raft has already sailed on without this run
+        if rafting.lootRun ~= run then return end
+        rafting.lootRun = run + 1
+        rafting.telemetryEvent("RaftLootDone", { Site = dockSite.Id, Step = rafting.lootStep })
 
         -- Still flagged as looting, so the dock watchdog cannot cast off mid-patch
         rafting.isLootingChest = true
