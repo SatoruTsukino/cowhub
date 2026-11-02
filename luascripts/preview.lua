@@ -251,6 +251,14 @@ local fishingEvent = cowRemotes:FindFirstChild("FishingRequest") or cowRemotes:W
 local skinAuction = cowGame:WaitForChild("SkinAuction")
 local fishingSpotsFolder = workspace:FindFirstChild("Fishing Spots") or workspace:WaitForChild("Fishing Spots", 5)
 
+-- Drain unhandled spam remotes to prevent 1024 engine queue exhaustion
+task.spawn(function()
+    local marketEv = cowRemotes:WaitForChild("PublicMarketChanged", 5)
+    if marketEv and marketEv:IsA("RemoteEvent") then
+        marketEv.OnClientEvent:Connect(function() end)
+    end
+end)
+
 -- Pre-configured Raycast Parameters (Zero allocation per frame)
 local raycastParams = RaycastParams.new()
 raycastParams.FilterType = Enum.RaycastFilterType.Exclude
