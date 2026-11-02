@@ -8394,7 +8394,27 @@ function rafting.isSiteReachable(site, posX, currentZ)
         end
     end
 
+    -- Branches overlap for the first stretch past a fork, so the raft can be in several channels at once.
+    -- The site is reachable if any of them leads to it.
     local curChZ, curReach = rafting.getCurrentChannel(posX, currentZ)
+    if rafting.channelLeadsToSite(curChZ, curReach, site, mouthX) then
+        return true
+    end
+    if FjordZones and FjordZones.Channels then
+        for _, ch in ipairs(FjordZones.Channels) do
+            if not ch[8] then
+                local dx, dz = posX - ch[1], currentZ - ch[2]
+                if math.abs(dx * ch[3] + dz * ch[4]) <= ch[5] and math.abs(-dx * ch[4] + dz * ch[3]) <= ch[6]
+                    and rafting.channelLeadsToSite(ch[2], ch[7], site, mouthX) then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+function rafting.channelLeadsToSite(curChZ, curReach, site, mouthX)
     local sReach = siteReach[site.Id] or getReachIndex(mouthX)
 
     if curReach > sReach then
@@ -8851,7 +8871,7 @@ function rafting.getRiverTargetZ(posX, currentZ, clearances)
     local departSite = departSiteId and (rafting.sitesById[departSiteId] or rafting.getClearingById(departSiteId))
     if departSite then
         local isDeparting = (os.clock() - (rafting.lastCastOffTime or 0)) < 6.0
-        local insideCoveBounds = posX <= (departSite.MaxX + 40)
+        local insideCoveBounds = posX >= (departSite.MinX - 60) and posX <= (departSite.MaxX + 40)
         local rd = getReachData()
         local reachIdx = getReachIndex(posX)
         local forkX = rd and rd.forkX and rd.forkX[reachIdx]
@@ -9268,35 +9288,27 @@ function rafting.castOff()
             task.wait(0.3) -- Allow native _stepDeckMotion to register and bind Key N
             -- Dispatch departure via native Key N (FjordRafting_Continue)
             sendRaftKey(Enum.KeyCode.N, 0.25)
-            if wasDocked then
-                triggerRaftingCommand("Sail")
-                triggerRaftingCommand("Continue")
-                rafting.fireRemoteSafely("Sail", nil, 0.5)
-            end
         else
             if deck then placeCowAboveDeck(deck) end
             sendRaftKey(Enum.KeyCode.N, 0.25)
-            triggerRaftingCommand("Sail")
-            rafting.fireRemoteSafely("Sail", nil, 0.5)
         end
 
-        -- Teleport unstick on departure in non-natural mode: nudge deck away from shore rock
-        if not rafting.naturalMode and deck and deck.Parent then
-            pcall(function()
-                local posX = deck.Position.X
-                local posZ = deck.Position.Z
-                local chZ = rafting.getCurrentChannel(posX, posZ) or -37.81
-                local nudgeZ = if posZ < chZ then 4.0 else -4.0
-                deck.CFrame = deck.CFrame + Vector3.new(4.0, 0, nudgeZ)
-            end)
-            placeCowAboveDeck(deck)
+        -- A dock only answers Continue. Sail is for Boarding and Ready, and at a dock just gets
+        -- "Board the raft before setting sail" back. The key above worked at every logged dock, so these
+        -- are fallbacks for when it did not.
+        local departCommand = if wasDocked then "Continue" else "Sail"
+        local function stillWaiting()
+            local current = rafting.currentSnapshot
+            return current and (current.Status == "Docked" or current.Status == "Ready")
         end
-
-        task.delay(1.5, function()
-            if rafting.enabled and rafting.isDockedState then
-                rafting.fireRemoteSafely("Sail", nil, 2.0)
+        task.wait(0.8)
+        if stillWaiting() then
+            triggerRaftingCommand(departCommand)
+            task.wait(0.8)
+            if stillWaiting() then
+                rafting.fireRemoteSafely(departCommand, nil, 0.5)
             end
-        end)
+        end
 
         -- Resume sailing state
         rafting.status = "Travelling"
@@ -9382,15 +9394,6 @@ function rafting.handleHobgoblinRock(rock)
 
     rock.ReceivedAt = os.clock()
     rafting.incomingRocks[rock.Id] = rock
-
-    if rafting.autoEvadeHobgoblins then
-        local flight = rock.Flight or 1.8
-        Window:Notify({
-            Title = "Hobgoblin Attack!",
-            Content = string.format("Rock incoming! Evading impact (%.1fs)...", flight),
-            Duration = math.clamp(flight, 1.5, 3)
-        })
-    end
 end
 
 function rafting.handleHobgoblinLanded(landed)
@@ -9401,85 +9404,87 @@ function rafting.handleHobgoblinLanded(landed)
     end
 end
 
-function rafting.getThreatEvasionOffset(deck, frame)
-    if not rafting.autoEvadeHobgoblins then
-        rafting.isEvadingRock = false
-        return nil, false, false
-    end
+-- Hull size as rocks see it, measured from 56 logged rocks: every hit landed within 30 studs along the hull
+-- and 9 across it, though the deck itself is only 32 x 14. Across includes margin for prediction error.
+local ROCK_HALF_LENGTH = 31
+local ROCK_HALF_BEAM = 11.5
+local STEER_SPEED = 10
+local STEER_LAG = 0.3 -- seconds for the cow to reach a new deck position
+local DECK_STEER_RANGE = 5.8
 
-    local now = os.clock()
-    local bestEvadeDeckX = nil
-    local shouldBoost = false
-    local shouldJump = false
-    local threatFound = false
-
-    local speed = (rafting.currentSnapshot and rafting.currentSnapshot.Speed) or 25
+function rafting.getRockThreats(deck)
     local threats = {}
+    local rocks = rafting.incomingRocks
+    if not rocks or not rafting.autoEvadeHobgoblins then return threats end
 
-    -- 1. Incoming Hobgoblin projectile rocks
-    if rafting.incomingRocks then
-        for rockId, rock in pairs(rafting.incomingRocks) do
-            local flight = rock.Flight or 1.8
-            local elapsed = now - (rock.ReceivedAt or now)
-            local timeLeft = flight - elapsed
-            if timeLeft < -0.5 or elapsed > 5.0 then
-                rafting.incomingRocks[rockId] = nil
-            elseif timeLeft > 0 and timeLeft < 2.5 then
-                table.insert(threats, { pos = rock.Landing or Vector3.new(rock.X or 0, 700.5, rock.Z or 0), timeLeft = timeLeft })
+    local snap = rafting.currentSnapshot
+    local speed = (snap and snap.Speed) or 0
+    local serverNow = workspace:GetServerTimeNow()
+    local clockNow = os.clock()
+    for rockId, rock in pairs(rocks) do
+        local flight = rock.Flight or 1.9
+        local timeLeft = if rock.ReleaseAt then rock.ReleaseAt + flight - serverNow else flight - (clockNow - (rock.ReceivedAt or clockNow))
+        if timeLeft < -0.5 or timeLeft > 6 then
+            rocks[rockId] = nil
+        elseif timeLeft > 0.05 and typeof(rock.Landing) == "Vector3" then
+            local rel = deck.CFrame:PointToObjectSpace(rock.Landing)
+            if math.abs(-rel.Z - speed * timeLeft) <= ROCK_HALF_LENGTH then
+                table.insert(threats, { across = rel.X, timeLeft = timeLeft })
             end
         end
     end
-
-    -- 2. Workspace visual hazard indicators (LocalHobgoblinFx rings / cores)
-    local fxFolder = workspace:FindFirstChild("LocalHobgoblinFx")
-    if fxFolder then
-        for _, child in ipairs(fxFolder:GetChildren()) do
-            if child:IsA("BasePart") and child.Name == "RockRing" then
-                local dist = (child.Position - deck.Position).Magnitude
-                if dist < 60 then
-                    local timeLeft = math.clamp(dist / math.max(speed, 10), 0.2, 2.0)
-                    table.insert(threats, { pos = child.Position, timeLeft = timeLeft })
-                end
-            end
-        end
-    end
-
-    if #threats > 0 then
-        table.sort(threats, function(a, b) return a.timeLeft < b.timeLeft end)
-        for _, entry in ipairs(threats) do
-            local threatPos = entry.pos
-            local timeLeft = entry.timeLeft
-            local forwardVec = deck.CFrame.LookVector
-            local predictedPos = deck.Position + forwardVec * (speed * timeLeft)
-            local predictedFrame = CFrame.new(predictedPos) * (deck.CFrame - deck.Position)
-            local relLanding = predictedFrame:PointToObjectSpace(threatPos)
-
-            if math.abs(relLanding.X) <= 12.0 and math.abs(relLanding.Z) <= 18.0 then
-                threatFound = true
-                if relLanding.X <= 0 then
-                    bestEvadeDeckX = 4.5
-                else
-                    bestEvadeDeckX = -4.5
-                end
-                if relLanding.Z >= -4 then
-                    shouldBoost = true
-                end
-                if timeLeft <= 0.35 and root then
-                    local cowDist = (root.Position - threatPos).Magnitude
-                    if cowDist <= 12 then
-                        shouldJump = true
-                    end
-                end
-                break
-            end
-        end
-    end
-
-    rafting.isEvadingRock = threatFound
-    return bestEvadeDeckX, shouldBoost, shouldJump
+    return threats
 end
 
-rafting.getHobgoblinEvasionOffset = rafting.getThreatEvasionOffset
+-- Leaves the wanted deck position alone unless it ends in a rock hit, and then moves it as little as clears
+-- every rock in flight. Checking the wanted course is what stops a dodge or a lane return steering into a
+-- second rock, which is how most logged hits happened.
+function rafting.avoidRocks(deck, wantedDeckX, leftClear, rightClear)
+    local threats = rafting.getRockThreats(deck)
+    if #threats == 0 then
+        rafting.isEvadingRock = false
+        return wantedDeckX, false
+    end
+
+    local snap = rafting.currentSnapshot
+    local steerNow = (snap and snap.Steering) or 0
+    local function penalty(steer)
+        local cost, wallMove = 0, 0
+        for _, threat in ipairs(threats) do
+            local lag = math.min(STEER_LAG, threat.timeLeft)
+            local moved = STEER_SPEED * (steerNow * lag + steer * (threat.timeLeft - lag))
+            if math.abs(threat.across - moved) <= ROCK_HALF_BEAM then
+                cost = cost + 1
+            end
+            if math.abs(moved) > math.abs(wallMove) then wallMove = moved end
+        end
+        -- A crash costs about what a rock does, and also stops the raft
+        local room = if wallMove < 0 then leftClear else rightClear
+        if room - 7 - math.abs(wallMove) < 2 then
+            cost = cost + 1
+        end
+        return cost
+    end
+
+    local wantedSteer = math.clamp(wantedDeckX / DECK_STEER_RANGE, -1, 1)
+    local bestSteer, bestCost = wantedSteer, penalty(wantedSteer)
+    if bestCost == 0 then
+        rafting.isEvadingRock = false
+        return wantedDeckX, false
+    end
+    for _, steer in ipairs({ 0, 0.35, -0.35, 0.7, -0.7, 1, -1 }) do
+        local cost = penalty(steer)
+        if cost < bestCost or (cost == bestCost and math.abs(steer - wantedSteer) < math.abs(bestSteer - wantedSteer)) then
+            bestSteer, bestCost = steer, cost
+        end
+    end
+    rafting.isEvadingRock = bestSteer ~= wantedSteer
+    return bestSteer * DECK_STEER_RANGE, rafting.isEvadingRock
+end
+
+rafting.CHEST_RETRY_NOTICES = { ChestBlocked = true, ApproachChest = true }
+rafting.CHEST_DONE_NOTICES = { ChestAlreadyClaimed = true, ChestUnavailable = true }
+rafting.CHEST_ABORT_NOTICES = { NotAtRaftingStop = true, InventoryFull = true }
 
 function rafting.dismissChestRewardGui(force)
     if not force and rafting.autoDismissRewardGui == false and rafting.autoAcceptRewards == false then return false end
@@ -9680,88 +9685,128 @@ function rafting.lootSingleSite(targetSite)
     -- Paced landing settle: allows server physics to register touchdown and stream TeamChestSnapshot
     task.wait(0.5)
 
-    -- Poll for LocalTeamChest to spawn on ground
-    local targetChest = nil
-    local targetModel = nil
+    -- Only this site's own snapshot names its chest. The LocalTeamChest model and the latest snapshot can still
+    -- belong to the previous site, which opened the wrong chest and marked this one as looted.
+    local chest, wasOpened
     local pollStart = os.clock()
-    while (os.clock() - pollStart) < 5.0 do
+    while (os.clock() - pollStart) < 4.0 do
         if rafting.cancelLooting or rafting.isEndingVoyage then return false end
-        local localChest = workspace:FindFirstChild("LocalTeamChest", true)
-        if localChest and localChest:IsA("Model") and not localChest:GetAttribute("Opened") then
-            local chestPos = localChest:GetPivot().Position
-            if (chestPos - landPos).Magnitude < 120 then
-                targetChest = { Id = localChest.Name, CFrame = localChest:GetPivot(), Opened = false }
-                targetModel = localChest
-                break
-            end
-        end
-        if rafting.teamChests and type(rafting.teamChests) == "table" then
-            for _, chest in ipairs(rafting.teamChests) do
-                if not chest.Opened and chest.Id ~= rafting.lastLootedChestId then
-                    targetChest = chest
-                    break
-                end
-            end
-        end
-        if targetChest then break end
-        task.wait(0.12)
+        chest, wasOpened = rafting.findSiteChest(targetSite.Id)
+        if chest or wasOpened then break end
+        task.wait(0.1)
     end
 
-    if targetChest and targetChest.CFrame and not rafting.cancelLooting and not rafting.isEndingVoyage then
-        local approachPos = (targetChest.CFrame * CFrame.new(0, 1.5, 3.5)).Position
-        if rafting.naturalMode then
-            naturalWalkTo(approachPos, 8.0, 3.0)
-        else
-            local distToChest = (root.Position - approachPos).Magnitude
-            local walkedToChest = false
-            if distToChest <= 25 then
-                walkedToChest = walkToPosition(approachPos, 2.0, 3.0)
-            end
-            if not walkedToChest then
-                stopCharacterVelocity()
-                root.CFrame = targetChest.CFrame * CFrame.new(0, 1.5, 3.5) * CFrame.Angles(0, math.pi, 0)
-                if humanoid then
-                    humanoid:Move(Vector3.zero, false)
-                    humanoid:MoveTo(root.Position)
-                end
-            end
+    local result = if wasOpened then "AlreadyOpen" else "NoSnapshot"
+    local attempts = 0
+    while chest and attempts < 3 and not (rafting.cancelLooting or rafting.isEndingVoyage or rafting.abortSweep) do
+        attempts = attempts + 1
+        local opened, detail = rafting.openChest(chest)
+        result = detail
+        if not opened then
+            -- A second chest at the site still gets its own try, but this one has used up its positions
+            break
         end
-        -- Paced chest settle: guarantees server receives character position packet inside 12-stud prompt radius before trigger
-        task.wait(0.7)
+        task.wait(0.2)
+        chest, wasOpened = rafting.findSiteChest(targetSite.Id)
+    end
+    rafting.telemetryEvent("TeamChestResult", { Site = targetSite.Id, Result = result })
 
-        -- Hooked native trigger via ProximityPrompt from CowGameClient.Bootstrap
-        local triggeredNatively = false
-        if targetModel then
-            triggeredNatively = triggerChestNatively(targetModel)
-        else
-            local foundModel = workspace:FindFirstChild("LocalTeamChest", true)
-            if foundModel then
-                triggeredNatively = triggerChestNatively(foundModel)
-            end
-        end
-
-        if not triggeredNatively then
-            local remotes = cowRemotes or (game:GetService("ReplicatedStorage"):FindFirstChild("CowGame") and game.ReplicatedStorage.CowGame:FindFirstChild("Remotes"))
-            local teamChestReq = remotes and remotes:FindFirstChild("TeamChestRequest")
-            if teamChestReq then
-                pcall(function() teamChestReq:FireServer(targetChest.Id) end)
-            end
-        end
-
-        rafting.lastLootedChestId = targetChest.Id
-        targetChest.Opened = true
-        task.wait(0.8) -- Wait for chest celebration / hat animation
-
-        -- Automatically poll and dismiss Accept or Okay on teamchest reward GUI until dismissed
-        rafting.pollRewardGuiUntilDismissed(8.0)
-        task.wait(0.4)
-
+    local looted = (not chest) and (wasOpened or result == "Opened" or result == "AlreadyClaimed")
+    if looted then
         rafting.lootedChestSites[targetSite.Id] = true
         rafting.visitedSites[targetSite.Id] = true
-        return true
     end
+    return looted
+end
 
-    return false
+function rafting.findSiteChest(siteId)
+    local chestSnap = rafting.chestSnapshots and rafting.chestSnapshots[siteId]
+    if not chestSnap or not chestSnap.Chests then return nil, false end
+    local anyOpened = false
+    for _, chest in ipairs(chestSnap.Chests) do
+        if not chest.Opened and not (rafting.chestRewards and rafting.chestRewards[chest.Id]) then
+            return chest, false
+        end
+        anyOpened = true
+    end
+    return nil, anyOpened
+end
+
+-- Waits for the server's answer to a chest request. Returns "Opened", "AlreadyClaimed", "Retry", "Abort" or nil.
+function rafting.awaitChestOutcome(chest, timeout)
+    local start = os.clock()
+    while (os.clock() - start) < timeout do
+        if rafting.chestRewards[chest.Id] then return "Opened" end
+        local chestSnap = rafting.chestSnapshots[rafting.siteIdOfChest(chest)]
+        if chestSnap and chestSnap.Chests then
+            for _, known in ipairs(chestSnap.Chests) do
+                if known.Id == chest.Id and known.Opened then return "Opened" end
+            end
+        end
+        local notice = rafting.lastChestNotice
+        if notice then
+            if rafting.CHEST_DONE_NOTICES[notice] then return "AlreadyClaimed" end
+            if rafting.CHEST_RETRY_NOTICES[notice] then return "Retry" end
+            if rafting.CHEST_ABORT_NOTICES[notice] then return "Abort" end
+        end
+        task.wait(0.08)
+    end
+    return nil
+end
+
+function rafting.siteIdOfChest(chest)
+    return string.match(tostring(chest.Id), ":([^:]+):%d+$") or ""
+end
+
+-- Stands beside the chest and opens it, trying other sides if the server says the spot is blocked or too far.
+-- Only a reward, an opened snapshot or a "claimed" notice counts as done.
+function rafting.openChest(chest)
+    local remotes = cowRemotes or (game:GetService("ReplicatedStorage"):FindFirstChild("CowGame") and game.ReplicatedStorage.CowGame:FindFirstChild("Remotes"))
+    local teamChestReq = remotes and remotes:FindFirstChild("TeamChestRequest")
+    local standOffsets = { CFrame.new(0, 1.5, 3.5), CFrame.new(3.5, 1.5, 0), CFrame.new(-3.5, 1.5, 0), CFrame.new(0, 1.5, -3.5) }
+
+    for _, offset in ipairs(standOffsets) do
+        if rafting.cancelLooting or rafting.isEndingVoyage or not root then return false, "Cancelled" end
+        local standAt = chest.CFrame * offset
+        if rafting.naturalMode then
+            naturalWalkTo(standAt.Position, 8.0, 3.0)
+        else
+            stopCharacterVelocity()
+            root.CFrame = standAt * CFrame.Angles(0, math.pi, 0)
+            if humanoid then
+                humanoid:Move(Vector3.zero, false)
+                humanoid:MoveTo(root.Position)
+            end
+        end
+        -- Paced chest settle: the server must see the new position before the request arrives
+        task.wait(0.7)
+
+        rafting.lastChestNotice = nil
+        local outcome = nil
+        local model = workspace:FindFirstChild("LocalTeamChest", true)
+        if model and model:IsA("Model") and (model:GetPivot().Position - chest.CFrame.Position).Magnitude < 8
+            and triggerChestNatively(model) then
+            outcome = rafting.awaitChestOutcome(chest, 1.0)
+        end
+        if not outcome and teamChestReq then
+            pcall(function() teamChestReq:FireServer(chest.Id) end)
+            outcome = rafting.awaitChestOutcome(chest, 1.5)
+        end
+
+        if outcome == "Opened" then
+            task.wait(0.8) -- Wait for chest celebration / hat animation
+            rafting.pollRewardGuiUntilDismissed(8.0)
+            task.wait(0.4)
+            return true, "Opened"
+        elseif outcome == "AlreadyClaimed" then
+            rafting.chestRewards[chest.Id] = true
+            return true, "AlreadyClaimed"
+        elseif outcome == "Abort" then
+            rafting.abortSweep = true
+            return false, tostring(rafting.lastChestNotice)
+        end
+    end
+    return false, "NoResponse"
 end
 
 function rafting.sweepZoneChests(zoneNum, deck)
@@ -9781,9 +9826,10 @@ function rafting.sweepZoneChests(zoneNum, deck)
     if not hasUnlooted then return false end
 
     rafting.isLootingChest = true
+    rafting.abortSweep = false
     task.spawn(function()
         for _, siteId in ipairs(zoneList) do
-            if rafting.cancelLooting or rafting.isEndingVoyage then break end
+            if rafting.cancelLooting or rafting.isEndingVoyage or rafting.abortSweep then break end
             local targetSite = rafting.sitesById[siteId] or (rafting.getClearingById and rafting.getClearingById(siteId))
             if not targetSite and rafting.allSites then
                 for _, s in ipairs(rafting.allSites) do
@@ -9825,6 +9871,147 @@ function rafting.sweepZoneChests(zoneNum, deck)
     return true
 end
 
+function rafting.findStation(snap, stationId)
+    for _, station in ipairs((snap and snap.RepairStations) or {}) do
+        if station.Id == stationId then return station end
+    end
+    return nil
+end
+
+-- The damaged station closest to where the cow already is, so steering is disturbed least
+function rafting.pickDamagedStation(snap, cowRel)
+    local best, bestDist = nil, math.huge
+    for _, station in ipairs((snap and snap.RepairStations) or {}) do
+        if station.Damaged and station.Id and typeof(station.Offset) == "Vector3" then
+            local dist = math.abs(station.Offset.X - cowRel.X) + math.abs(station.Offset.Z - cowRel.Z)
+            if dist < bestDist then
+                best, bestDist = station, dist
+            end
+        end
+    end
+    return best
+end
+
+-- Energy to reach the sea at the current speed, plus enough left to leave a dock
+function rafting.energyReserve(posX, snap)
+    local cfg = rafting.gameConfig()
+    local speed = math.max((snap and snap.Speed) or 0, 10)
+    return math.max(0, 6594.58 - posX) / speed * cfg.EnergyDrainPerSecond + cfg.MinContinueEnergy
+end
+
+function rafting.gameConfig()
+    if rafting.configCache then return rafting.configCache end
+    local cfg = { EnergyDrainPerSecond = 0.75, MinContinueEnergy = 15, RepairHeartbeatSeconds = 0.18, RepairRange = 6.5 }
+    pcall(function()
+        local live = require(game:GetService("ReplicatedStorage").CowGame.Shared.RaftingConfig)
+        for key in pairs(cfg) do
+            if type(live[key]) == "number" then cfg[key] = live[key] end
+        end
+    end)
+    rafting.configCache = cfg
+    return cfg
+end
+
+function rafting.isHealthLow(hp, maxHp)
+    -- The slider is in raft health, which is too little on a raft with hundreds of it
+    return hp > 0 and hp <= math.max(rafting.emergencyReturnHp or 25, (maxHp or 0) * 0.15)
+end
+
+-- Runs in the looting thread, with the cow back aboard and the raft stopped.
+function rafting.repairAtDock()
+    if not rafting.autoRepair or os.clock() < (rafting.repairBlockedUntil or 0) then return end
+    local rem = rafting.getRemote()
+    if not rem then return end
+    local cfg = rafting.gameConfig()
+
+    for _ = 1, 4 do
+        local snap = rafting.currentSnapshot
+        local deck = rafting.getRaftDeck()
+        if not snap or snap.Status ~= "Docked" or not deck or not root then break end
+        if (snap.Health or 0) >= (snap.MaxHealth or 1) * 0.9 then break end
+        if (snap.Energy or 0) < cfg.MinContinueEnergy + (snap.RepairEnergyCost or 5) + 30 then break end
+        local cowRel = deck.CFrame:PointToObjectSpace(root.Position)
+        local station = rafting.pickDamagedStation(snap, cowRel)
+        if not station then break end
+
+        rafting.statusText = string.format("Patching split beam %s...", tostring(station.Id))
+        rafting.updateCards()
+        stopCharacterVelocity()
+        root.CFrame = deck.CFrame * CFrame.new(station.Offset.X, 5.4, station.Offset.Z)
+        if humanoid then
+            humanoid:Move(Vector3.zero, false)
+            humanoid:MoveTo(root.Position)
+        end
+        task.wait(0.3)
+
+        local before = snap.Health
+        local finished = false
+        pcall(function() rem:FireServer("RepairBegin", station.Id) end)
+        local start = os.clock()
+        while (os.clock() - start) < 5.0 and rafting.enabled and not rafting.cancelLooting do
+            task.wait(cfg.RepairHeartbeatSeconds)
+            pcall(function() rem:FireServer("RepairHeld", station.Id) end)
+            local current = rafting.findStation(rafting.currentSnapshot, station.Id)
+            if not current or not current.Damaged then
+                finished = true
+                break
+            end
+        end
+        pcall(function() rem:FireServer("RepairRelease", station.Id) end)
+        task.wait(0.3)
+        rafting.telemetryEvent("RaftRepair", { Station = station.Id, Docked = true, Finished = finished,
+            Before = before, After = rafting.currentSnapshot and rafting.currentSnapshot.Health })
+        if not finished then
+            -- Most likely out of driftwood. Do not hold up the voyage retrying.
+            rafting.repairBlockedUntil = os.clock() + 60
+            break
+        end
+    end
+
+    local deckRef = rafting.getRaftDeck()
+    if deckRef and root and not rafting.naturalMode then placeCowAboveDeck(deckRef) end
+end
+
+-- Patches while sailing: the cow only moves along the deck to the station's row. X stays with steering,
+-- and the station stays in range across the whole steering width.
+function rafting.stepRepairUnderway(snap, deck, posX, allowed)
+    local rem = rafting.getRemote()
+    local held = rafting.heldRepair
+    local now = os.clock()
+    local cfg = rafting.gameConfig()
+    if held then
+        local station = rafting.findStation(snap, held.Id)
+        local timedOut = (now - held.StartedAt) > 6
+        if not allowed or timedOut or not station or not station.Damaged then
+            if rem then pcall(function() rem:FireServer("RepairRelease", held.Id) end) end
+            rafting.telemetryEvent("RaftRepair", { Station = held.Id, Docked = false, Finished = not (station and station.Damaged),
+                Before = held.Before, After = snap.Health })
+            if timedOut then rafting.repairBlockedUntil = now + 60 end
+            rafting.heldRepair = nil
+            rafting.targetDeckZ = 0
+        elseif rem and (now - held.LastPulseAt) >= cfg.RepairHeartbeatSeconds then
+            held.LastPulseAt = now
+            pcall(function() rem:FireServer("RepairHeld", held.Id) end)
+        end
+        return
+    end
+
+    rafting.targetDeckZ = 0
+    if not rafting.autoRepair or not allowed or not rem or not root or now < (rafting.repairBlockedUntil or 0) then return end
+    if (snap.Health or 0) >= (snap.MaxHealth or 1) * 0.7 then return end
+    if (snap.Energy or 0) < rafting.energyReserve(posX, snap) + (snap.RepairEnergyCost or 5) + 10 then return end
+
+    local cowRel = deck.CFrame:PointToObjectSpace(root.Position)
+    local station = rafting.pickDamagedStation(snap, cowRel)
+    if not station then return end
+    rafting.targetDeckZ = station.Offset.Z
+    local offX, offZ = station.Offset.X - cowRel.X, station.Offset.Z - cowRel.Z
+    if math.sqrt(offX * offX + offZ * offZ) <= cfg.RepairRange - 0.5 then
+        pcall(function() rem:FireServer("RepairBegin", station.Id) end)
+        rafting.heldRepair = { Id = station.Id, StartedAt = now, LastPulseAt = now, Before = snap.Health }
+    end
+end
+
 function rafting.lootReachChests(dockSite, deck)
     if rafting.isLootingChest or not root or not dockSite then return end
     local curDeck = deck or rafting.getRaftDeck()
@@ -9863,13 +10050,18 @@ function rafting.lootReachChests(dockSite, deck)
             end
         end
 
+        -- Still flagged as looting, so the dock watchdog cannot cast off mid-patch
+        rafting.isLootingChest = true
+        pcall(rafting.repairAtDock)
         rafting.isLootingChest = false
 
-        -- Check emergency docked: if health low or adrift, return to shore now that chests are looted
+        -- Check emergency docked: if health low or adrift, return to shore now that chests are looted.
+        -- Below the energy needed to leave, the server will not let the raft continue either.
         local snap = rafting.currentSnapshot
         local isEmergency = rafting.emergencyDocked
-            or (snap and snap.Health and snap.Health <= rafting.emergencyReturnHp and snap.Health > 0)
+            or (snap and snap.Health and rafting.isHealthLow(snap.Health, snap.MaxHealth))
             or (snap and snap.Adrift == true)
+            or (snap and snap.Energy and snap.Energy < rafting.gameConfig().MinContinueEnergy)
 
         if isEmergency then
             rafting.emergencyDocked = false
@@ -10161,6 +10353,16 @@ function rafting.handleSnapshot(payload)
         rafting.isDockedState = false
         rafting.currentDockSite = nil
         rafting.lastLootedSite = nil
+        -- Left over, this sends the raft to the previous voyage's channel for the whole early river
+        rafting.lastDepartSite = nil
+        rafting.chestSnapshots = {}
+        rafting.chestRewards = {}
+        rafting.lastChestNotice = nil
+        rafting.abortSweep = false
+        rafting.heldRepair = nil
+        rafting.targetDeckZ = 0
+        rafting.repairBlockedUntil = 0
+        rafting.lastStepOkAt = nil
         rafting.lastProgressPos = nil
         rafting.lastProgressX = nil
         rafting.lastProgressTime = 0
@@ -10215,6 +10417,26 @@ function rafting.handleSnapshot(payload)
             if not rafting.isEvadingRock then
                 rafting.statusText = "Travelling down river..."
             end
+        elseif rafting.isDockedState and not rafting.isLootingChest and not rafting.isCastingOff
+            and (os.clock() - (rafting.dockedAt or 0)) > 2.0 then
+            -- The server is sailing but we still think we are docked: nothing would steer the raft
+            rafting.telemetryEvent("RaftStaleDockCleared", { Site = rafting.currentDockSite })
+            rafting.isDockedState = false
+            rafting.currentDockSite = nil
+            rafting.status = "Travelling"
+            rafting.isSailing = true
+        end
+
+        -- Log what is blocking steering if it goes quiet. The cause of a stall is otherwise invisible.
+        if rafting.enabled and not rafting.isLootingChest and not rafting.isCastingOff then
+            local quiet = os.clock() - (rafting.lastStepOkAt or os.clock())
+            if quiet > 1.5 and not rafting.stallLogged then
+                rafting.stallLogged = true
+                rafting.telemetryEvent("RaftSteeringStalled", {
+                    Quiet = quiet, Sailing = rafting.isSailing, Status = rafting.status, Docked = rafting.isDockedState,
+                    Ending = rafting.isEndingVoyage, HasDeck = rafting.getRaftDeck() ~= nil, LastError = rafting.lastStepError,
+                })
+            end
         end
     end
 
@@ -10253,31 +10475,9 @@ function rafting.handleSnapshot(payload)
             local site = (payload.SiteId and (rafting.sitesById[payload.SiteId] or rafting.getClearingById(payload.SiteId))) or rafting.getNearbyClearing(posX, posZ) or nextSite
             local isSelectedSite = (site and rafting.isSiteSelected(site)) or isServerDocked
             if (site or isServerDocked) and isSelectedSite and ((site and not rafting.visitedSites[site.Id]) or isServerDocked) then
-                local mouthZ = (site and site.Mouth and site.Mouth.Z) or (site and site.ShoreZ) or -37.81
-                local inCoveInterior = site and (
-                    (site.BankSide == "North" and posZ <= (mouthZ + 10)) or
-                    (site.BankSide == "South" and posZ >= (mouthZ - 10))
-                )
-                local inSiteX = site and posX >= (site.MinX - 35) and posX <= (site.MaxX + 35)
-                local distToLand = site and site.LandPos and (Vector3.new(posX, 700.5, posZ) - site.LandPos).Magnitude or math.huge
-                local distToMouth = site and site.Mouth and (Vector3.new(posX, 700.5, posZ) - site.Mouth).Magnitude or math.huge
-
+                -- Only the server docks a raft: it does so when the hull touches the shore of a site. All five logged
+                -- docks came this way, so stopping the steering any earlier only risks leaving the raft unsteered.
                 local reachedShore = isServerDocked
-                if not reachedShore and site then
-                    local maxLandDist = if site.Id == "Clearing_09" then 110.0 else 75.0
-                    local coveSpeedThreshold = if site.Id == "Clearing_09" then 10.0 else 8.0
-                    if rafting.naturalMode then
-                        reachedShore = inCoveInterior and inSiteX and (
-                            distToLand < maxLandDist
-                            or (distToMouth < 60 and (speed or 20) <= 14.0)
-                            or ((rafting.stuckDuration or 0) >= 0.5)
-                        )
-                    else
-                        reachedShore = (inCoveInterior and inSiteX and (distToLand < maxLandDist or (speed or 20) <= coveSpeedThreshold))
-                            or (inSiteX and distToLand < 55.0 and (speed or 20) <= 6.0)
-                            or (inCoveInterior and inSiteX and ((rafting.stuckDuration or 0) >= 0.5))
-                    end
-                end
 
                 if reachedShore then
                     local siteId = (site and site.Id) or payload.SiteId or "Clearing_Dock"
@@ -10288,9 +10488,10 @@ function rafting.handleSnapshot(payload)
                     rafting.lastDepartSite = siteId
                     rafting.isSailing = false
                     rafting.dockedStartTime = os.clock()
+                    rafting.dockedAt = os.clock()
 
                     local hp = payload.Health or 100
-                    if (hp <= rafting.emergencyReturnHp and hp > 0) or payload.Adrift then
+                    if rafting.isHealthLow(hp, payload.MaxHealth) or payload.Adrift then
                         rafting.emergencyDocked = true
                     end
 
@@ -10706,63 +10907,15 @@ function rafting.stepSteering(dt)
         targetDeckX = rafting.unstickDirection
         rafting.statusText = string.format("WALL SCRAPING! Dislodging: hard counter-steer (%+.1f)...", targetDeckX)
 
-        -- In non-natural mode, allow teleport unstick when wedged for >= 1.5s
-        if not rafting.naturalMode and (rafting.stuckDuration or 0) >= 1.5 then
-            local chZ = rafting.getCurrentChannel(posX, posZ) or -37.81
-            local nudgeZ = if posZ < chZ then 6.0 else -6.0
-            pcall(function()
-                if deck and deck.Parent then
-                    deck.CFrame = deck.CFrame + Vector3.new(6.0, 0, nudgeZ)
-                end
-            end)
-            placeCowAboveDeck(deck)
-            if humanoid then humanoid.Jump = true end
-            rafting.stuckDuration = 0
-            rafting.statusText = "UNSTICK: Teleport nudge towards channel center..."
-        end
     end
 
-    -- 6. Check Hobgoblin Rock Threat (Prioritize landing at clearing over dodging)
-    local evadeDeckX, shouldEvadeBoost, shouldEvadeJump = rafting.getHobgoblinEvasionOffset(deck, frame)
-    if evadeDeckX ~= nil and not isActivelyDislodging then
-        if isHeadingToNorthCove or (isInsideCoveInterior and nextSite and nextSite.BankSide == "North") then
-            -- Landing at North clearing (cove is to the Left / -5.8)
-            if evadeDeckX < 0 then
-                targetDeckX = -5.8
-                rafting.statusText = "DODGING TOWARDS CLEARING! Steering into North cove..."
-            else
-                targetDeckX = -5.8
-                shouldEvadeJump = true
-                rafting.statusText = "PRIORITIZING CLEARING DOCK! Holding course into cove..."
-            end
-        elseif isHeadingToSouthCove or (isInsideCoveInterior and nextSite and nextSite.BankSide == "South") then
-            -- Landing at South clearing (cove is to the Right / +5.8)
-            if evadeDeckX > 0 then
-                targetDeckX = 5.8
-                rafting.statusText = "DODGING TOWARDS CLEARING! Steering into South cove..."
-            else
-                targetDeckX = 5.8
-                shouldEvadeJump = true
-                rafting.statusText = "PRIORITIZING CLEARING DOCK! Holding course into cove..."
-            end
-        else
-            -- Open river navigation
-            local safeToEvade = true
-            if forwardDist < 60.0 then
-                safeToEvade = false
-            elseif evadeDeckX < 0 and (leftMinDist < 32.0 or whiskerRepulsion > 0.5) then
-                safeToEvade = false
-            elseif evadeDeckX > 0 and (rightMinDist < 32.0 or whiskerRepulsion < -0.5) then
-                safeToEvade = false
-            end
-
-            if safeToEvade then
-                targetDeckX = evadeDeckX
-                rafting.statusText = "DODGING HOBGOBLIN ROCK! Steering clear of impact..."
-            else
-                shouldEvadeJump = true
-                rafting.statusText = "HOBGOBLIN THREAT! Wall near: cow jump evasion..."
-            end
+    -- 6. Hobgoblin rocks: keep the course unless it ends in a hit. Applies to forks and cove approaches too,
+    -- because the smallest correction that clears a rock rarely costs the turn.
+    if not isActivelyDislodging then
+        local clearDeckX, isDodging = rafting.avoidRocks(deck, targetDeckX, leftLateralDist, rightLateralDist)
+        if isDodging then
+            targetDeckX = clearDeckX
+            rafting.statusText = "DODGING HOBGOBLIN ROCK! Steering clear of impact..."
         end
     end
 
@@ -10771,10 +10924,6 @@ function rafting.stepSteering(dt)
 
     -- Active Steering via Humanoid:MoveTo & Overboard Safety Check
     if root and char and humanoid and humanoid.Health > 0 then
-        if shouldEvadeJump or isActivelyDislodging then
-            humanoid.Jump = true
-        end
-
         local cowPos = root.Position
         local cowRel = deck.CFrame:PointToObjectSpace(cowPos)
         local distFromDeck = (cowPos - deck.Position).Magnitude
@@ -10819,11 +10968,15 @@ function rafting.stepSteering(dt)
 
             humanoid.WalkSpeed = 24
             humanoid.AutoRotate = true
-            local targetZOffset = if isActivelyDislodging then 7.0 else 0.0
+            local targetZOffset = rafting.targetDeckZ or 0.0
+            if isActivelyDislodging then targetZOffset = 7.0 end
             local targetWorldPos = deck.CFrame:PointToWorldSpace(Vector3.new(rafting.targetDeckX, 3.45, targetZOffset))
             humanoid:MoveTo(targetWorldPos)
         end
     end
+
+    rafting.lastStepOkAt = os.clock()
+    rafting.stallLogged = false
 
     -- Auto-Boost on straightaways: strictly conserve stamina & suppress in cove or near facades
     local rem = rafting.getRemote()
@@ -10842,7 +10995,9 @@ function rafting.stepSteering(dt)
         local energyPct = (energy / math.max(maxEnergy, 1)) * 100
         local isStraight = (math.abs(errorZ) <= 8 and not snap.LowEnergy and (snap.Speed or 0) > 5)
         local minEnergyThreshold = math.max(rafting.minBoostStamina, 40)
-        local shouldBoost = (energyPct >= minEnergyThreshold) and not snap.LowEnergy and isStraight
+        -- At zero energy the raft cannot be steered, so never spend what is needed to reach the sea
+        local hasSpare = energy > rafting.energyReserve(posX, snap) * 1.15 + 15
+        local shouldBoost = (energyPct >= minEnergyThreshold) and not snap.LowEnergy and isStraight and hasSpare
 
         if shouldBoost then
             if not rafting.isBoosting or os.clock() >= (rafting.nextBoostAt or 0) then
@@ -10865,23 +11020,14 @@ function rafting.stepSteering(dt)
         end
     end
 
-    -- Auto-Repair split beams
-    if rafting.autoRepair and (os.clock() - rafting.lastRepairTime >= 1.0) and snap.RepairStations then
-        for _, station in ipairs(snap.RepairStations) do
-            if station.Damaged then
-                rafting.lastRepairTime = os.clock()
-                local rem = rafting.getRemote()
-                if rem and station.Id then
-                    pcall(function() rem:FireServer("RepairRelease", station.Id) end)
-                end
-                break
-            end
-        end
-    end
+    -- Auto-Repair split beams on open water, never where steering has work to do
+    local repairAllowed = not (approachingCove or approachingFork or nearFacade or isWallStuck or isActivelyDislodging
+        or rafting.isEvadingRock or isInsideCoveInterior)
+    rafting.stepRepairUnderway(snap, deck, posX, repairAllowed)
 
     -- Emergency Health Return (Debounced & Single-Trigger)
     local hp = snap.Health or 100
-    if ((hp <= rafting.emergencyReturnHp and hp > 0) or snap.Adrift) and not rafting.isEndingVoyage then
+    if (rafting.isHealthLow(hp, snap.MaxHealth) or snap.Adrift) and not rafting.isEndingVoyage then
         if rafting.status == "Docked" or rafting.isDockedState or rafting.isLootingChest then
             if not rafting.emergencyDocked then
                 rafting.emergencyDocked = true
@@ -10920,11 +11066,13 @@ function rafting.stepSteeringAnimation(dt)
         if distFromDeck <= 16 then
             local cowRel = deck.CFrame:PointToObjectSpace(root.Position)
             local deltaX = targetDeckX - cowRel.X
-            if math.abs(deltaX) > 0.35 then
+            local deltaZ = (rafting.targetDeckZ or 0) - cowRel.Z
+            if math.abs(deltaZ) <= 1.5 then deltaZ = 0 end
+            if math.abs(deltaX) > 0.35 or deltaZ ~= 0 then
                 if humanoid.WalkSpeed < 24 then
                     humanoid.WalkSpeed = 24
                 end
-                local localMove = Vector3.new(deltaX, 0, 0)
+                local localMove = Vector3.new(deltaX, 0, deltaZ)
                 local worldMove = deck.CFrame:VectorToWorldSpace(localMove)
                 humanoid:Move(Vector3.new(worldMove.X, 0, worldMove.Z).Unit, false)
             else
@@ -11150,6 +11298,9 @@ function rafting.onSessionEnded(reason)
     rafting.status = "Idle"
     rafting.visitedSites = {}
     rafting.currentDockSite = nil
+    rafting.lastDepartSite = nil
+    rafting.heldRepair = nil
+    rafting.targetDeckZ = 0
     rafting.incomingRocks = {}
     rafting.isEvadingRock = false
     rafting.targetDeckX = 0
@@ -11297,13 +11448,24 @@ function rafting.initClientListener()
                 if payload and payload.Chests then
                     rafting.teamChests = payload.Chests
                     rafting.teamChestSite = payload.SiteId
+                    if payload.SiteId then
+                        rafting.chestSnapshots = rafting.chestSnapshots or {}
+                        rafting.chestSnapshots[payload.SiteId] = payload
+                    end
+                end
+            elseif eventName == "TeamChestReward" then
+                if payload and payload.Id then
+                    rafting.chestRewards = rafting.chestRewards or {}
+                    rafting.chestRewards[payload.Id] = true
                 end
             elseif eventName == "TeamChestClear" then
                 rafting.teamChests = nil
                 rafting.teamChestSite = nil
             elseif eventName == "RaftingNotice" or eventName == "WeatherEvent" or eventName == "RiverHazard" or eventName == "HazardWarning" then
                 if payload and typeof(payload.Text) == "string" then
-                    if string.find(payload.Text, "Hobgoblin") then
+                    if rafting.CHEST_RETRY_NOTICES[payload.Text] or rafting.CHEST_DONE_NOTICES[payload.Text] or rafting.CHEST_ABORT_NOTICES[payload.Text] then
+                        rafting.lastChestNotice = payload.Text
+                    elseif string.find(payload.Text, "Hobgoblin") then
                         rafting.statusText = "Hobgoblins spotted on cliffs! Evasion armed."
                     else
                         rafting.statusText = "Weather / river threat detected! Evasion armed."
@@ -11330,7 +11492,12 @@ function rafting.startSteeringLoop()
 
     rafting.heartbeatConn = RunService.Heartbeat:Connect(function(dt)
         if rafting.enabled then
-            pcall(rafting.stepSteering, dt)
+            local ok, err = pcall(rafting.stepSteering, dt)
+            -- An error here silently stops the steering, so record each distinct one
+            if not ok and tostring(err) ~= rafting.lastStepError then
+                rafting.lastStepError = tostring(err)
+                rafting.telemetryEvent("RaftStepError", rafting.lastStepError)
+            end
         end
     end)
     table.insert(rafting.connections, rafting.heartbeatConn)
@@ -11465,10 +11632,12 @@ RaftingTab:CreateToggle({
     Flag = "Toggle_Rafting_Enabled",
     Callback = function(Value)
         rafting.enabled = Value
+        rafting.telemetryEvent("RaftAutoPilot", { Enabled = Value, Status = rafting.status })
         if Value then
             rafting.cancelLooting = false
             rafting.isEndingVoyage = false
             rafting.isEndingVoyageInProgress = false
+            rafting.lastStepOkAt = nil
             rafting.initClientListener()
             rafting.startSteeringLoop()
             Window:Notify({ Title = "Rafting Auto-Pilot", Content = "Auto-Pilot enabled. Raft will steer along the selected route.", Duration = 3 })

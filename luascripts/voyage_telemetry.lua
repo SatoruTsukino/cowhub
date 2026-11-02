@@ -311,6 +311,8 @@ local function castRays(deck)
         if result then
             distances[index] = string.format("%.1f", result.Distance)
             names[index] = cleanText(result.Instance.Name)
+            T.rayHits = T.rayHits or {}
+            T.rayHits[result.Instance] = true
         else
             distances[index] = ""
             names[index] = ""
@@ -485,6 +487,32 @@ end
 local function partKey(part)
     local p = part.Position
     return string.format("%s_%.1f_%.1f_%.1f", part.Name, p.X, p.Y, p.Z)
+end
+
+-- Whatever the rays hit gets recorded, so the survey works even if the folder layout differs from the dump.
+-- It also finds that folder: no fixed path located it during the first logged voyages.
+local function surveyRayHits()
+    local hits = T.rayHits
+    T.rayHits = nil
+    for part in pairs(hits or {}) do
+        if part.Parent and part:IsA("BasePart") and part ~= workspace.Terrain then
+            local id = partKey(part)
+            if not T.survey.facades[id] then
+                T.survey.facades[id] = partRecord(part)
+                T.surveyDirty = true
+            end
+            if not T.fjord then
+                local ancestor = part.Parent
+                while ancestor and ancestor ~= workspace do
+                    if ancestor.Name == "FjordDelta" then
+                        T.fjord = ancestor
+                        break
+                    end
+                    ancestor = ancestor.Parent
+                end
+            end
+        end
+    end
 end
 
 local function surveyFacades(fjord)
@@ -957,12 +985,13 @@ task.spawn(function()
                     local cowWorld = workspace:FindFirstChild("CowWorld")
                     T.fjord = workspace:FindFirstChild("FjordDelta") or (cowWorld and cowWorld:FindFirstChild("FjordDelta"))
                 end
+                surveyRayHits()
                 local fjord = T.fjord
                 if fjord then
                     surveyFacades(fjord)
                     surveyCutaways(fjord)
-                    saveSurvey(false)
                 end
+                saveSurvey(false)
             end)
         end
     end
