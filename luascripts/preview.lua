@@ -7,6 +7,12 @@ end
 
 -- 0. Prevent Hub Duplication on Rejoin
 if _G.CowHubLoaded then
+    -- The rafting autopilot keeps its own connections. Without this, the old copy keeps steering after a re-run,
+    -- with no UI left to switch it off.
+    if _G.CowHubRaftingCleanup then
+        pcall(_G.CowHubRaftingCleanup)
+        _G.CowHubRaftingCleanup = nil
+    end
     pcall(function()
         if _G.CowHubRayfield and _G.CowHubRayfield.Destroy then
             _G.CowHubRayfield:Destroy()
@@ -11578,6 +11584,7 @@ function rafting.cleanup()
     rafting.deckPart = nil
     rafting.raftModel = nil
 end
+_G.CowHubRaftingCleanup = rafting.cleanup
 
 -- ==========================
 -- UI SETUP: Fjord Rafting Tab
