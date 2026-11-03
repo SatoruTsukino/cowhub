@@ -82,7 +82,8 @@ Primary CowHub script containing autofarm engines, mining, dodging, auction scan
 | [1788](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1788) | `chomp.serverInterval(node)` | Fastest server-accepted bite interval from live ChewCooldown / grazing multiplier (wheat & node cooldown aware). |
 | [1803](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1803) | `chomp.getInterval(node)` | Server interval + adaptive margin, floored at the manual delay when Auto Max is off. |
 | [1812](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1812) | `chomp.fire(nodeId, node, now)` | Single grass ChompRequest call site; fires `(nodeId, nil, serial)` when the interval has elapsed. |
-| [1871](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1871) | `chomp.isGrazing()` | True when character `CowAction == "Graze"`. |
+| [1877](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1877) | `chomp.findInput(now)` | Locates the game InputController instance via `getgc` (cached, 5 s rescan throttle). |
+| [1897](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1897) | `chomp.isGrazing()` | Returns `grazing, source`: controller `_grazing`, else `CowAction` attr, else recent non-hub GrazeResult. |
 | [1876](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1876) | `chomp.canEngage()` | Blocks E input during cutscenes, capture, stun, bot check, or focused textbox. |
 | [1885](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1885) | `chomp.sendKey(down)` | Sends E key down/up through VirtualInputManager (keypress fallback). |
 | [1897](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1897) | `chomp.engage(now)` | Natural mode: taps E (Toggle Graze setting) or re-holds E (hold setting). |

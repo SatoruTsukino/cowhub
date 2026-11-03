@@ -1,4 +1,4 @@
--- Cow Hub [6bced4a] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [3748056] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -54,7 +54,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [6bced4a]",
+    Name = "Cow Hub [3748056]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -426,7 +426,7 @@ local chomp = {
     logPath = nil,
     lastFlush = 0,
     stats = { sent = 0, accepted = 0, rejected = 0, cooldownRejects = 0 },
-    natural = { held = false, lastTap = 0, lastEngage = 0, notGrazingSince = nil, rearmAt = 0, lastGrazing = nil },
+    natural = { held = false, lastTap = 0, lastEngage = 0, notGrazingSince = nil, rearmAt = 0, lastGrazing = nil, lastGameResult = 0, input = nil, lastScan = -math.huge },
 }
 
 local dodge = {
@@ -1843,7 +1843,12 @@ do
         table.insert(scriptConnections, clientEvent.OnClientEvent:Connect(function(name, res)
             if name ~= "GrazeResult" or type(res) ~= "table" then return end
             local p = chomp.pending[res.RequestId]
-            if not p or p.NodeId ~= res.NodeId then return end
+            if not p then
+                -- Not ours: the game's own graze loop is biting (natural-mode evidence)
+                chomp.natural.lastGameResult = os.clock()
+                return
+            end
+            if p.NodeId ~= res.NodeId then return end
             chomp.pending[res.RequestId] = nil
             local now = os.clock()
             if res.Accepted == true then
@@ -1868,9 +1873,35 @@ do
 end
 
 -- ---------- Natural mode: drive the game's CowGraze action (E) ----------
+-- The game keeps graze state privately on its InputController instance (_grazing)
+function chomp.findInput(now)
+    local n = chomp.natural
+    local ctrl = n.input
+    if ctrl and rawget(ctrl, "_grazeSources") ~= nil then return ctrl end
+    n.input = nil
+    if type(getgc) ~= "function" or now - n.lastScan < 5 then return nil end
+    n.lastScan = now
+    local ok, objs = pcall(getgc, true)
+    if not ok or type(objs) ~= "table" then return nil end
+    for _, t in ipairs(objs) do
+        if type(t) == "table" and rawget(t, "_grazeSources") ~= nil and rawget(t, "_grazePressed") ~= nil then
+            n.input = t
+            chomp.log("natural", { act = "input_found" })
+            return t
+        end
+    end
+    return nil
+end
+
+-- Returns grazing, source ("ctrl" | "attr" | "result" | "none")
 function chomp.isGrazing()
+    local now = os.clock()
+    local ctrl = chomp.findInput(now)
+    if ctrl then return rawget(ctrl, "_grazing") == true, "ctrl" end
     local c = plr.Character
-    return c ~= nil and c:GetAttribute("CowAction") == "Graze"
+    if c and c:GetAttribute("CowAction") == "Graze" then return true, "attr" end
+    if now - chomp.natural.lastGameResult < 2.5 then return true, "result" end
+    return false, "none"
 end
 
 function chomp.canEngage()
@@ -1899,7 +1930,7 @@ function chomp.engage(now)
     if not chomp.canEngage() then return end
     if plr:GetAttribute("CowGrazeToggle") == true then
         -- Toggle setting: a press flips grazing, so tap sparingly
-        if now - n.lastTap < 3 then return end
+        if now - n.lastTap < (n.input and 3 or 6) then return end
         n.lastTap = now
         chomp.sendKey(true)
         task.delay(0.05, function() chomp.sendKey(false) end)
@@ -1945,10 +1976,10 @@ function chomp.tickNatural(now)
         chomp.release()
         return
     end
-    local grazing = chomp.isGrazing()
+    local grazing, src = chomp.isGrazing()
     if grazing ~= n.lastGrazing then
         n.lastGrazing = grazing
-        chomp.log("graze", { on = grazing })
+        chomp.log("graze", { on = grazing, src = src })
     end
     if grazing then
         n.notGrazingSince = nil
