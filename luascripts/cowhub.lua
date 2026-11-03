@@ -49,7 +49,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [f4c407f]",
+    Name = "Cow Hub [a35ebe3]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
