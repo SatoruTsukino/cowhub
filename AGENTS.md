@@ -17,9 +17,13 @@ On every modification/commit to `luascripts/cowhub.lua` and `luascripts/preview.
    ```bash
    git rev-parse --short HEAD
    ```
-2. Append commit hash to Window `Name` in `Rayfield:CreateWindow`:
+2. Automatically update header comments and Window `Name` in `Rayfield:CreateWindow`:
    ```lua
-   Name = "Cow Hub [<commit-hash>]", -- e.g. Name = "Cow Hub [f4c407f]"
+   Name = "Cow Hub [<commit-hash>]", -- e.g. Name = "Cow Hub [56ff3af]"
+   ```
+   Or run automated updater:
+   ```bash
+   ./scripts/update-hub-header.sh
    ```
 
 ## Workspace File Storage

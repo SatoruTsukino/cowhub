@@ -318,7 +318,8 @@ On every modification/commit to `luascripts/cowhub.lua` and `luascripts/preview.
 - Retrieve latest commit short hash: `git rev-parse --short HEAD`
 - Append commit hash to Window `Name` in `Rayfield:CreateWindow`:
   ```lua
-  Name = "Cow Hub [<commit-hash>]", -- e.g. Name = "Cow Hub [f4c407f]"
+  Name = "Cow Hub [<commit-hash>]", -- e.g. Name = "Cow Hub [56ff3af]"
+- Automatically updated on edits via `./scripts/update-hub-header.sh` and `.git/hooks/pre-commit`
   ```
 
 ### Workspace File Storage
