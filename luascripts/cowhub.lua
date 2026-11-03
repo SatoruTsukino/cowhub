@@ -1,4 +1,4 @@
--- Cow Hub [3db8288] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [a684c7c] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -49,7 +49,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [3db8288]",
+    Name = "Cow Hub [a684c7c]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -382,11 +382,7 @@ local farm = {
     mobAuraDelay = 0.1,
     lastMoveTime = 0,
     currentTargetNode = nil,
-    lastChompedNode = "",
-    chompCooldown = 0,
-    lastRaycastChompTime = 0,
-    grassChompDelay = 0.4, -- Server intended minimum is 0.4s (Config.Grass.MinimumChewCooldown); speeds < 0.4s fire faster than server intends (unsafe)
-    grassChompRepeatDelay = 0.6,
+    lastRaycastChompTime = 0, -- grass pacing lives in the chomp module (chomp.getInterval)
     chompOnlyWhileMoving = true,
     lastChompedMob = "",
     mobChompCooldown = 0,
@@ -1717,6 +1713,256 @@ pcall(function()
 end)
 
 -- ==========================
+-- CHOMP MODULE (grass bite pacing: Remote auto-max / Natural E-key graze)
+-- Interval mirrors InputController:_chewCooldown:
+--   clamp(ChewCooldown, 0.4, 3) [x0.5 Wheat] / clamp(CowGrazingSpeedMultiplier, 1, 1.2 * 1.03)
+-- ==========================
+local chomp = {
+    BASE = 0.7, MIN = 0.4, MAX_COOLDOWN = 3, MAX_MULT = 1.236,
+    BLOCK_ATTRS = { "CowMoofCutscene", "CowCaptured", "CowStunned", "CatapultActive", "CowBotCheckActive", "CowBotQuarantined" },
+    mode = "Remote",   -- "Remote" (script fires ChompRequest) | "Natural" (drives the game's own E graze)
+    autoMax = true,
+    manualDelay = 0.4,
+    margin = 0.03,     -- adaptive safety margin over the server limit, tuned by GrazeResult
+    serial = 0,
+    pending = {},
+    lastFire = 0,
+    lastNode = nil,
+    debug = false,
+    logBuf = {},
+    logPath = nil,
+    lastFlush = 0,
+    stats = { sent = 0, accepted = 0, rejected = 0, cooldownRejects = 0 },
+    natural = { held = false, lastTap = 0, lastEngage = 0, notGrazingSince = nil, rearmAt = 0, lastGrazing = nil },
+}
+
+function chomp.log(event, data)
+    if not chomp.debug then return end
+    data = data or {}
+    data.ev = event
+    data.t = math.floor(os.clock() * 1000) / 1000
+    local ok, line = pcall(HttpService.JSONEncode, HttpService, data)
+    if ok then table.insert(chomp.logBuf, line) end
+end
+
+function chomp.flushLog(force)
+    if #chomp.logBuf == 0 then return end
+    local now = os.clock()
+    if not force and now - chomp.lastFlush < 2 then return end
+    chomp.lastFlush = now
+    if not writefile then table.clear(chomp.logBuf) return end
+    if not chomp.logPath then
+        chomp.logPath = resolveCowHubPath(string.format("chomp_%d.jsonl", os.time()), "chomplogs")
+    end
+    local chunk = table.concat(chomp.logBuf, "\n") .. "\n"
+    table.clear(chomp.logBuf)
+    pcall(function()
+        local exists = isfile and isfile(chomp.logPath)
+        if exists and appendfile then
+            appendfile(chomp.logPath, chunk)
+        else
+            local prev = (exists and readfile) and readfile(chomp.logPath) or ""
+            writefile(chomp.logPath, prev .. chunk)
+        end
+    end)
+end
+
+-- Fastest interval the server accepts right now (buffs read live from player attributes)
+function chomp.serverInterval(node)
+    local base = math.clamp(tonumber(plr:GetAttribute("ChewCooldown")) or chomp.BASE, chomp.MIN, chomp.MAX_COOLDOWN)
+    local mult = math.clamp(tonumber(plr:GetAttribute("CowGrazingSpeedMultiplier")) or 1, 1, chomp.MAX_MULT)
+    if node and typeof(node) == "Instance" then
+        local biteCooldown = node:GetAttribute("CowBiteCooldown")
+        if type(biteCooldown) == "number" then
+            return math.max(biteCooldown, base) / mult
+        end
+        if node:GetAttribute("FoodKind") == "Wheat" then
+            base = base * 0.5
+        end
+    end
+    return base / mult
+end
+
+function chomp.getInterval(node)
+    local interval = chomp.serverInterval(node) + chomp.margin
+    if not chomp.autoMax then
+        interval = math.max(interval, chomp.manualDelay)
+    end
+    return interval
+end
+
+-- Single grass ChompRequest call site; wire shape matches InputController (nodeId, nil, serial)
+function chomp.fire(nodeId, node, now)
+    if farm.botCheckActive or chomp.mode ~= "Remote" then return false end
+    local interval = chomp.getInterval(node)
+    if now - chomp.lastFire < interval then return false end
+    chomp.serial += 1
+    local serial = chomp.serial
+    chomp.lastFire = now
+    chomp.lastNode = nodeId
+    chomp.pending[serial] = { NodeId = nodeId, SentAt = now }
+    if serial % 32 == 0 then
+        for k, p in pairs(chomp.pending) do
+            if now - p.SentAt > 15 then chomp.pending[k] = nil end
+        end
+    end
+    chomp.stats.sent += 1
+    spiderLogger.isInternalFire = true
+    pcall(function() chompEvent:FireServer(nodeId, nil, serial) end)
+    spiderLogger.isInternalFire = false
+    if chomp.debug then
+        chomp.log("send", {
+            id = serial, node = tostring(nodeId), interval = interval, margin = chomp.margin,
+            chewCooldown = plr:GetAttribute("ChewCooldown"), mult = plr:GetAttribute("CowGrazingSpeedMultiplier"),
+        })
+    end
+    return true
+end
+
+-- GrazeResult feedback: tighten margin on accept, back off on ChewCooldown rejects
+do
+    local clientEvent = cowRemotes:FindFirstChild("ClientEvent")
+    if clientEvent and clientEvent:IsA("RemoteEvent") then
+        table.insert(scriptConnections, clientEvent.OnClientEvent:Connect(function(name, res)
+            if name ~= "GrazeResult" or type(res) ~= "table" then return end
+            local p = chomp.pending[res.RequestId]
+            if not p or p.NodeId ~= res.NodeId then return end
+            chomp.pending[res.RequestId] = nil
+            local now = os.clock()
+            if res.Accepted == true then
+                chomp.stats.accepted += 1
+                chomp.margin = math.max(0.01, chomp.margin - 0.002)
+            else
+                chomp.stats.rejected += 1
+                if res.Reason == "ChewCooldown" then
+                    chomp.stats.cooldownRejects += 1
+                    chomp.margin = math.min(0.15, chomp.margin + 0.02)
+                    chomp.lastFire = now
+                end
+            end
+            if chomp.debug then
+                chomp.log("result", {
+                    id = res.RequestId, ok = res.Accepted == true, reason = res.Reason,
+                    rttMs = math.floor((now - p.SentAt) * 1000), margin = chomp.margin,
+                })
+            end
+        end))
+    end
+end
+
+-- ---------- Natural mode: drive the game's CowGraze action (E) ----------
+function chomp.isGrazing()
+    local c = plr.Character
+    return c ~= nil and c:GetAttribute("CowAction") == "Graze"
+end
+
+function chomp.canEngage()
+    if farm.botCheckActive or plr:GetAttribute("CowClientReady") ~= true then return false end
+    for _, attr in ipairs(chomp.BLOCK_ATTRS) do
+        if plr:GetAttribute(attr) == true then return false end
+    end
+    local ok, box = pcall(function() return game:GetService("UserInputService"):GetFocusedTextBox() end)
+    return not (ok and box)
+end
+
+function chomp.sendKey(down)
+    pcall(function()
+        if successVIM and VirtualInput then
+            VirtualInput:SendKeyEvent(down, Enum.KeyCode.E, false, game)
+        elseif down and keypress then
+            keypress(0x45)
+        elseif not down and keyrelease then
+            keyrelease(0x45)
+        end
+    end)
+end
+
+function chomp.engage(now)
+    local n = chomp.natural
+    if not chomp.canEngage() then return end
+    if plr:GetAttribute("CowGrazeToggle") == true then
+        -- Toggle setting: a press flips grazing, so tap sparingly
+        if now - n.lastTap < 3 then return end
+        n.lastTap = now
+        chomp.sendKey(true)
+        task.delay(0.05, function() chomp.sendKey(false) end)
+        chomp.log("natural", { act = "tap", toggleSetting = true })
+    else
+        -- Hold setting: game latches _grazePressed, so release before re-press
+        if n.held then
+            chomp.sendKey(false)
+            task.delay(0.05, function()
+                if n.held then chomp.sendKey(true) end
+            end)
+        else
+            chomp.sendKey(true)
+        end
+        n.held = true
+        chomp.log("natural", { act = "hold", toggleSetting = false })
+    end
+end
+
+function chomp.release()
+    local n = chomp.natural
+    if n.held then
+        n.held = false
+        chomp.sendKey(false)
+        chomp.log("natural", { act = "release" })
+    end
+    n.notGrazingSince = nil
+end
+
+-- Full stop (mode switch / toggle off): also untoggle grazing under the Toggle Graze setting
+function chomp.stopNatural()
+    chomp.release()
+    if plr:GetAttribute("CowGrazeToggle") == true and chomp.isGrazing() then
+        chomp.sendKey(true)
+        task.delay(0.05, function() chomp.sendKey(false) end)
+        chomp.log("natural", { act = "untoggle" })
+    end
+end
+
+function chomp.tickNatural(now)
+    local n = chomp.natural
+    if farm.botCheckActive then
+        chomp.release()
+        return
+    end
+    local grazing = chomp.isGrazing()
+    if grazing ~= n.lastGrazing then
+        n.lastGrazing = grazing
+        chomp.log("graze", { on = grazing })
+    end
+    if grazing then
+        n.notGrazingSince = nil
+        return
+    end
+    n.notGrazingSince = n.notGrazingSince or now
+    local toggleSetting = plr:GetAttribute("CowGrazeToggle") == true
+    local idleNeeded = toggleSetting and 1.5 or 0.4
+    local retry = (n.held and not toggleSetting) and 3 or 0.75
+    local rearmDue = n.rearmAt > 0 and now >= n.rearmAt
+    if (rearmDue or now - n.notGrazingSince >= idleNeeded) and now - n.lastEngage >= retry then
+        n.rearmAt = 0
+        n.lastEngage = now
+        chomp.engage(now)
+    end
+end
+
+-- Mob aura bites interrupt grazing and share the server chew cooldown
+function chomp.onMobAttack(now)
+    chomp.lastFire = now
+    local n = chomp.natural
+    n.rearmAt = now + 0.25
+    n.lastEngage = 0
+    n.lastTap = 0
+    n.notGrazingSince = nil
+    -- pressE() (cave mobs) sends an E release, so a held graze key is no longer held
+    n.held = false
+    chomp.log("mob", {})
+end
+
+-- ==========================
 -- BOT CHECK PAUSE (game human-check active -> halt all farm actions)
 -- ==========================
 do
@@ -1724,6 +1970,8 @@ do
         local active = plr:GetAttribute("CowBotCheckActive") == true or plr:GetAttribute("CowBotQuarantined") == true
         if active == farm.botCheckActive then return end
         farm.botCheckActive = active
+        if active then chomp.release() end
+        chomp.log("botcheck", { active = active })
         safeNotify({
             Title = active and "Bot Check Active" or "Bot Check Cleared",
             Content = active and "Autofarm paused until the human check is completed." or "Autofarm resumed.",
@@ -4794,7 +5042,7 @@ function farm.processMovement(dt, now, rootPos)
             local tPos = cache.getNodePosition(farm.currentTargetNode)
             local distSq = get2DDistanceSq(rootPos, tPos)
             if distSq < 16 then
-                if farm.autoChomp and (now - farm.lastRaycastChompTime >= (farm.grassChompDelay or 0.4)) then
+                if farm.autoChomp and (now - farm.lastRaycastChompTime >= chomp.getInterval()) then
                     farm.processGrassChomp(now, rootPos)
                 end
                 if not farm.currentTargetNode or (farm.currentNodeStartTime > 0 and (now - farm.currentNodeStartTime > 2.0)) then
@@ -5049,6 +5297,7 @@ function farm.processMobAura(now, rootPos)
 
                 farm.lastChompedMob = mob
                 farm.mobChompCooldown = now
+                chomp.onMobAttack(now)
                 return true
             else
                 return true
@@ -5067,6 +5316,7 @@ function farm.processMobAura(now, rootPos)
                 chompEvent:FireServer(payloadName)
                 farm.lastChompedMob = payloadName
                 farm.mobChompCooldown = now
+                chomp.onMobAttack(now)
                 return true
             else
                 return true
@@ -5077,7 +5327,8 @@ function farm.processMobAura(now, rootPos)
 end
 
 function farm.processGrassChomp(now, rootPos)
-    local chompDelay = farm.grassChompDelay or 0.4
+    if chomp.mode ~= "Remote" or farm.botCheckActive then return end
+    local chompDelay = chomp.getInterval()
     if (now - farm.lastRaycastChompTime >= chompDelay) then
         if farm.chompOnlyWhileMoving then
             local isMoving = (humanoid and humanoid.MoveDirection.Magnitude > 0.05)
@@ -5090,7 +5341,7 @@ function farm.processGrassChomp(now, rootPos)
 
         local targetNodeId = nil
         local targetInstance = nil
-        local repeatDelay = farm.grassChompRepeatDelay or (chompDelay + 0.1)
+        local repeatDelay = chompDelay + 0.2
 
         local function tryCandidate(inst, id)
             if not id and inst then
@@ -5099,7 +5350,7 @@ function farm.processGrassChomp(now, rootPos)
             if not id then return false end
 
             -- If candidate is the last chomped node, only accept if repeatDelay has elapsed
-            if id == farm.lastChompedNode and (now - farm.chompCooldown < repeatDelay) then
+            if id == chomp.lastNode and (now - chomp.lastFire < repeatDelay) then
                 return false
             end
 
@@ -5162,7 +5413,7 @@ function farm.processGrassChomp(now, rootPos)
                         local dSq = get2DDistanceSq(rootPos, nodePos)
                         if dSq < bestDistSq then
                             local id = cache.getNodeID(node)
-                            if id and (id ~= farm.lastChompedNode or (now - farm.chompCooldown >= repeatDelay)) then
+                            if id and (id ~= chomp.lastNode or (now - chomp.lastFire >= repeatDelay)) then
                                 bestDistSq = dSq
                                 bestNode = node
                             end
@@ -5175,13 +5426,10 @@ function farm.processGrassChomp(now, rootPos)
             end
         end
 
-        -- 5. Fire Chomp Request
+        -- 5. Fire Chomp Request (pacing + wire shape owned by chomp.fire)
         if targetNodeId then
-            if (now - farm.chompCooldown >= chompDelay) and (targetNodeId ~= farm.lastChompedNode or (now - farm.chompCooldown >= repeatDelay)) then
-                chompEvent:FireServer(targetNodeId)
-                farm.lastChompedNode = targetNodeId
-                farm.chompCooldown = now
-
+            local resolvedNode = typeof(targetInstance) == "Instance" and targetInstance or nil
+            if chomp.fire(targetNodeId, resolvedNode, now) then
                 if farm.currentTargetNode then
                     local currId = cache.getNodeID(farm.currentTargetNode)
                     if farm.currentTargetNode == targetInstance
@@ -5397,6 +5645,7 @@ function updateHeartbeatConnection()
                 local now = os.clock()
                 local rootPos = getRootPos(root)
                 if not rootPos then return end
+                if chomp.debug then chomp.flushLog(false) end
                 if farm.botCheckActive then return end
 
                 -- Targeted background caches refresh (only when mobs need caching)
@@ -5435,7 +5684,12 @@ function updateHeartbeatConnection()
                 end
 
                 -- 3. Raycast Grass Chomp Logic (Yields to Mobs & Dodging)
-                if farm.autoChomp and not (manatite and manatite.auto) and not (mithril and mithril.auto) and not prioritizedMobThisFrame and not dodge.isUnderground and not dodge.isDodging then
+                if farm.autoChomp and chomp.mode == "Natural" then
+                    -- Natural: the game's InputController targets and paces; we keep E engaged
+                    if not (manatite and manatite.auto) and not (mithril and mithril.auto) and not dodge.isUnderground then
+                        chomp.tickNatural(now)
+                    end
+                elseif farm.autoChomp and not (manatite and manatite.auto) and not (mithril and mithril.auto) and not prioritizedMobThisFrame and not dodge.isUnderground and not dodge.isDodging then
                     farm.processGrassChomp(now, rootPos)
                 end
 
