@@ -960,7 +960,53 @@ local httpRequest = (request or http_request or (http and http.request) or (syn 
 -- ==========================
 -- FILE SAVING SYSTEM
 -- ==========================
-local configFileName = "CowScannerWebhook.txt"
+local COWHUB_DIR = "cowhub"
+local resolvedPaths = {}
+
+local function resolveCowHubPath(fileName)
+    if resolvedPaths[fileName] then
+        return resolvedPaths[fileName]
+    end
+
+    local hasFolder = false
+    if makefolder then
+        if isfolder then
+            if not isfolder(COWHUB_DIR) then
+                pcall(makefolder, COWHUB_DIR)
+            end
+            hasFolder = isfolder(COWHUB_DIR)
+        else
+            pcall(makefolder, COWHUB_DIR)
+            hasFolder = true
+        end
+    elseif isfolder then
+        hasFolder = isfolder(COWHUB_DIR)
+    end
+
+    if not hasFolder then
+        resolvedPaths[fileName] = fileName
+        return fileName
+    end
+
+    local folderPath = COWHUB_DIR .. "/" .. fileName
+
+    -- Migrate legacy root file into cowhub directory if present
+    if isfile and isfile(fileName) and (not isfile(folderPath)) then
+        if readfile and writefile then
+            local ok, content = pcall(readfile, fileName)
+            if ok and content then
+                pcall(writefile, folderPath, content)
+                local deleteFn = delfile or deletefile
+                if deleteFn then pcall(deleteFn, fileName) end
+            end
+        end
+    end
+
+    resolvedPaths[fileName] = folderPath
+    return folderPath
+end
+
+local configFileName = resolveCowHubPath("CowScannerWebhook.txt")
 
 local function loadWebhook()
     if isfile and readfile and isfile(configFileName) then
@@ -987,7 +1033,7 @@ local afkRelog = {
     sessionStartTime = os.time(),
     targetRejoinTime = os.time() + (6 * 3600),
     isRejoining = false,
-    fileName = "CowHub_SessionPersistence.json",
+    fileName = resolveCowHubPath("CowHub_SessionPersistence.json"),
     timerThread = nil,
     statusCard = nil,
     lastLoggedPos = nil,
@@ -1131,13 +1177,15 @@ function afkRelog.checkAndResumeState()
     -- Check if state file was written recently (within 30 minutes)
     local age = os.time() - (data.Timestamp or 0)
     if age > 1800 or age < 0 then
-        if delfile then pcall(function() delfile(afkRelog.fileName) end) end
+        local deleteFn = delfile or deletefile
+        if deleteFn then pcall(function() deleteFn(afkRelog.fileName) end) end
         return
     end
 
     -- Clean up persistence file so it only triggers once
-    if delfile then
-        pcall(function() delfile(afkRelog.fileName) end)
+    local deleteFn = delfile or deletefile
+    if deleteFn then
+        pcall(function() deleteFn(afkRelog.fileName) end)
     end
 
     afkRelog.resumedSession = true
@@ -1333,7 +1381,7 @@ end
 -- ==========================
 -- SPIDER IDENTIFIER LOGGER & CACHE (JSON Persistence in Workspace)
 -- ==========================
-local SPIDER_JSON_FILE = "SpiderIdentifiers.json"
+local SPIDER_JSON_FILE = resolveCowHubPath("SpiderIdentifiers.json")
 
 local spiderLogger = {
     fileName = SPIDER_JSON_FILE,
@@ -10331,7 +10379,7 @@ end
 function rafting.telemetryStart(sessionId)
     local tel = rafting.telemetry
     if not writefile then return end
-    tel.fileName = string.format("cowhub_raft_%d_%s.log", os.time(), string.sub(tostring(sessionId), 1, 8))
+    tel.fileName = resolveCowHubPath(string.format("cowhub_raft_%d_%s.log", os.time(), string.sub(tostring(sessionId), 1, 8)))
     tel.pending = {}
     tel.allLines = {}
     tel.lastObserved = {}
@@ -10463,7 +10511,7 @@ end
 function rafting.surveyFacades()
     local tel = rafting.telemetry
     if not writefile then return end
-    local fileName = "cowhub_raft_facades.json"
+    local fileName = resolveCowHubPath("cowhub_raft_facades.json")
     if not tel.facades then
         tel.facades = {}
         if isfile and readfile and isfile(fileName) then
@@ -12250,8 +12298,9 @@ SettingsTab:CreateButton({
 SettingsTab:CreateButton({
     Name = "Clear Saved Persistence File",
     Callback = function()
-        if delfile then
-            pcall(function() delfile(afkRelog.fileName) end)
+        local deleteFn = delfile or deletefile
+        if deleteFn then
+            pcall(function() deleteFn(afkRelog.fileName) end)
         end
         Window:Notify({ Title = "Cleared", Content = "Saved persistence file removed.", Duration = 2 })
     end,

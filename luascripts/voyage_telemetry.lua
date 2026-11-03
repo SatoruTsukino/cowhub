@@ -25,7 +25,7 @@ local CONFIG = {
     RAY_RANGE = 120,
     HOOK_OUTGOING = true,     -- log RaftingRequest / chest remotes; needs hookmetamethod
     SHOW_STATUS_LABEL = true,
-    FOLDER = "cowhub_telemetry",
+    FOLDER = "cowhub",
 }
 
 if _G.CowVoyageTelemetry and _G.CowVoyageTelemetry.Stop then
@@ -466,12 +466,18 @@ end
 local function loadSurvey()
     if T.survey then return end
     T.survey = { facades = {}, cutawayWalls = {}, cutawayBounds = {} }
-    if isfile and readfile and isfile(surveyPath()) then
-        local ok, decoded = pcall(function() return HttpService:JSONDecode(readfile(surveyPath())) end)
-        if ok and type(decoded) == "table" then
-            T.survey.facades = decoded.facades or T.survey.facades
-            T.survey.cutawayWalls = decoded.cutawayWalls or T.survey.cutawayWalls
-            T.survey.cutawayBounds = decoded.cutawayBounds or T.survey.cutawayBounds
+    local p = surveyPath()
+    if isfile and readfile then
+        if not isfile(p) and isfile("cowhub_telemetry/world_survey.json") then
+            p = "cowhub_telemetry/world_survey.json"
+        end
+        if isfile(p) then
+            local ok, decoded = pcall(function() return HttpService:JSONDecode(readfile(p)) end)
+            if ok and type(decoded) == "table" then
+                T.survey.facades = decoded.facades or T.survey.facades
+                T.survey.cutawayWalls = decoded.cutawayWalls or T.survey.cutawayWalls
+                T.survey.cutawayBounds = decoded.cutawayBounds or T.survey.cutawayBounds
+            end
         end
     end
 end
