@@ -311,5 +311,21 @@ Before "Done"    → Empirical proof captured
 
 ---
 
+## CowHub Project Rules
+
+### Script Hub Title Versioning
+On every modification/commit to `luascripts/cowhub.lua` and `luascripts/preview.lua`:
+- Retrieve latest commit short hash: `git rev-parse --short HEAD`
+- Append commit hash to Window `Name` in `Rayfield:CreateWindow`:
+  ```lua
+  Name = "Cow Hub [<commit-hash>]", -- e.g. Name = "Cow Hub [f4c407f]"
+  ```
+
+### Workspace File Storage
+- All files generated or persisted by CowHub scripts must reside in dedicated `cowhub/` directory within executor workspace.
+- Never write loose files to root workspace directory.
+
+---
+
 *GSD Methodology — Model-Agnostic Edition*
 *Reference implementation for multi-LLM environments*

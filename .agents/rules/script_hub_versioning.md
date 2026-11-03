@@ -8,8 +8,8 @@ Every modification or commit touching `luascripts/cowhub.lua` and `luascripts/pr
    ```
 
 2. **Window title format:**
-   Update Rayfield `CreateWindow` `Name` argument:
+   Always append latest commit short hash to Window `Name` in Rayfield `CreateWindow`:
    ```lua
-   Name = "Cow Hub [<commit-hash>]",
+   Name = "Cow Hub [<commit-hash>]", -- e.g. Name = "Cow Hub [f4c407f]"
    ```
 
