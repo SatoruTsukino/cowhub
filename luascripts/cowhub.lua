@@ -7715,53 +7715,68 @@ function rafting.fireRemoteSafely(action, arg, debounceSec)
     return success
 end
 
-function rafting.getRaftDeck()
-    if rafting.deckPart and rafting.deckPart.Parent and rafting.raftModel and rafting.raftModel.Parent then
-        return rafting.deckPart, rafting.raftModel
+-- Session a deck belongs to: its RaftSessionId attribute, else the TeamRaft_<id> model name
+function rafting.deckSessionOf(deck, model)
+    local id = deck:GetAttribute("RaftSessionId")
+    if id == nil and model and model.Name:sub(1, 9) == "TeamRaft_" then
+        id = model.Name:sub(10)
     end
+    return id and tostring(id) or nil
+end
+
+-- Other crews' rafts share the folder, so a deck is only trusted (and cached) once it is known to be ours
+function rafting.getRaftDeck()
+    local sessionId = rafting.sessionId or (rafting.currentSnapshot and rafting.currentSnapshot.Id)
+    sessionId = sessionId and tostring(sessionId) or nil
+    local cached, cachedModel = rafting.deckPart, rafting.raftModel
+    if cached and cached.Parent and cachedModel and cachedModel.Parent then
+        local owner = rafting.deckSessionOf(cached, cachedModel)
+        if not (sessionId and owner and owner ~= sessionId) then
+            return cached, cachedModel
+        end
+    end
+    rafting.deckPart = nil
+    rafting.raftModel = nil
+
+    local candidates = {}
     if char then
         local cowDeck = char:FindFirstChild("CowRaftingDeck")
         if cowDeck and cowDeck:IsA("ObjectValue") and cowDeck.Value and cowDeck.Value:IsA("BasePart") then
-            rafting.deckPart = cowDeck.Value
-            rafting.raftModel = cowDeck.Value.Parent
-            return cowDeck.Value, cowDeck.Value.Parent
+            table.insert(candidates, cowDeck.Value)
         end
     end
-    local sessionId = rafting.sessionId or (rafting.currentSnapshot and rafting.currentSnapshot.Id)
     local fjordFolder = workspace:FindFirstChild("FjordRafting") or (workspace:FindFirstChild("CowWorld") and workspace.CowWorld:FindFirstChild("FjordRafting"))
-    if fjordFolder then
+    local folders = fjordFolder and { fjordFolder, workspace } or { workspace }
+    for _, folder in ipairs(folders) do
         if sessionId then
-            local raftName = "TeamRaft_" .. tostring(sessionId)
-            local model = fjordFolder:FindFirstChild(raftName) or workspace:FindFirstChild(raftName)
-            if model then
-                local deck = model:FindFirstChild("Deck")
-                if deck and deck:IsA("BasePart") then
-                    rafting.raftModel = model
-                    rafting.deckPart = deck
-                    return deck, model
-                end
-            end
+            local model = folder:FindFirstChild("TeamRaft_" .. sessionId)
+            local deck = model and model:FindFirstChild("Deck")
+            if deck then table.insert(candidates, deck) end
         end
-        for _, child in ipairs(fjordFolder:GetChildren()) do
-            if child:IsA("Model") and (child.Name:sub(1, 9) == "TeamRaft_" or child:FindFirstChild("Deck")) then
+        for _, child in ipairs(folder:GetChildren()) do
+            if child:IsA("Model") and (child.Name:sub(1, 9) == "TeamRaft_" or folder == fjordFolder) then
                 local deck = child:FindFirstChild("Deck")
-                if deck and deck:IsA("BasePart") then
-                    rafting.raftModel = child
-                    rafting.deckPart = deck
-                    return deck, child
-                end
+                if deck then table.insert(candidates, deck) end
             end
         end
     end
-    for _, child in ipairs(workspace:GetChildren()) do
-        if child:IsA("Model") and child.Name:sub(1, 9) == "TeamRaft_" then
-            local deck = child:FindFirstChild("Deck")
-            if deck and deck:IsA("BasePart") then
-                rafting.raftModel = child
+
+    local fallback
+    for _, deck in ipairs(candidates) do
+        if deck:IsA("BasePart") and deck.Parent then
+            local owner = rafting.deckSessionOf(deck, deck.Parent)
+            if sessionId and owner == sessionId then
                 rafting.deckPart = deck
-                return deck, child
+                rafting.raftModel = deck.Parent
+                return deck, deck.Parent
+            elseif not fallback and (not sessionId or not owner) then
+                fallback = deck
             end
         end
+    end
+    -- Unverified match: usable this call, never cached, so the next call re-checks once the session id arrives
+    if fallback then
+        return fallback, fallback.Parent
     end
     return nil, nil
 end
