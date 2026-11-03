@@ -1,5 +1,11 @@
 # Project Rules
 
+## GSD Planning Outlines
+Always follow GSD planning outlines before implementing features or non-trivial edits:
+1. **Protocol**: Follow `SPEC` → `PLAN` → `EXECUTE` → `VERIFY` → `COMMIT`. Never write code without an active, approved plan.
+2. **Structure**: Follow [`.gsd/templates/PLAN.md`](file:///Users/jsph/cowhub/.gsd/templates/PLAN.md) outline strictly (`<task type="auto|checkpoint">` with `<name>`, `<files>`, `<action>`, `<verify>`, `<done>`).
+3. **Goal-Backward**: Define exact verification proof and measurable done criteria before execution.
+
 ## Luau Post-Edit Verification
 On every code creation/modification:
 1. Compile check (zero errors):

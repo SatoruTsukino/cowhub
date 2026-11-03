@@ -313,6 +313,11 @@ Before "Done"    → Empirical proof captured
 
 ## CowHub Project Rules
 
+### GSD Planning Outlines
+- Always follow GSD planning outlines (`SPEC → PLAN → EXECUTE → VERIFY → COMMIT`) before implementation.
+- All plans must use `.gsd/templates/PLAN.md` format with `<task>` tags containing `<name>`, `<files>`, `<action>`, `<verify>`, and `<done>`.
+- Enforce Planning Lock: no implementation code until plans and criteria are defined.
+
 ### Script Hub Title Versioning
 On every modification/commit to `luascripts/cowhub.lua` and `luascripts/preview.lua`:
 - Retrieve latest commit short hash: `git rev-parse --short HEAD`
