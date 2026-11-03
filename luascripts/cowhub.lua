@@ -1,4 +1,4 @@
--- Cow Hub [ce83541] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [33c781d] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -49,7 +49,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [ce83541]",
+    Name = "Cow Hub [33c781d]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -10945,7 +10945,17 @@ function rafting.stepSteering(dt)
     -- The raft's heading follows its channel, so steering only has to correct movement across the channel.
     -- Remove the channel's own slope over the lookahead (otherwise a diagonal reads as a constant error)
     -- and measure what is left across the channel axis.
-    local axisX, axisZ = rafting.channelFrame(posX, posZ)
+    -- The axis is the raft's own heading: the server sets it to the channel it is steering along (logged -24.2°
+    -- on the 0.45 diagonals, 0° on straights). Guessing the channel from position picked an overlapping -52°
+    -- connector at the Reach 3 fork, read a 31-stud phantom error and steered into the wrong branch.
+    local look = frame.LookVector
+    local lookLen = math.sqrt(look.X * look.X + look.Z * look.Z)
+    local axisX, axisZ
+    if lookLen > 0.1 and look.X / lookLen > 0.3 then
+        axisX, axisZ = look.X / lookLen, look.Z / lookLen
+    else
+        axisX, axisZ = rafting.channelFrame(posX, posZ)
+    end
     local errorZ = (targetZ - (axisZ / axisX) * lookAhead - posZ) * axisX
     rafting.errorZ = errorZ
 

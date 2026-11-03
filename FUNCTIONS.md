@@ -273,18 +273,18 @@ Primary CowHub script containing autofarm engines, mining, dodging, auction scan
 | [10597](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10597) | `rafting.handleSnapshot(payload)` | Processes server voyage state snapshot (health, distance, speed). |
 | [10870](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10870) | `rafting.handleBoarding(payload)` | Handles character seating and camera transition upon boarding. |
 | [10881](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10881) | `rafting.stepSteering(dt)` | Main PID steering tick calculating rudder corrections. |
-| [11333](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11333) | `rafting.stepSteeringAnimation(dt)` | Animates character steering wheel / oar interaction. |
-| [11376](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11376) | `rafting.getLaunchTarget()` | Calculates launch coordinates from dock into main river current. |
-| [11393](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11393) | `rafting.startVoyage()` | Initiates full autonomous rafting voyage sequence. |
-| [11569](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11569) | `rafting.onSessionEnded(reason)` | Handles voyage completion or premature termination. |
-| [11644](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11644) | `rafting.scheduleLoopRestart()` | Single auto-loop restart: waits for the server to close the session and for a live character, starts the next voyage, retries if no session appears. |
-| [11676](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11676) | `rafting.endVoyage()` | Cleans up rafting session and resets character state. |
-| [11696](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11696) | `rafting.teleportToRaftYard()` | Teleports player character to Fjord rafting entrance. |
-| [11705](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11705) | `rafting.teleportToDeck()` | Teleports character onto raft deck safely. |
-| [11715](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11715) | `rafting.initClientListener()` | Hooks server network events for rafting snapshots. |
-| [11776](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11776) | `rafting.startSteeringLoop()` | Starts background steering task loop. |
-| [11808](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11808) | `rafting.stopSteeringLoop()` | Stops steering task loop. |
-| [11843](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11843) | `rafting.cleanup()` | Full teardown of rafting state, timers, and connections. |
+| [11343](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11343) | `rafting.stepSteeringAnimation(dt)` | Animates character steering wheel / oar interaction. |
+| [11386](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11386) | `rafting.getLaunchTarget()` | Calculates launch coordinates from dock into main river current. |
+| [11403](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11403) | `rafting.startVoyage()` | Initiates full autonomous rafting voyage sequence. |
+| [11579](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11579) | `rafting.onSessionEnded(reason)` | Handles voyage completion or premature termination. |
+| [11654](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11654) | `rafting.scheduleLoopRestart()` | Single auto-loop restart: waits for the server to close the session and for a live character, starts the next voyage, retries if no session appears. |
+| [11686](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11686) | `rafting.endVoyage()` | Cleans up rafting session and resets character state. |
+| [11706](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11706) | `rafting.teleportToRaftYard()` | Teleports player character to Fjord rafting entrance. |
+| [11715](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11715) | `rafting.teleportToDeck()` | Teleports character onto raft deck safely. |
+| [11725](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11725) | `rafting.initClientListener()` | Hooks server network events for rafting snapshots. |
+| [11786](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11786) | `rafting.startSteeringLoop()` | Starts background steering task loop. |
+| [11818](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11818) | `rafting.stopSteeringLoop()` | Stops steering task loop. |
+| [11853](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11853) | `rafting.cleanup()` | Full teardown of rafting state, timers, and connections. |
 
 ---
 
