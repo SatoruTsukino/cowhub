@@ -6,8 +6,8 @@
     previous instance. To stop it: _G.CowVoyageTelemetry.Stop()
 
     Output, in the executor workspace:
-      cowhub_telemetry/voyage_<time>_<id>.log   one file per voyage
-      cowhub_telemetry/world_survey.json        wall geometry, merged across voyages
+      cowhub/voyagelogs/voyage_<time>_<id>.log   one file per voyage
+      cowhub/voyagelogs/world_survey.json        wall geometry, merged across voyages
 
     Voyage log lines:
       H,<column names>     column names for S lines
@@ -25,7 +25,7 @@ local CONFIG = {
     RAY_RANGE = 120,
     HOOK_OUTGOING = true,     -- log RaftingRequest / chest remotes; needs hookmetamethod
     SHOW_STATUS_LABEL = true,
-    FOLDER = "cowhub",
+    FOLDER = "cowhub/voyagelogs",
 }
 
 if _G.CowVoyageTelemetry and _G.CowVoyageTelemetry.Stop then
@@ -455,7 +455,20 @@ end
 -- World survey: wall geometry as streaming loads it
 ----------------------------------------------------------------------------------------------------
 
+local function ensureFolder()
+    if makefolder then
+        if not (isfolder and isfolder("cowhub")) then
+            pcall(makefolder, "cowhub")
+        end
+        if not (isfolder and isfolder(CONFIG.FOLDER)) then
+            pcall(makefolder, CONFIG.FOLDER)
+        end
+    end
+    T.useFolder = isfolder ~= nil and isfolder(CONFIG.FOLDER)
+end
+
 local function outputPath(name)
+    ensureFolder()
     return (T.useFolder and (CONFIG.FOLDER .. "/") or "") .. name
 end
 
@@ -468,8 +481,12 @@ local function loadSurvey()
     T.survey = { facades = {}, cutawayWalls = {}, cutawayBounds = {} }
     local p = surveyPath()
     if isfile and readfile then
-        if not isfile(p) and isfile("cowhub_telemetry/world_survey.json") then
-            p = "cowhub_telemetry/world_survey.json"
+        if not isfile(p) then
+            if isfile("cowhub/world_survey.json") then
+                p = "cowhub/world_survey.json"
+            elseif isfile("cowhub_telemetry/world_survey.json") then
+                p = "cowhub_telemetry/world_survey.json"
+            end
         end
         if isfile(p) then
             local ok, decoded = pcall(function() return HttpService:JSONDecode(readfile(p)) end)
@@ -614,10 +631,7 @@ local function startSession(id)
     T.lastCross, T.lastChannel = nil, nil
     T.lastChestKey = nil
 
-    if makefolder and not (isfolder and isfolder(CONFIG.FOLDER)) then
-        pcall(makefolder, CONFIG.FOLDER)
-    end
-    T.useFolder = isfolder ~= nil and isfolder(CONFIG.FOLDER)
+    ensureFolder()
     T.fileName = outputPath(string.format("voyage_%d_%s.log", os.time(), string.sub(tostring(id), 1, 8)))
     pcall(writefile, T.fileName, "")
 

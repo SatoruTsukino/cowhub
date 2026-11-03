@@ -13,10 +13,11 @@ Catalog of all runtime files generated, read, and persisted by Lua scripts withi
 │   ├── CowHub_SessionPersistence.json       # AFK state, player position & toggles across relog
 │   ├── SpiderIdentifiers.json              # Resolved mob IDs & position cache
 │   ├── cowhub_raft_facades.json             # River cliff face wall geometry cache
-│   ├── world_survey.json                   # Merged river channel survey geometry
-│   ├── voyage_<time>_<id>.log              # Raw voyage navigation telemetry
-│   └── raftlogs/
-│       └── cowhub_raft_<time>_<id>.log     # Raft navigation telemetry & sensor logs
+│   ├── raftlogs/
+│   │   └── cowhub_raft_<time>_<id>.log     # Raft navigation telemetry & sensor logs
+│   └── voyagelogs/
+│       ├── voyage_<time>_<id>.log          # Standalone voyage navigation telemetry
+│       └── world_survey.json               # Merged river channel survey geometry
 ├── Rayfield/Configurations/
 │   └── CowHub/
 │       └── CowHubConfig.rfld               # Rayfield UI configuration & flag autosave
@@ -36,8 +37,8 @@ Catalog of all runtime files generated, read, and persisted by Lua scripts withi
 | `cowhub/raftlogs/cowhub_raft_<time>_<id>.log` | [cowhub.lua](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10427), [preview.lua](file:///Users/jsph/cowhub/luascripts/preview.lua#L10427) | CSV / Text | Per-session (one per voyage) | Raft telemetry: heading, cross error, PID steering, health, sensors | `cowhub_raft_*.log` |
 | `cowhub/cowhub_raft_facades.json` | [cowhub.lua](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10559), [preview.lua](file:///Users/jsph/cowhub/luascripts/preview.lua#L10559) | JSON | Persistent (cached across runs) | River channel cliff wall geometry & bounding boxes | `cowhub_raft_facades.json` |
 | `Rayfield/Configurations/CowHub/CowHubConfig.rfld` | [cowhub.lua](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L60), [preview.lua](file:///Users/jsph/cowhub/luascripts/preview.lua#L60) | Rayfield Proprietary | Persistent | UI flag autosave / reload configuration | None |
-| `cowhub/voyage_<time>_<id>.log` | [voyage_telemetry.lua](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L621) | CSV / Text | Per-voyage | Standalone voyage telemetry recording | `cowhub_telemetry/voyage_*.log` |
-| `cowhub/world_survey.json` | [voyage_telemetry.lua](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L463) | JSON | Persistent | Merged river channel survey geometry across voyages | `cowhub_telemetry/world_survey.json` |
+| `cowhub/voyagelogs/voyage_<time>_<id>.log` | [voyage_telemetry.lua](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L635) | CSV / Text | Per-voyage | Standalone voyage telemetry recording | `cowhub/voyage_*.log`, `cowhub_telemetry/voyage_*.log` |
+| `cowhub/voyagelogs/world_survey.json` | [voyage_telemetry.lua](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L471) | JSON | Persistent | Merged river channel survey geometry across voyages | `cowhub/world_survey.json`, `cowhub_telemetry/world_survey.json` |
 | `SkinHunterConfig.json` | [skinhunter.lua](file:///Users/jsph/cowhub/luascripts/skinhunter.lua#L32) | JSON | Persistent | Target animal skins, price limits, webhook settings | None |
 | `SkinHunterState.json` | [skinhunter.lua](file:///Users/jsph/cowhub/luascripts/skinhunter.lua#L31) | JSON | Persistent | Target items purchased, scans performed, running stats | None |
 
@@ -72,10 +73,10 @@ All files in CowHub route through `resolveCowHubPath(fileName, subFolder)` at [L
 
 ### 2. Voyage Telemetry (`luascripts/voyage_telemetry.lua`)
 
-- Uses `CONFIG.FOLDER = "cowhub"` at [L28](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L28).
+- Uses `CONFIG.FOLDER = "cowhub/voyagelogs"` at [L28](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L28).
 - Output files:
-  - `cowhub/voyage_<time>_<id>.log`
-  - `cowhub/world_survey.json` (auto-falls back to `cowhub_telemetry/world_survey.json` if legacy file exists).
+  - `cowhub/voyagelogs/voyage_<time>_<id>.log`
+  - `cowhub/voyagelogs/world_survey.json` (auto-falls back to legacy `cowhub/world_survey.json` or `cowhub_telemetry/world_survey.json`).
 
 ### 3. SkinHunter (`luascripts/skinhunter.lua`)
 

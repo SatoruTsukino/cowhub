@@ -362,28 +362,28 @@ Fjord rafting telemetry logger recording high-frequency spatial physics, sensor 
 | [359](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L359) | `damagedStations(snap)` | Checks damage state across all raft stations. |
 | [369](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L369) | `headingOf(vector)` | Computes compass heading angle from direction vector. |
 | [373](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L373) | `takeSample(now, dt)` | Captures comprehensive telemetry physics/steering sample. |
-| [458](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L458) | `outputPath(name)` | Generates file path for output session log. |
-| [462](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L462) | `surveyPath()` | Returns path for geometry survey JSON cache. |
-| [466](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L466) | `loadSurvey()` | Loads cached cliff facade and cutaway survey data. |
-| [485](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L485) | `partRecord(part)` | Extracts spatial bounding box record for geometry part. |
-| [493](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L493) | `partKey(part)` | Generates unique identifier string for surveyed part. |
-| [524](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L524) | `surveyFacades(fjord)` | Scans and records geometric cliff faces along river. |
-| [546](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L546) | `surveyCutaways(fjord)` | Surveys cutaways and obstacle bounds along river. |
-| [579](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L579) | `saveSurvey(force)` | Saves river geometry survey data to disk file. |
-| [595](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L595) | `stormAttributes()` | Extracts active storm parameters from lighting/replicated storage. |
-| [604](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L604) | `startSession(id)` | Initializes telemetry session file and begins logging. |
-| [639](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L639) | `endSession(reason)` | Finalizes telemetry session and closes log file. |
-| [663](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L663) | `observeSnapshot(snap)` | Processes server-broadcast raft position snapshot. |
-| [724](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L724) | `dockDetails(snap)` | Parses dock station information from snapshot. |
-| [738](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L738) | `onSnapshot(snap)` | Event listener for rafting snapshot network packets. |
-| [758](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L758) | `onClientEvent(name, payload)` | Dispatcher for incoming client network events. |
-| [789](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L789) | `watchStormWarnings(folder)` | Monitors workspace folder for incoming storm telegraphs. |
-| [806](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L806) | `pollChest()` | Checks for reward chest presence in clearings. |
-| [828](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L828) | `installOutgoingHook()` | Hooks namecall to log outgoing network requests. |
-| [841](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L841) | `handler(self, ...)` | Namecall proxy hook handler function. |
-| [856](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L856) | `drainOutgoing()` | Flushes captured outgoing network packets. |
-| [876](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L876) | `createLabel()` | Creates on-screen HUD telemetry text label. |
-| [900](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L900) | `updateLabel()` | Refreshes on-screen HUD text with current voyage metrics. |
+| [470](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L470) | `outputPath(name)` | Generates file path for output session log. |
+| [475](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L475) | `surveyPath()` | Returns path for geometry survey JSON cache. |
+| [479](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L479) | `loadSurvey()` | Loads cached cliff facade and cutaway survey data. |
+| [502](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L502) | `partRecord(part)` | Extracts spatial bounding box record for geometry part. |
+| [510](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L510) | `partKey(part)` | Generates unique identifier string for surveyed part. |
+| [541](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L541) | `surveyFacades(fjord)` | Scans and records geometric cliff faces along river. |
+| [563](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L563) | `surveyCutaways(fjord)` | Surveys cutaways and obstacle bounds along river. |
+| [596](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L596) | `saveSurvey(force)` | Saves river geometry survey data to disk file. |
+| [612](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L612) | `stormAttributes()` | Extracts active storm parameters from lighting/replicated storage. |
+| [621](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L621) | `startSession(id)` | Initializes telemetry session file and begins logging. |
+| [653](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L653) | `endSession(reason)` | Finalizes telemetry session and closes log file. |
+| [677](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L677) | `observeSnapshot(snap)` | Processes server-broadcast raft position snapshot. |
+| [738](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L738) | `dockDetails(snap)` | Parses dock station information from snapshot. |
+| [752](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L752) | `onSnapshot(snap)` | Event listener for rafting snapshot network packets. |
+| [772](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L772) | `onClientEvent(name, payload)` | Dispatcher for incoming client network events. |
+| [803](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L803) | `watchStormWarnings(folder)` | Monitors workspace folder for incoming storm telegraphs. |
+| [820](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L820) | `pollChest()` | Checks for reward chest presence in clearings. |
+| [842](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L842) | `installOutgoingHook()` | Hooks namecall to log outgoing network requests. |
+| [855](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L855) | `handler(self, ...)` | Namecall proxy hook handler function. |
+| [870](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L870) | `drainOutgoing()` | Flushes captured outgoing network packets. |
+| [890](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L890) | `createLabel()` | Creates on-screen HUD telemetry text label. |
+| [914](file:///Users/jsph/cowhub/luascripts/voyage_telemetry.lua#L914) | `updateLabel()` | Refreshes on-screen HUD text with current voyage metrics. |
 
 ---
 
