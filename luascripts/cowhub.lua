@@ -8680,6 +8680,27 @@ function rafting.isSiteSelected(site)
     return false
 end
 
+-- Logs each change of steering target, with the selected sites already marked visited, so a skipped dock
+-- shows whether it was never chosen, marked visited early, or dropped mid-approach.
+function rafting.logTargetChange(site, posX, posZ)
+    local siteId = site and site.Id or "none"
+    if siteId == rafting.lastTargetId then return end
+    rafting.lastTargetId = siteId
+    local visited = {}
+    for id in pairs(rafting.visitedSites or {}) do
+        local s = rafting.sitesById and rafting.sitesById[id]
+        if s and rafting.isSiteSelected(s) then table.insert(visited, id) end
+    end
+    table.sort(visited)
+    rafting.telemetryEvent("RaftTarget", {
+        Site = siteId,
+        X = math.floor(posX + 0.5),
+        Z = math.floor(posZ + 0.5),
+        Visited = table.concat(visited, " "),
+        Abandoned = rafting.abandonedSiteId,
+    })
+end
+
 function rafting.getNextTargetClearing(posX, currentZ)
     rafting.ensureDynamicSites()
     local route = rafting.route or "Hybrid Dynamic Explorer"
@@ -10880,6 +10901,7 @@ function rafting.stepSteering(dt)
     if nextSite and posX >= (nextSite.MinX - 100) and posX <= (nextSite.MaxX + 25) then
         lookAhead = 15
     end
+    rafting.logTargetChange(nextSite, posX, posZ)
     local lookAheadX = posX + lookAhead
 
     -- 1. Compute Whisker Clearances via Raycasts
@@ -11058,7 +11080,13 @@ function rafting.stepSteering(dt)
         rafting.isUnsticking = false
     else
         local timeSinceCheck = now - (rafting.lastProgressTime or now)
-        if timeSinceCheck >= 0.4 then
+        -- A network stall freezes the snapshot (logged: 1.3 s at full speed) and reads as no progress,
+        -- so give no verdict until fresh data arrives. Snapshots are normally under 0.25 s old.
+        local isSnapshotStale = rafting.lastSnapshotTime and (now - rafting.lastSnapshotTime) > 0.35
+        if isSnapshotStale then
+            rafting.lastProgressTime = now
+            rafting.lastProgressX = posX
+        elseif timeSinceCheck >= 0.4 then
             local dxMoved = posX - (rafting.lastProgressX or posX)
             -- River flows down +X. If dx < 1.2 studs over 0.4s while travelling, boat is not making progress
             local isMakingProgress = dxMoved >= 1.2
