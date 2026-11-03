@@ -1,4 +1,4 @@
--- Cow Hub [1ea9942] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [577eed3] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -49,7 +49,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [1ea9942]",
+    Name = "Cow Hub [577eed3]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -390,6 +390,7 @@ local farm = {
     chompOnlyWhileMoving = true,
     lastChompedMob = "",
     mobChompCooldown = 0,
+    botCheckActive = false, -- Mirrors CowBotCheckActive / CowBotQuarantined; heartbeat halts while true
     castCooldown = 0,
     lastFishingSearchTime = 0,
     collisionDetection = true,
@@ -1714,6 +1715,25 @@ pcall(function()
         end)
     end
 end)
+
+-- ==========================
+-- BOT CHECK PAUSE (game human-check active -> halt all farm actions)
+-- ==========================
+do
+    local function refreshBotCheck()
+        local active = plr:GetAttribute("CowBotCheckActive") == true or plr:GetAttribute("CowBotQuarantined") == true
+        if active == farm.botCheckActive then return end
+        farm.botCheckActive = active
+        safeNotify({
+            Title = active and "Bot Check Active" or "Bot Check Cleared",
+            Content = active and "Autofarm paused until the human check is completed." or "Autofarm resumed.",
+            Duration = active and 10 or 4,
+        })
+    end
+    table.insert(scriptConnections, plr:GetAttributeChangedSignal("CowBotCheckActive"):Connect(refreshBotCheck))
+    table.insert(scriptConnections, plr:GetAttributeChangedSignal("CowBotQuarantined"):Connect(refreshBotCheck))
+    refreshBotCheck()
+end
 
 -- ==========================
 -- HIGH-PERFORMANCE MATH HELPERS
@@ -5377,6 +5397,7 @@ function updateHeartbeatConnection()
                 local now = os.clock()
                 local rootPos = getRootPos(root)
                 if not rootPos then return end
+                if farm.botCheckActive then return end
 
                 -- Targeted background caches refresh (only when mobs need caching)
                 if (farm.autoChompMobs or dodge.auto) and (now - cache.lastBackgroundTime > 1.5) then
