@@ -1,4 +1,4 @@
--- Cow Hub [33c781d] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [1ea9942] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -49,7 +49,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [33c781d]",
+    Name = "Cow Hub [1ea9942]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -9656,7 +9656,10 @@ end
 -- Leaves the wanted deck position alone unless it ends in a rock hit, and then moves it as little as clears
 -- every rock in flight. Checking the wanted course is what stops a dodge or a lane return steering into a
 -- second rock, which is how most logged hits happened.
-function rafting.avoidRocks(deck, wantedDeckX, leftClear, rightClear)
+-- Route error (studs) beyond which a dodge may ease the correction but not reverse it
+rafting.ROCK_COMMIT_ERROR = 25
+
+function rafting.avoidRocks(deck, wantedDeckX, leftClear, rightClear, isCommitted)
     local threats = rafting.getRockThreats(deck)
     if #threats == 0 then
         rafting.isEvadingRock = false
@@ -9690,7 +9693,8 @@ function rafting.avoidRocks(deck, wantedDeckX, leftClear, rightClear)
         return wantedDeckX, false
     end
     for _, steer in ipairs({ 0, 0.35, -0.35, 0.7, -0.7, 1, -1 }) do
-        local cost = penalty(steer)
+        local allowed = not isCommitted or wantedSteer == 0 or (steer * wantedSteer > 0 and math.abs(steer) >= 0.7)
+        local cost = if allowed then penalty(steer) else math.huge
         if cost < bestCost or (cost == bestCost and math.abs(steer - wantedSteer) < math.abs(bestSteer - wantedSteer)) then
             bestSteer, bestCost = steer, cost
         end
@@ -9980,28 +9984,63 @@ function rafting.siteIdOfChest(chest)
     return string.match(tostring(chest.Id), ":([^:]+):%d+$") or ""
 end
 
+-- Height of the root above the floor when the cow stands: ~4.8 on grass in the voyage logs
+function rafting.cowStandHeight()
+    local height = nil
+    pcall(function()
+        if humanoid and root and root:IsA("BasePart") and humanoid.HipHeight > 0 then
+            height = humanoid.HipHeight + root.Size.Y * 0.5
+        end
+    end)
+    if not height or height < 2.5 or height > 8 then height = 4.8 end
+    return height
+end
+
+-- Places the cow standing on the chest's ground, facing it. The old spot was 1.5 above the chest pivot, which
+-- is the ground itself, so the cow spawned ~3 studs into the floor and physics ejected it, often down under
+-- the map: 98 of the logged ChestBlocked answers came with the cow FallingDown below ground.
+function rafting.placeCowAtChest(chest, standPos)
+    stopCharacterVelocity()
+    local chestPos = chest.CFrame.Position
+    root.CFrame = CFrame.lookAt(standPos, Vector3.new(chestPos.X, standPos.Y, chestPos.Z))
+    if humanoid then
+        pcall(function()
+            local state = humanoid:GetState()
+            if state == Enum.HumanoidStateType.FallingDown or state == Enum.HumanoidStateType.Ragdoll
+                or state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Physics then
+                humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+            end
+        end)
+        humanoid:Move(Vector3.zero, false)
+        humanoid:MoveTo(root.Position)
+    end
+end
+
 -- Stands beside the chest and opens it, trying other sides if the server says the spot is blocked or too far.
 -- Only a reward, an opened snapshot or a "claimed" notice counts as done.
 function rafting.openChest(chest)
     local remotes = cowRemotes or (game:GetService("ReplicatedStorage"):FindFirstChild("CowGame") and game.ReplicatedStorage.CowGame:FindFirstChild("Remotes"))
     local teamChestReq = remotes and remotes:FindFirstChild("TeamChestRequest")
-    local standOffsets = { CFrame.new(0, 1.5, 3.5), CFrame.new(3.5, 1.5, 0), CFrame.new(-3.5, 1.5, 0), CFrame.new(0, 1.5, -3.5) }
+    local standOffsets = { CFrame.new(0, 0, 3.5), CFrame.new(3.5, 0, 0), CFrame.new(-3.5, 0, 0), CFrame.new(0, 0, -3.5) }
+    local groundY = tonumber(chest.GroundY) or chest.CFrame.Position.Y
 
     for _, offset in ipairs(standOffsets) do
         if rafting.cancelLooting or rafting.isEndingVoyage or not root then return false, "Cancelled" end
-        local standAt = chest.CFrame * offset
+        local standHeight = rafting.cowStandHeight()
+        local flat = (chest.CFrame * offset).Position
+        local standPos = Vector3.new(flat.X, groundY + standHeight + 0.3, flat.Z)
         if rafting.naturalMode then
-            naturalWalkTo(standAt.Position, 8.0, 3.0)
+            naturalWalkTo(standPos, 8.0, 3.0)
         else
-            stopCharacterVelocity()
-            root.CFrame = standAt * CFrame.Angles(0, math.pi, 0)
-            if humanoid then
-                humanoid:Move(Vector3.zero, false)
-                humanoid:MoveTo(root.Position)
-            end
+            rafting.placeCowAtChest(chest, standPos)
         end
         -- Paced chest settle: the server must see the new position before the request arrives
         task.wait(0.7)
+        -- Sank or knocked over anyway: put it back on its feet before asking
+        if not rafting.naturalMode and root and root.Position.Y < groundY + standHeight - 1.5 then
+            rafting.placeCowAtChest(chest, standPos)
+            task.wait(0.5)
+        end
 
         rafting.lastChestNotice = nil
         local outcome = nil
@@ -11204,7 +11243,12 @@ function rafting.stepSteering(dt)
     -- 6. Hobgoblin rocks: keep the course unless it ends in a hit. Applies to forks and cove approaches too,
     -- because the smallest correction that clears a rock rarely costs the turn.
     if not isActivelyDislodging then
-        local clearDeckX, isDodging = rafting.avoidRocks(deck, targetDeckX, leftLateralDist, rightLateralDist)
+        -- Far off the route with a site still ahead, a dodge that reverses the correction can cost the branch
+        -- (aimed rocks lead the raft, so they land on the side it is steering to). A hit costs ~12 HP.
+        local hp, maxHp = (snap and snap.Health) or 0, (snap and snap.MaxHealth) or 0
+        local isCommitted = nextSite ~= nil and math.abs(errorZ) >= rafting.ROCK_COMMIT_ERROR
+            and maxHp > 0 and hp >= maxHp * 0.5
+        local clearDeckX, isDodging = rafting.avoidRocks(deck, targetDeckX, leftLateralDist, rightLateralDist, isCommitted)
         if isDodging then
             targetDeckX = clearDeckX
             rafting.statusText = "DODGING HOBGOBLIN ROCK! Steering clear of impact..."
