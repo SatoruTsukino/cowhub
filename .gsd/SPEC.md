@@ -1,6 +1,6 @@
 # SPEC.md — Autofarm Chomp Refactor
 
-> **Status**: `FINALIZED` (2026-11-03, user go-ahead: "work on the bot check")
+> **Status**: `FINALIZED` (2026-11-03)
 >
 > ⚠️ **Planning Lock**: No code may be written until this spec is marked `FINALIZED`.
 
@@ -12,11 +12,10 @@ Refactor the grass-chomp portion of the CowHub autofarm (`luascripts/cowhub.lua`
 2. **Natural mode** — Engage in-game grazing with `VirtualInputManager` `E` key. Respect `CowGrazeToggle` (tap vs hold). Watchdog re-engages when character `CowAction ~= "Graze"`, including after every mob-aura attack.
 3. **Auto max speed (Remote mode)** — Interval = `clamp(ChewCooldown attr or 0.7, 0.4, 3) × (0.5 if FoodKind == "Wheat") ÷ clamp(CowGrazingSpeedMultiplier or 1, 1, 1.236)`, plus adaptive margin driven by `ClientEvent "GrazeResult"` rejections (`ChewCooldown`). Fire with the game's wire shape `FireServer(nodeId, nil, serial)`.
 4. **Bot-check pause** — When `CowBotCheckActive` or `CowBotQuarantined` is true: stop all chomp firing, release `E`, notify the user (Rayfield + webhook if configured). Resume automatically once both clear.
-5. **Bot-check solver (authorized pentest)** — Standalone `luascripts/botcheck_solver.lua` answers the game's human check over `BotCheckRequest`, logs every snapshot/answer to `cowhub/botcheck/`, and produces findings so the developer can harden detection.
-6. **Module dumper** — New `luascripts/module_dumper.lua` saves listed game ModuleScript sources to `cowhub/dumps/` for future research.
+5. **Module dumper** — New `luascripts/module_dumper.lua` saves listed game ModuleScript sources to `cowhub/dumps/` for future research.
 
 ## Non-Goals (Out of Scope)
-- Solver bundled inside `cowhub.lua` (kept standalone so the dev can run it in isolation during testing).
+- Bot-check solver and dev findings — separate milestone: `.gsd/milestones/botcheck-pentest/MILESTONE.md`.
 - Spoofing or suppressing `PlayerSignalReporter` / bot-signal telemetry.
 - Firing faster than the computed server limit (sub-limit presets removed; they only produce rejections).
 - Changes to mining (manatite/mithril), fishing, rafting, dodge, or mob payload resolution.
@@ -34,8 +33,6 @@ Refactor the grass-chomp portion of the CowHub autofarm (`luascripts/cowhub.lua`
 - [ ] Remote mode in-game: `GrazeResult` rejection rate with reason `ChewCooldown` < 5% over 2 minutes (UAT).
 - [ ] Natural mode in-game: grazing resumes ≤ 1.5 s after a mob-aura attack (UAT).
 - [ ] Bot check appears → farm stops, notification shown, no `ChompRequest` fired until cleared (UAT).
-- [ ] Solver passes QuickCheck (3 rounds) and Dialogue (3 stages) in a live check; full transcript logged under `cowhub/botcheck/` (UAT).
-- [ ] Hardening findings delivered to dev in `.gsd/phases/4/FINDINGS.md`.
 - [ ] Old relog state files (no `ChompMode`) restore as Remote + AutoMax.
 
 ## Technical Requirements
@@ -46,12 +43,9 @@ Refactor the grass-chomp portion of the CowHub autofarm (`luascripts/cowhub.lua`
 | REQ-02 | `GrazeResult` listener adjusts margin (+0.02 per reject, decay on accept, cap 0.15) | Must-have | `ClientEvent.OnClientEvent("GrazeResult", {RequestId, NodeId, Accepted, Reason})` |
 | REQ-03 | Natural engage/release/watchdog | Must-have | Skip when `GetFocusedTextBox()` or action-blocked attributes set |
 | REQ-04 | Mob aura → `chomp.onMobAttack(now)` re-arm | Must-have | Both mob fire branches in `processMobAura` |
-| REQ-05 | Bot-check pause/resume | Must-have | Attribute-changed signals on LocalPlayer; webhook dropped (no generic sender exists in hub) |
+| REQ-05 | Bot-check pause/resume | Must-have | Attribute-changed signals on LocalPlayer; webhook dropped (no generic sender exists in hub). ✅ base gate done (Plan 1.0) |
 | REQ-06 | UI: mode dropdown, Auto Max toggle, manual speed dropdown (≥ server min only) | Must-have | Flags persist via Rayfield |
 | REQ-07 | Relog save/restore of new fields | Must-have | |
-| REQ-10 | Solver: snapshot capture, answer selection, human-like delay inside deadline, failure cut-off | Must-have | Payload `{Action, Id, Nonce, Stage, ChoiceId}` |
-| REQ-11 | Solver JSONL transcript in `cowhub/botcheck/` | Must-have | Workspace storage rule |
-| REQ-12 | Findings + hardening recommendations for dev | Must-have | |
 | REQ-08 | `module_dumper.lua` | Should-have | `decompile`/`getscriptbytecode` guarded; writes `cowhub/dumps/<Name>.lua` |
 | REQ-09 | Update `FUNCTIONS.md` and `FILE_OUTPUTS.md` | Should-have | |
 
