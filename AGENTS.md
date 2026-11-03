@@ -23,7 +23,7 @@ On every modification/commit to `luascripts/cowhub.lua` and `luascripts/preview.
    ```
 
 ## Workspace File Storage
-All files generated or persisted by CowHub scripts (configs, state, logs, telemetry, caches) must reside in a dedicated `cowhub/` directory within executor workspace. Never write loose files to root workspace directory. Ensure `makefolder("cowhub")` and migrate legacy root files when reading/writing.
+All files generated or persisted by CowHub scripts (configs, state, logs, telemetry, caches) must reside in a dedicated `cowhub/` directory within executor workspace. Never write loose files to root workspace directory. Raft logs must generate into `cowhub/raftlogs/`. Ensure `makefolder` and migrate legacy root/parent files when reading/writing.
 
 
 

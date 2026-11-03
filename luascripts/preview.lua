@@ -963,46 +963,70 @@ local httpRequest = (request or http_request or (http and http.request) or (syn 
 local COWHUB_DIR = "cowhub"
 local resolvedPaths = {}
 
-local function resolveCowHubPath(fileName)
-    if resolvedPaths[fileName] then
-        return resolvedPaths[fileName]
+local function resolveCowHubPath(fileName, subFolder)
+    local cacheKey = (subFolder and (subFolder .. "/") or "") .. fileName
+    if resolvedPaths[cacheKey] then
+        return resolvedPaths[cacheKey]
     end
 
-    local hasFolder = false
+    local targetDir = COWHUB_DIR
     if makefolder then
         if isfolder then
             if not isfolder(COWHUB_DIR) then
                 pcall(makefolder, COWHUB_DIR)
             end
-            hasFolder = isfolder(COWHUB_DIR)
         else
             pcall(makefolder, COWHUB_DIR)
-            hasFolder = true
         end
-    elseif isfolder then
-        hasFolder = isfolder(COWHUB_DIR)
     end
 
-    if not hasFolder then
-        resolvedPaths[fileName] = fileName
-        return fileName
-    end
-
-    local folderPath = COWHUB_DIR .. "/" .. fileName
-
-    -- Migrate legacy root file into cowhub directory if present
-    if isfile and isfile(fileName) and (not isfile(folderPath)) then
-        if readfile and writefile then
-            local ok, content = pcall(readfile, fileName)
-            if ok and content then
-                pcall(writefile, folderPath, content)
-                local deleteFn = delfile or deletefile
-                if deleteFn then pcall(deleteFn, fileName) end
+    if subFolder then
+        targetDir = COWHUB_DIR .. "/" .. subFolder
+        if makefolder then
+            if isfolder then
+                if not isfolder(targetDir) then
+                    pcall(makefolder, targetDir)
+                end
+            else
+                pcall(makefolder, targetDir)
             end
         end
     end
 
-    resolvedPaths[fileName] = folderPath
+    local hasFolder = false
+    if isfolder then
+        hasFolder = isfolder(targetDir)
+    elseif makefolder then
+        hasFolder = true
+    end
+
+    if not hasFolder then
+        resolvedPaths[cacheKey] = fileName
+        return fileName
+    end
+
+    local folderPath = targetDir .. "/" .. fileName
+
+    -- Migrate legacy files into new directory if present
+    local legacyPaths = { fileName }
+    if subFolder then
+        table.insert(legacyPaths, COWHUB_DIR .. "/" .. fileName)
+    end
+
+    for _, oldPath in ipairs(legacyPaths) do
+        if isfile and isfile(oldPath) and (not isfile(folderPath)) then
+            if readfile and writefile then
+                local ok, content = pcall(readfile, oldPath)
+                if ok and content then
+                    pcall(writefile, folderPath, content)
+                    local deleteFn = delfile or deletefile
+                    if deleteFn then pcall(deleteFn, oldPath) end
+                end
+            end
+        end
+    end
+
+    resolvedPaths[cacheKey] = folderPath
     return folderPath
 end
 
@@ -10400,7 +10424,7 @@ end
 function rafting.telemetryStart(sessionId)
     local tel = rafting.telemetry
     if not writefile then return end
-    tel.fileName = resolveCowHubPath(string.format("cowhub_raft_%d_%s.log", os.time(), string.sub(tostring(sessionId), 1, 8)))
+    tel.fileName = resolveCowHubPath(string.format("cowhub_raft_%d_%s.log", os.time(), string.sub(tostring(sessionId), 1, 8)), "raftlogs")
     tel.pending = {}
     tel.allLines = {}
     tel.lastObserved = {}

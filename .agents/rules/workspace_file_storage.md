@@ -2,12 +2,13 @@
 
 All files generated or persisted by CowHub scripts must be placed in a dedicated `cowhub/` subdirectory within the executor workspace.
 
-1. **Dedicated Directory:**
-   Always use `cowhub/` for all runtime artifacts (`CowScannerWebhook.txt`, `CowHub_SessionPersistence.json`, `SpiderIdentifiers.json`, `cowhub_raft_*.log`, `cowhub_raft_facades.json`).
+1. **Dedicated Directory & Subdirectories:**
+   Always use `cowhub/` for runtime artifacts (`CowScannerWebhook.txt`, `CowHub_SessionPersistence.json`, `SpiderIdentifiers.json`, `cowhub_raft_facades.json`).
+   Always route raft telemetry logs (`cowhub_raft_*.log`) into `cowhub/raftlogs/`.
 
 2. **Directory Resolution & Creation:**
-   Always resolve paths through directory helper and ensure folder creation via `makefolder("cowhub")` and `isfolder("cowhub")` before writing.
+   Always resolve paths through directory helper and ensure folder creation via `makefolder("cowhub")` and `makefolder("cowhub/raftlogs")` before writing.
 
 3. **Legacy Migration:**
-   Check for and migrate existing root files into `cowhub/` automatically to preserve existing user settings, persistence states, and caches.
+   Check for and migrate existing root or parent files into target directories automatically to preserve existing user settings, persistence states, and logs.
 
