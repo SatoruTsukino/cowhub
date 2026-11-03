@@ -1,4 +1,4 @@
--- Cow Hub [527b454] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [6bced4a] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -12,6 +12,11 @@ if _G.CowHubLoaded then
     if _G.CowHubRaftingCleanup then
         pcall(_G.CowHubRaftingCleanup)
         _G.CowHubRaftingCleanup = nil
+    end
+    -- Old copy may be holding the graze key (Natural mode) and buffering debug log lines
+    if _G.CowHubChompCleanup then
+        pcall(_G.CowHubChompCleanup)
+        _G.CowHubChompCleanup = nil
     end
     pcall(function()
         if _G.CowHubRayfield and _G.CowHubRayfield.Destroy then
@@ -49,7 +54,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [527b454]",
+    Name = "Cow Hub [6bced4a]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -402,6 +407,26 @@ local farm = {
     goldenAura = false,
     goldenAuraRadius = 60,
     lastGoldenAuraTime = 0,
+}
+
+-- Grass chomp module state (functions defined after spiderLogger / remotes; see CHOMP MODULE)
+local chomp = {
+    BASE = 0.7, MIN = 0.4, MAX_COOLDOWN = 3, MAX_MULT = 1.236,
+    BLOCK_ATTRS = { "CowMoofCutscene", "CowCaptured", "CowStunned", "CatapultActive", "CowBotCheckActive", "CowBotQuarantined" },
+    mode = "Remote",   -- "Remote" (script fires ChompRequest) | "Natural" (drives the game's own E graze)
+    autoMax = true,
+    manualDelay = 0.4,
+    margin = 0.03,     -- adaptive safety margin over the server limit, tuned by GrazeResult
+    serial = 0,
+    pending = {},
+    lastFire = 0,
+    lastNode = nil,
+    debug = false,
+    logBuf = {},
+    logPath = nil,
+    lastFlush = 0,
+    stats = { sent = 0, accepted = 0, rejected = 0, cooldownRejects = 0 },
+    natural = { held = false, lastTap = 0, lastEngage = 0, notGrazingSince = nil, rearmAt = 0, lastGrazing = nil },
 }
 
 local dodge = {
@@ -1090,7 +1115,9 @@ function afkRelog.saveState()
             Radius = farm.radius or 75,
             Pattern = farm.pattern or "Guided Zigzag (Nodes)",
             PatternSpeed = farm.patternSpeed or 1.0,
-            GrassChompDelay = math.max(0.01, farm.grassChompDelay or 0.4),
+            ChompMode = chomp.mode,
+            ChompAutoMax = chomp.autoMax,
+            ChompManualDelay = chomp.manualDelay,
             OnlyMatureGrass = farm.onlyMatureGrass ~= false,
             ChompOnlyWhileMoving = farm.chompOnlyWhileMoving ~= false,
         },
@@ -1259,9 +1286,16 @@ function afkRelog.checkAndResumeState()
         if f.PatternSpeed then
             farm.patternSpeed = f.PatternSpeed
         end
-        if f.GrassChompDelay then
-            farm.grassChompDelay = math.max(0.01, tonumber(f.GrassChompDelay) or 0.4)
-            farm.grassChompRepeatDelay = farm.grassChompDelay + 0.1
+        -- Chomp module (legacy GrassChompDelay maps to manual delay, floored at the server minimum)
+        chomp.mode = (f.ChompMode == "Natural") and "Natural" or "Remote"
+        pcall(function() Window:Set("Dropdown_ChompMode", { chomp.mode == "Natural" and "Natural (E Key)" or "Remote (Auto Max)" }) end)
+        if f.ChompAutoMax ~= nil then
+            chomp.autoMax = f.ChompAutoMax == true
+            pcall(function() Window:Set("Toggle_ChompAutoMax", chomp.autoMax) end)
+        end
+        local manual = tonumber(f.ChompManualDelay) or tonumber(f.GrassChompDelay)
+        if manual then
+            chomp.manualDelay = math.max(chomp.MIN, manual)
         end
         if f.OnlyMatureGrass ~= nil then
             farm.onlyMatureGrass = f.OnlyMatureGrass
@@ -1717,24 +1751,7 @@ end)
 -- Interval mirrors InputController:_chewCooldown:
 --   clamp(ChewCooldown, 0.4, 3) [x0.5 Wheat] / clamp(CowGrazingSpeedMultiplier, 1, 1.2 * 1.03)
 -- ==========================
-local chomp = {
-    BASE = 0.7, MIN = 0.4, MAX_COOLDOWN = 3, MAX_MULT = 1.236,
-    BLOCK_ATTRS = { "CowMoofCutscene", "CowCaptured", "CowStunned", "CatapultActive", "CowBotCheckActive", "CowBotQuarantined" },
-    mode = "Remote",   -- "Remote" (script fires ChompRequest) | "Natural" (drives the game's own E graze)
-    autoMax = true,
-    manualDelay = 0.4,
-    margin = 0.03,     -- adaptive safety margin over the server limit, tuned by GrazeResult
-    serial = 0,
-    pending = {},
-    lastFire = 0,
-    lastNode = nil,
-    debug = false,
-    logBuf = {},
-    logPath = nil,
-    lastFlush = 0,
-    stats = { sent = 0, accepted = 0, rejected = 0, cooldownRejects = 0 },
-    natural = { held = false, lastTap = 0, lastEngage = 0, notGrazingSince = nil, rearmAt = 0, lastGrazing = nil },
-}
+-- chomp state table is declared next to `farm` (used by relog save/restore above)
 
 function chomp.log(event, data)
     if not chomp.debug then return end
@@ -1960,6 +1977,11 @@ function chomp.onMobAttack(now)
     -- pressE() (cave mobs) sends an E release, so a held graze key is no longer held
     n.held = false
     chomp.log("mob", {})
+end
+
+_G.CowHubChompCleanup = function()
+    chomp.stopNatural()
+    chomp.flushLog(true)
 end
 
 -- ==========================
@@ -5806,6 +5828,10 @@ MainTab:CreateToggle({
     Flag = "Toggle_Chomp",
     Callback = function(Value)
         farm.autoChomp = Value
+        if not Value and chomp.mode == "Natural" then
+            chomp.stopNatural()
+        end
+        chomp.log("toggle", { autoChomp = Value, mode = chomp.mode })
         updateHeartbeatConnection()
     end,
 })
@@ -5890,70 +5916,95 @@ MainTab:CreateToggle({
 MainTab:CreateSection({ Name = "Aura & Pattern Configuration" })
 
 MainTab:CreateDropdown({
-    Name = "Grass Chomp Speed",
-    Options = {
-        "Instant (0.05s) [Unsafe - Firing faster than server intends]",
-        "Extreme (0.1s) [Unsafe - Firing faster than server intends]",
-        "Ultra (0.2s) [Unsafe - Firing faster than server intends]",
-        "Hyper (0.3s) [Unsafe - Firing faster than server intends]",
-        "Fastest Safe (0.4s - Server Minimum)",
-        "Fast (0.5s)",
-        "Balanced (0.6s)",
-        "Default (0.7s - Game Base)",
-        "Safe (1.0s)",
-        "Very Slow (1.5s)"
-    },
-    CurrentOption = {"Fastest Safe (0.4s - Server Minimum)"},
+    Name = "Chomp Mode",
+    Options = { "Remote (Auto Max)", "Natural (E Key)" },
+    CurrentOption = { "Remote (Auto Max)" },
+    MultipleOptions = false,
+    Flag = "Dropdown_ChompMode",
+    Callback = function(Option)
+        local selection = tostring(type(Option) == "table" and Option[1] or Option)
+        local newMode = string.find(selection, "Natural", 1, true) and "Natural" or "Remote"
+        if newMode == chomp.mode then return end
+        if chomp.mode == "Natural" then chomp.stopNatural() end
+        chomp.mode = newMode
+        chomp.log("mode", { mode = newMode })
+    end,
+})
+
+MainTab:CreateToggle({
+    Name = "Auto Max Chomp Speed (Server Limit)",
+    CurrentValue = true,
+    Flag = "Toggle_ChompAutoMax",
+    Callback = function(Value)
+        chomp.autoMax = Value
+        chomp.log("autoMax", { on = Value })
+    end,
+})
+
+MainTab:CreateDropdown({
+    Name = "Manual Chomp Speed (when Auto Max off)",
+    Options = { "0.4s", "0.5s", "0.6s", "0.7s (Game Base)", "1.0s", "1.5s" },
+    CurrentOption = { "0.4s" },
     MultipleOptions = false,
     Flag = "Dropdown_GrassSpeed",
     Callback = function(Option)
-        local selection = type(Option) == "table" and Option[1] or Option
-        local selStr = tostring(selection)
-        if string.find(selStr, "0.05") then
-            farm.grassChompDelay = 0.05
-            farm.grassChompRepeatDelay = 0.08
-        elseif string.find(selStr, "0.1") then
-            farm.grassChompDelay = 0.1
-            farm.grassChompRepeatDelay = 0.15
-        elseif string.find(selStr, "0.2") then
-            farm.grassChompDelay = 0.2
-            farm.grassChompRepeatDelay = 0.25
-        elseif string.find(selStr, "0.3") then
-            farm.grassChompDelay = 0.3
-            farm.grassChompRepeatDelay = 0.35
-        elseif string.find(selStr, "0.4") then
-            farm.grassChompDelay = 0.4
-            farm.grassChompRepeatDelay = 0.5
-        elseif string.find(selStr, "0.5") then
-            farm.grassChompDelay = 0.5
-            farm.grassChompRepeatDelay = 0.7
-        elseif string.find(selStr, "0.6") then
-            farm.grassChompDelay = 0.6
-            farm.grassChompRepeatDelay = 0.8
-        elseif string.find(selStr, "0.7") then
-            farm.grassChompDelay = 0.7
-            farm.grassChompRepeatDelay = 1.0
-        elseif string.find(selStr, "1.0") then
-            farm.grassChompDelay = 1.0
-            farm.grassChompRepeatDelay = 1.5
-        elseif string.find(selStr, "1.5") then
-            farm.grassChompDelay = 1.5
-            farm.grassChompRepeatDelay = 2.0
+        local selection = tostring(type(Option) == "table" and Option[1] or Option)
+        chomp.manualDelay = math.max(chomp.MIN, tonumber(string.match(selection, "(%d+%.?%d*)")) or chomp.MIN)
+    end,
+})
+
+MainTab:CreateToggle({
+    Name = "Chomp Debug Log (cowhub/chomplogs)",
+    CurrentValue = false,
+    Flag = "Toggle_ChompDebugLog",
+    Callback = function(Value)
+        if Value then
+            chomp.debug = true
+            chomp.logPath = nil
+            chomp.log("start", {
+                placeId = game.PlaceId, jobId = game.JobId, mode = chomp.mode, autoMax = chomp.autoMax,
+                manualDelay = chomp.manualDelay, toggleSetting = plr:GetAttribute("CowGrazeToggle") == true,
+                chewCooldown = plr:GetAttribute("ChewCooldown"), mult = plr:GetAttribute("CowGrazingSpeedMultiplier"),
+            })
+            chomp.flushLog(true)
+            safeNotify({ Title = "Chomp Debug Log", Content = "Writing to " .. tostring(chomp.logPath), Duration = 6 })
         else
-            farm.grassChompDelay = math.max(0.01, tonumber(string.match(selStr, "(%d+%.?%d*)")) or 0.4)
-            farm.grassChompRepeatDelay = farm.grassChompDelay + 0.1
-        end
-        if farm.grassChompDelay < 0.4 then
-            pcall(function()
-                Window:Notify({
-                    Title = "Unsafe Chomp Speed",
-                    Content = string.format("Set to %.2fs (Unsafe: Firing faster than server intends).", farm.grassChompDelay),
-                    Duration = 3,
-                })
-            end)
+            chomp.log("stop", { stats = chomp.stats })
+            chomp.flushLog(true)
+            chomp.debug = false
         end
     end,
 })
+
+do
+    local title, body = "Chomp: --", "Interval: --"
+    if MainTab.CreateText then
+        pcall(function() chomp.statusCard = MainTab:CreateText({ name = title, text = body }) end)
+    end
+    if not chomp.statusCard and MainTab.CreateParagraph then
+        pcall(function() chomp.statusCard = MainTab:CreateParagraph({ Title = title, Content = body }) end)
+    end
+    task.spawn(function()
+        while chomp.statusCard and _G.CowHubConnections == scriptConnections do
+            task.wait(1)
+            if farm.autoChomp then
+                local st = chomp.stats
+                local t = string.format("Chomp: %s%s", chomp.mode, farm.botCheckActive and " | PAUSED (bot check)" or "")
+                local b = string.format("Interval: %.3fs (server %.3fs + margin %.3fs)\nSent %d | OK %d | Rejected %d (cooldown %d)\nGrazing: %s",
+                    chomp.getInterval(), chomp.serverInterval(), chomp.margin,
+                    st.sent, st.accepted, st.rejected, st.cooldownRejects, tostring(chomp.isGrazing()))
+                pcall(function()
+                    if chomp.statusCard.SetTitle then
+                        chomp.statusCard:SetTitle(t)
+                        chomp.statusCard:Set(b)
+                    elseif chomp.statusCard.Set then
+                        chomp.statusCard:Set({ Title = t, Content = b })
+                    end
+                end)
+            end
+        end
+    end)
+end
 
 MainTab:CreateToggle({
     Name = "Chomp Only While Moving",
@@ -12783,6 +12834,7 @@ SettingsTab:CreateButton({
 
             farm.on = false
             farm.autoChomp = false
+            pcall(_G.CowHubChompCleanup)
             farm.autoChompMobs = false
             farm.autoFish = false
             farm.goldenAura = false
