@@ -77,6 +77,19 @@ Primary CowHub script containing autofarm engines, mining, dodging, auction scan
 | [1899](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1899) | `cache.getCleanGrassName(nodeName)` | Strips numerical suffixes from grass model names. |
 | [1921](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1921) | `cache.extractGrassNodeId(target)` | Extracts node ID from interaction target instance. |
 | [1946](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1946) | `cache.getMobPayload(mobName)` | Retrieves cached network attack payload table for mob species. |
+| [1756](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1756) | `chomp.log(event, data)` | Buffers a debug JSON line (only while Chomp Debug Log is on). |
+| [1765](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1765) | `chomp.flushLog(force)` | Writes buffered debug lines to `cowhub/chomplogs/` at most every 2 s. |
+| [1788](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1788) | `chomp.serverInterval(node)` | Fastest server-accepted bite interval from live ChewCooldown / grazing multiplier (wheat & node cooldown aware). |
+| [1803](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1803) | `chomp.getInterval(node)` | Server interval + adaptive margin, floored at the manual delay when Auto Max is off. |
+| [1812](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1812) | `chomp.fire(nodeId, node, now)` | Single grass ChompRequest call site; fires `(nodeId, nil, serial)` when the interval has elapsed. |
+| [1871](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1871) | `chomp.isGrazing()` | True when character `CowAction == "Graze"`. |
+| [1876](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1876) | `chomp.canEngage()` | Blocks E input during cutscenes, capture, stun, bot check, or focused textbox. |
+| [1885](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1885) | `chomp.sendKey(down)` | Sends E key down/up through VirtualInputManager (keypress fallback). |
+| [1897](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1897) | `chomp.engage(now)` | Natural mode: taps E (Toggle Graze setting) or re-holds E (hold setting). |
+| [1922](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1922) | `chomp.release()` | Releases a held E key. |
+| [1933](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1933) | `chomp.stopNatural()` | Release + untoggle grazing when leaving Natural mode. |
+| [1942](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1942) | `chomp.tickNatural(now)` | Natural watchdog: re-engages grazing after drops and mob attacks. |
+| [1970](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1970) | `chomp.onMobAttack(now)` | Shares chew cooldown with mob bites and arms natural re-engage. |
 | [1960](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1960) | `cache.cleanupNodeBlacklist(now)` | Removes expired blacklisted nodes from memory. |
 | [1974](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1974) | `manatite.getFolder()` | Finds Manatite cluster folder in workspace. |
 | [2035](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2035) | `manatite.getModels()` | Collects all active Manatite crystal models. |

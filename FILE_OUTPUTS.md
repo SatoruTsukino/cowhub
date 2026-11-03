@@ -13,6 +13,10 @@ Catalog of all runtime files generated, read, and persisted by Lua scripts withi
 │   ├── CowHub_SessionPersistence.json       # AFK state, player position & toggles across relog
 │   ├── SpiderIdentifiers.json              # Resolved mob IDs & position cache
 │   ├── cowhub_raft_facades.json             # River cliff face wall geometry cache
+│   ├── chomplogs/
+│   │   └── chomp_<unix>.jsonl              # Chomp debug log (sends, GrazeResult, natural E events)
+│   ├── botcheck/
+│   │   └── botcheck_<unix>.jsonl           # Bot-check solver transcript (botcheck_solver.lua)
 │   ├── raftlogs/
 │   │   └── cowhub_raft_<time>_<id>.log     # Raft navigation telemetry & sensor logs
 │   └── voyagelogs/
@@ -34,6 +38,8 @@ Catalog of all runtime files generated, read, and persisted by Lua scripts withi
 | `cowhub/CowScannerWebhook.txt` | [cowhub.lua](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1033), [preview.lua](file:///Users/jsph/cowhub/luascripts/preview.lua#L1033) | Plain text (URL) | Persistent | Discord webhook URL for auction sniper & notifications | `CowScannerWebhook.txt` |
 | `cowhub/CowHub_SessionPersistence.json` | [cowhub.lua](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1060), [preview.lua](file:///Users/jsph/cowhub/luascripts/preview.lua#L1060) | JSON | Ephemeral (30m max age, deleted on resume) | Player CFrame, active farm toggles, auction bids across 6h reconnect | `CowHub_SessionPersistence.json` |
 | `cowhub/SpiderIdentifiers.json` | [cowhub.lua](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1408), [preview.lua](file:///Users/jsph/cowhub/luascripts/preview.lua#L1408) | JSON | Persistent (capped at 200 IDs, 50 history) | Unique server spider/mob identifiers indexed by ID, position, and path | `SpiderIdentifiers.json` |
+| `cowhub/chomplogs/chomp_<unix>.jsonl` | [cowhub.lua](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1765) | JSON Lines | Per debug session (toggle on → new file) | Chomp sends, server GrazeResult replies, natural-mode E/graze events, mob re-arms, bot-check pauses | None |
+| `cowhub/botcheck/botcheck_<unix>.jsonl` | [botcheck_solver.lua](file:///Users/jsph/cowhub/luascripts/botcheck_solver.lua) | JSON Lines | Per solver run | Bot-check snapshots, chosen answers, delays | None |
 | `cowhub/raftlogs/cowhub_raft_<time>_<id>.log` | [cowhub.lua](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10427), [preview.lua](file:///Users/jsph/cowhub/luascripts/preview.lua#L10427) | CSV / Text | Per-session (one per voyage) | Raft telemetry: heading, cross error, PID steering, health, sensors | `cowhub_raft_*.log` |
 | `cowhub/cowhub_raft_facades.json` | [cowhub.lua](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10559), [preview.lua](file:///Users/jsph/cowhub/luascripts/preview.lua#L10559) | JSON | Persistent (cached across runs) | River channel cliff wall geometry & bounding boxes | `cowhub_raft_facades.json` |
 | `Rayfield/Configurations/CowHub/CowHubConfig.rfld` | [cowhub.lua](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L60), [preview.lua](file:///Users/jsph/cowhub/luascripts/preview.lua#L60) | Rayfield Proprietary | Persistent | UI flag autosave / reload configuration | None |
