@@ -928,11 +928,14 @@ local penESP = {
 
 local chestESP = {
     show = false,
+    visuals = {},
     highlight = nil,
     billboard = nil,
     espConn = nil,
     childAddedConn = nil,
     childRemovedConn = nil,
+    descendantAddedConn = nil,
+    descendantRemovingConn = nil,
 }
 
 -- Node Pathfinding & Memoization
@@ -3380,45 +3383,75 @@ function penESP.update()
     end
 end
 
--- Cleanup single-chest ESP instances
+-- Helper to identify team chest models
+local function isTeamChest(inst)
+    if not inst then return false end
+    if not (inst:IsA("Model") or inst:IsA("BasePart")) then return false end
+    local parent = inst.Parent
+    if parent and parent:IsA("Model") then
+        local pLower = string.lower(parent.Name)
+        if string.find(pLower, "teamchest", 1, true) or string.find(pLower, "team_chest", 1, true) then
+            return false
+        end
+    end
+    local lowerName = string.lower(inst.Name)
+    return string.find(lowerName, "teamchest", 1, true) ~= nil or string.find(lowerName, "team_chest", 1, true) ~= nil
+end
+
+-- Remove a specific chest ESP visual
+function chestESP.removeVisual(model)
+    local visual = chestESP.visuals[model]
+    if not visual then return end
+    if visual.ancestryConn then
+        pcall(function() visual.ancestryConn:Disconnect() end)
+    end
+    if visual.highlight then
+        pcall(function() visual.highlight:Destroy() end)
+    end
+    if visual.billboard then
+        pcall(function() visual.billboard:Destroy() end)
+    end
+    chestESP.visuals[model] = nil
+end
+
+-- Cleanup all chest ESP instances
 function chestESP.cleanup()
     if chestESP.espConn then
         pcall(function() chestESP.espConn:Disconnect() end)
         chestESP.espConn = nil
     end
-    if chestESP.highlight then
-        pcall(function() chestESP.highlight:Destroy() end)
-        chestESP.highlight = nil
+    for model in pairs(chestESP.visuals) do
+        chestESP.removeVisual(model)
     end
-    if chestESP.billboard then
-        pcall(function() chestESP.billboard:Destroy() end)
-        chestESP.billboard = nil
-    end
+    table.clear(chestESP.visuals)
 end
 
 -- Attach ESP to a loaded chest model/part
 function chestESP.attach(trackedChest)
-    chestESP.cleanup()
-    if not trackedChest or not trackedChest.Parent then return end
+    if not chestESP.show or not trackedChest or not trackedChest.Parent then return end
+    if chestESP.visuals[trackedChest] then return end
 
     local chestPart = trackedChest:IsA("Model") and (trackedChest.PrimaryPart or trackedChest:FindFirstChildWhichIsA("BasePart")) or (trackedChest:IsA("BasePart") and trackedChest)
+    if not chestPart then
+        chestPart = trackedChest:FindFirstChildWhichIsA("BasePart", true)
+    end
     if not chestPart then return end
 
-    chestESP.highlight = Instance.new("Highlight")
-    chestESP.highlight.Name = "ChestHighlight"
-    chestESP.highlight.Adornee = trackedChest
-    chestESP.highlight.FillColor = Color3.fromRGB(255, 215, 0)
-    chestESP.highlight.FillTransparency = 0.5
-    chestESP.highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-    chestESP.highlight.OutlineTransparency = 0
-    chestESP.highlight.Parent = trackedChest
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "ChestHighlight"
+    highlight.Adornee = trackedChest
+    highlight.FillColor = Color3.fromRGB(255, 215, 0)
+    highlight.FillTransparency = 0.5
+    highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+    highlight.OutlineTransparency = 0
+    highlight.Parent = trackedChest
 
-    chestESP.billboard = Instance.new("BillboardGui")
-    chestESP.billboard.Name = "ChestESPText"
-    chestESP.billboard.Adornee = chestPart
-    chestESP.billboard.Size = UDim2.new(0, 150, 0, 50)
-    chestESP.billboard.StudsOffset = Vector3.new(0, 3, 0)
-    chestESP.billboard.AlwaysOnTop = true
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "ChestESPText"
+    billboard.Adornee = chestPart
+    billboard.Size = UDim2.new(0, 150, 0, 50)
+    billboard.StudsOffset = Vector3.new(0, 3, 0)
+    billboard.AlwaysOnTop = true
 
     local textLabel = Instance.new("TextLabel")
     textLabel.Name = "Label"
@@ -3428,58 +3461,107 @@ function chestESP.attach(trackedChest)
     textLabel.TextStrokeTransparency = 0
     textLabel.TextSize = 14
     textLabel.Font = Enum.Font.GothamBold
-    textLabel.Text = "Team Chest"
-    textLabel.Parent = chestESP.billboard
+    local displayName = (trackedChest.Name == "LocalTeamChest" or trackedChest.Name == "TeamChest") and "Team Chest" or trackedChest.Name
+    textLabel.Text = "📦 " .. displayName
+    textLabel.Parent = billboard
 
-    chestESP.billboard.Parent = trackedChest
+    billboard.Parent = trackedChest
 
-    local lastDist = -1
-    local lastChestUpdate = 0
-    chestESP.espConn = RunService.Heartbeat:Connect(function()
-        if not chestESP.show or not trackedChest or not trackedChest.Parent then
-            chestESP.cleanup()
-            return
-        end
-        local now = os.clock()
-        if now - lastChestUpdate > 0.1 then
-            lastChestUpdate = now
-            local rPos = getRootPos(root)
-            if rPos and chestPart.Parent then
-                local dist = math.floor(get2DDistance(rPos, chestPart.Position))
-                if dist ~= lastDist then
-                    lastDist = dist
-                    textLabel.Text = "📦 Team Chest\n[" .. dist .. " studs]"
-                end
-            end
+    local visual = {
+        highlight = highlight,
+        billboard = billboard,
+        label = textLabel,
+        chestPart = chestPart,
+        displayName = displayName,
+        lastDist = -1,
+        ancestryConn = nil,
+    }
+
+    visual.ancestryConn = trackedChest.AncestryChanged:Connect(function(_, parent)
+        if not parent then
+            chestESP.removeVisual(trackedChest)
         end
     end)
+
+    chestESP.visuals[trackedChest] = visual
 end
 
--- Dynamic load/unload watcher for LocalTeamChest
+-- Dynamic load/unload watcher for TeamChest models
 function chestESP.update()
     if chestESP.show then
-        local currentChest = workspace:FindFirstChild("LocalTeamChest")
-        if currentChest then
-            chestESP.attach(currentChest)
+        for _, desc in ipairs(workspace:GetDescendants()) do
+            if isTeamChest(desc) then
+                chestESP.attach(desc)
+            end
         end
 
-        if not chestESP.childAddedConn then
-            chestESP.childAddedConn = workspace.ChildAdded:Connect(function(child)
-                if child.Name == "LocalTeamChest" and chestESP.show then
+        if not chestESP.descendantAddedConn then
+            chestESP.descendantAddedConn = workspace.DescendantAdded:Connect(function(desc)
+                if chestESP.show and isTeamChest(desc) then
                     task.wait(0.1)
-                    chestESP.attach(child)
+                    chestESP.attach(desc)
                 end
             end)
         end
 
-        if not chestESP.childRemovedConn then
-            chestESP.childRemovedConn = workspace.ChildRemoved:Connect(function(child)
-                if child.Name == "LocalTeamChest" then
+        if not chestESP.descendantRemovingConn then
+            chestESP.descendantRemovingConn = workspace.DescendantRemoving:Connect(function(desc)
+                if chestESP.visuals[desc] then
+                    chestESP.removeVisual(desc)
+                end
+            end)
+        end
+
+        if not chestESP.espConn then
+            local lastChestUpdate = 0
+            local lastScan = 0
+            chestESP.espConn = RunService.Heartbeat:Connect(function()
+                if not chestESP.show then
                     chestESP.cleanup()
+                    return
+                end
+                local now = os.clock()
+                if now - lastScan > 2.0 then
+                    lastScan = now
+                    for _, child in ipairs(workspace:GetChildren()) do
+                        if isTeamChest(child) and not chestESP.visuals[child] then
+                            chestESP.attach(child)
+                        end
+                    end
+                    local found = workspace:FindFirstChild("LocalTeamChest", true)
+                    if found and isTeamChest(found) and not chestESP.visuals[found] then
+                        chestESP.attach(found)
+                    end
+                end
+
+                if now - lastChestUpdate > 0.1 then
+                    lastChestUpdate = now
+                    local rPos = getRootPos(root)
+                    if rPos then
+                        for trackedChest, visual in pairs(chestESP.visuals) do
+                            if not trackedChest or not trackedChest.Parent or not visual.chestPart or not visual.chestPart.Parent then
+                                chestESP.removeVisual(trackedChest)
+                            else
+                                local dist = math.floor(get2DDistance(rPos, visual.chestPart.Position))
+                                if dist ~= visual.lastDist then
+                                    visual.lastDist = dist
+                                    visual.label.Text = "📦 " .. visual.displayName .. "\n[" .. dist .. " studs]"
+                                end
+                            end
+                        end
+                    end
                 end
             end)
         end
     else
+        if chestESP.descendantAddedConn then
+            pcall(function() chestESP.descendantAddedConn:Disconnect() end)
+            chestESP.descendantAddedConn = nil
+        end
+        if chestESP.descendantRemovingConn then
+            pcall(function() chestESP.descendantRemovingConn:Disconnect() end)
+            chestESP.descendantRemovingConn = nil
+        end
         if chestESP.childAddedConn then
             pcall(function() chestESP.childAddedConn:Disconnect() end)
             chestESP.childAddedConn = nil

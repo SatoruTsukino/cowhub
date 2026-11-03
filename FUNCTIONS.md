@@ -127,9 +127,10 @@ Primary CowHub script containing autofarm engines, mining, dodging, auction scan
 | [3306](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3306) | `cache.getRipplePosition(ripple)` | Extracts world position of water ripple part. |
 | [3320](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3320) | `cache.isSpotAvailable(spot)` | Checks if fishing spot is occupied or accessible. |
 | [3359](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3359) | `penESP.update()` | Renders bounding boxes and labels for animal pens. |
-| [3384](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3384) | `chestESP.cleanup()` | Clears highlight and billboard adornments on chests. |
-| [3400](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3400) | `chestESP.attach(trackedChest)` | Attaches visual ESP Adornment to newly discovered chest. |
-| [3459](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3459) | `chestESP.update()` | Refreshes chest ESP positions and distance tags. |
+| [3402](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3402) | `chestESP.removeVisual(model)` | Removes highlight and billboard adornments for a specific chest. |
+| [3418](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3418) | `chestESP.cleanup()` | Clears highlight and billboard adornments on all chests. |
+| [3430](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3430) | `chestESP.attach(trackedChest)` | Attaches visual ESP Adornment to newly discovered chest. |
+| [3490](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3490) | `chestESP.update()` | Refreshes chest ESP positions and distance tags. |
 | [3498](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3498) | `manatite.cleanupVisuals()` | Removes highlight adornments from Manatite crystals. |
 | [3510](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3510) | `manatite.updateESP()` | Renders ESP highlights and distance labels on Manatite nodes. |
 | [3593](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3593) | `mithril.cleanupVisuals()` | Removes highlight adornments from Mithril ore nodes. |
