@@ -1,4 +1,4 @@
--- Cow Hub [56ff3af] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [ce83541] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -49,7 +49,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [56ff3af]",
+    Name = "Cow Hub [ce83541]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -10596,7 +10596,15 @@ end
 
 function rafting.handleSnapshot(payload)
     if not payload or type(payload) ~= "table" then return end
+    -- The server has closed this session; its late snapshots would restart steering on a finished voyage
+    if payload.Id and payload.Id == rafting.endedSessionId then return end
     rafting.lastSnapshotTime = os.clock()
+    if payload.Id and payload.Id ~= rafting.sessionId then
+        rafting.sessionSeenAt = os.clock()
+    end
+    if payload.Id then
+        rafting.lastSessionSnapAt = os.clock()
+    end
 
     -- Auto-rearm steering loop whenever enabled
     if rafting.enabled then
@@ -10906,8 +10914,9 @@ function rafting.stepSteering(dt)
     local posX = frame.Position.X
     local posZ = frame.Position.Z
 
-    -- Reached the Sea? (SeaStartX = 6594.58)
-    if posX >= 6590 and not rafting.isEndingVoyage then
+    -- Reached the Sea? (SeaStartX = 6594.58). Once per session: late snapshots used to re-enter and stack restarts.
+    if posX >= 6590 and not rafting.isEndingVoyage and rafting.seaEndedSessionId ~= rafting.sessionId then
+        rafting.seaEndedSessionId = rafting.sessionId
         rafting.isEndingVoyage = true
         rafting.isSailing = false
         rafting.status = "Idle"
@@ -11609,10 +11618,6 @@ function rafting.onSessionEnded(reason)
                 else
                     rafting.teleportToRaftYard()
                     safeNotify({ Title = "River Failsafe", Content = "Rescued from river! Returned to dock.", Duration = 3 })
-                    if rafting.autoLoop and rafting.enabled then
-                        task.wait(2)
-                        rafting.startVoyage()
-                    end
                 end
             end
         end
@@ -11629,6 +11634,43 @@ function rafting.onSessionEnded(reason)
         rafting.statusText = "Rafting session ended."
     end
     rafting.updateCards()
+    rafting.scheduleLoopRestart()
+end
+
+-- The one place the auto loop starts the next voyage. Every ending (sea, Return, sinking, death, river rescue)
+-- lands here, and a newer call replaces an older one, so an ending reported several times starts one voyage.
+-- A start that does not produce a session (logged: the cow died and respawned elsewhere mid-start) is retried.
+rafting.LOOP_RETRY_SECONDS = 30
+function rafting.scheduleLoopRestart()
+    if not (rafting.autoLoop and rafting.enabled) then return end
+    local gen = (rafting.loopGen or 0) + 1
+    rafting.loopGen = gen
+    task.spawn(function()
+        local function isCurrent()
+            return rafting.loopGen == gen and rafting.autoLoop and rafting.enabled
+        end
+        task.wait(3)
+        -- Until the server closes the session, the cow belongs on the raft: a Return can be refused mid-river,
+        -- and the voyage then carries on with steering.
+        while isCurrent() do
+            local sessionLive = rafting.lastSessionSnapAt and (os.clock() - rafting.lastSessionSnapAt) < 4
+            if not sessionLive or rafting.endedSessionId == rafting.sessionId then break end
+            task.wait(0.5)
+        end
+        -- After a death, wait for the respawned character
+        while isCurrent() and not (root and root.Parent and humanoid and humanoid.Health > 0) do
+            task.wait(0.5)
+        end
+        if not isCurrent() then return end
+        rafting.telemetryEvent("RaftLoopRestart", { Gen = gen })
+        local attemptAt = os.clock()
+        rafting.startVoyage()
+        task.wait(rafting.LOOP_RETRY_SECONDS)
+        if isCurrent() and (rafting.sessionSeenAt or 0) < attemptAt then
+            rafting.telemetryEvent("RaftLoopRetry", { Gen = gen })
+            rafting.scheduleLoopRestart()
+        end
+    end)
 end
 
 function rafting.endVoyage()
@@ -11645,32 +11687,10 @@ function rafting.endVoyage()
     triggerRaftingCommand("Return")
     task.wait(0.2)
     rafting.fireRemoteSafely("Return", nil, 1.0)
+    -- No teleport here: the session is still open until the server ends it, and pulling the cow off a sailing
+    -- raft was followed by a death and a respawn elsewhere. scheduleLoopRestart (via onSessionEnded) brings the
+    -- cow back once the session has closed, and startVoyage teleports it to the launch if it is far away.
     rafting.onSessionEnded("Voyage ended. Returned to shore.")
-
-    -- Immediate failsafe: guarantee teleport back to launch pad within 0.5s if still in water
-    task.delay(0.5, function()
-        if root then
-            local rPos = root.Position
-            if rPos.X > 50 or rPos.Y < 703.0 or (humanoid and humanoid.FloorMaterial == Enum.Material.Water) then
-                rafting.teleportToRaftYard()
-                if root then
-                    root.Anchored = true
-                    task.wait(0.2)
-                    root.Anchored = false
-                end
-            end
-        end
-    end)
-
-    if rafting.autoLoop and rafting.enabled then
-        task.delay(4, function()
-            if rafting.autoLoop and rafting.enabled then
-                rafting.teleportToRaftYard()
-                task.wait(2)
-                rafting.startVoyage()
-            end
-        end)
-    end
 end
 
 function rafting.teleportToRaftYard()
@@ -11710,8 +11730,10 @@ function rafting.initClientListener()
             elseif eventName == "RaftingBoard" then
                 rafting.handleBoarding(payload)
             elseif eventName == "RaftingEnded" then
+                rafting.endedSessionId = rafting.sessionId
                 rafting.onSessionEnded("Rafting session ended on server.")
             elseif eventName == "RaftingSinking" then
+                rafting.endedSessionId = rafting.sessionId
                 rafting.onSessionEnded("Raft sank! Session ended.")
             elseif eventName == "HobgoblinRock" then
                 rafting.handleHobgoblinRock(payload)
