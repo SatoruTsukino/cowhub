@@ -1,4 +1,4 @@
--- Cow Hub [7872299] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [2a7f986] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -54,7 +54,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [7872299]",
+    Name = "Cow Hub [2a7f986]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -421,10 +421,6 @@ local chomp = {
     pending = {},
     lastFire = 0,
     lastNode = nil,
-    debug = false,
-    logBuf = {},
-    logPath = nil,
-    lastFlush = 0,
     stats = { sent = 0, accepted = 0, rejected = 0, cooldownRejects = 0 },
     natural = { held = false, lastTap = 0, lastEngage = 0, notGrazingSince = nil, rearmAt = 0, lastGrazing = nil, lastGameResult = 0, input = nil, lastScan = -math.huge, engaged = false },
 }
@@ -1753,37 +1749,6 @@ end)
 -- ==========================
 -- chomp state table is declared next to `farm` (used by relog save/restore above)
 
-function chomp.log(event, data)
-    if not chomp.debug then return end
-    data = data or {}
-    data.ev = event
-    data.t = math.floor(os.clock() * 1000) / 1000
-    local ok, line = pcall(HttpService.JSONEncode, HttpService, data)
-    if ok then table.insert(chomp.logBuf, line) end
-end
-
-function chomp.flushLog(force)
-    if #chomp.logBuf == 0 then return end
-    local now = os.clock()
-    if not force and now - chomp.lastFlush < 2 then return end
-    chomp.lastFlush = now
-    if not writefile then table.clear(chomp.logBuf) return end
-    if not chomp.logPath then
-        chomp.logPath = resolveCowHubPath(string.format("chomp_%d.jsonl", os.time()), "chomplogs")
-    end
-    local chunk = table.concat(chomp.logBuf, "\n") .. "\n"
-    table.clear(chomp.logBuf)
-    pcall(function()
-        local exists = isfile and isfile(chomp.logPath)
-        if exists and appendfile then
-            appendfile(chomp.logPath, chunk)
-        else
-            local prev = (exists and readfile) and readfile(chomp.logPath) or ""
-            writefile(chomp.logPath, prev .. chunk)
-        end
-    end)
-end
-
 -- Fastest interval the server accepts right now (buffs read live from player attributes)
 function chomp.serverInterval(node)
     local base = math.clamp(tonumber(plr:GetAttribute("ChewCooldown")) or chomp.BASE, chomp.MIN, chomp.MAX_COOLDOWN)
@@ -1827,12 +1792,6 @@ function chomp.fire(nodeId, node, now)
     spiderLogger.isInternalFire = true
     pcall(function() chompEvent:FireServer(nodeId, nil, serial) end)
     spiderLogger.isInternalFire = false
-    if chomp.debug then
-        chomp.log("send", {
-            id = serial, node = tostring(nodeId), interval = interval, margin = chomp.margin,
-            chewCooldown = plr:GetAttribute("ChewCooldown"), mult = plr:GetAttribute("CowGrazingSpeedMultiplier"),
-        })
-    end
     return true
 end
 
@@ -1862,12 +1821,6 @@ do
                     chomp.lastFire = now
                 end
             end
-            if chomp.debug then
-                chomp.log("result", {
-                    id = res.RequestId, ok = res.Accepted == true, reason = res.Reason,
-                    rttMs = math.floor((now - p.SentAt) * 1000), margin = chomp.margin,
-                })
-            end
         end))
     end
 end
@@ -1886,7 +1839,6 @@ function chomp.findInput(now)
     for _, t in ipairs(objs) do
         if type(t) == "table" and rawget(t, "_grazeSources") ~= nil and rawget(t, "_grazePressed") ~= nil then
             n.input = t
-            chomp.log("natural", { act = "input_found" })
             return t
         end
     end
@@ -1935,7 +1887,6 @@ function chomp.engage(now)
         n.engaged = true
         chomp.sendKey(true)
         task.delay(0.05, function() chomp.sendKey(false) end)
-        chomp.log("natural", { act = "tap", toggleSetting = true })
     else
         -- Hold setting: game latches _grazePressed, so release before re-press
         if n.held then
@@ -1947,7 +1898,6 @@ function chomp.engage(now)
             chomp.sendKey(true)
         end
         n.held = true
-        chomp.log("natural", { act = "hold", toggleSetting = false })
     end
 end
 
@@ -1956,7 +1906,6 @@ function chomp.release()
     if n.held then
         n.held = false
         chomp.sendKey(false)
-        chomp.log("natural", { act = "release" })
     end
     n.notGrazingSince = nil
 end
@@ -1970,7 +1919,6 @@ function chomp.stopNatural()
     if engaged and plr:GetAttribute("CowGrazeToggle") == true and chomp.isGrazing() then
         chomp.sendKey(true)
         task.delay(0.05, function() chomp.sendKey(false) end)
-        chomp.log("natural", { act = "untoggle" })
     end
 end
 
@@ -1983,7 +1931,6 @@ function chomp.tickNatural(now)
     local grazing, src = chomp.isGrazing()
     if grazing ~= n.lastGrazing then
         n.lastGrazing = grazing
-        chomp.log("graze", { on = grazing, src = src })
     end
     if grazing then
         n.notGrazingSince = nil
@@ -2011,12 +1958,10 @@ function chomp.onMobAttack(now)
     n.notGrazingSince = nil
     -- pressE() (cave mobs) sends an E release, so a held graze key is no longer held
     n.held = false
-    chomp.log("mob", {})
 end
 
 _G.CowHubChompCleanup = function()
     chomp.stopNatural()
-    chomp.flushLog(true)
 end
 
 -- ==========================
@@ -2028,7 +1973,6 @@ do
         if active == farm.botCheckActive then return end
         farm.botCheckActive = active
         if active then chomp.release() end
-        chomp.log("botcheck", { active = active })
         safeNotify({
             Title = active and "Bot Check Active" or "Bot Check Cleared",
             Content = active and "Autofarm paused until the human check is completed." or "Autofarm resumed.",
@@ -5702,7 +5646,6 @@ function updateHeartbeatConnection()
                 local now = os.clock()
                 local rootPos = getRootPos(root)
                 if not rootPos then return end
-                if chomp.debug then chomp.flushLog(false) end
                 if farm.botCheckActive then return end
 
                 -- Targeted background caches refresh (only when mobs need caching)
@@ -5866,7 +5809,6 @@ MainTab:CreateToggle({
         if not Value and chomp.mode == "Natural" then
             chomp.stopNatural()
         end
-        chomp.log("toggle", { autoChomp = Value, mode = chomp.mode })
         updateHeartbeatConnection()
     end,
 })
@@ -5962,7 +5904,6 @@ MainTab:CreateDropdown({
         if newMode == chomp.mode then return end
         if chomp.mode == "Natural" then chomp.stopNatural() end
         chomp.mode = newMode
-        chomp.log("mode", { mode = newMode })
     end,
 })
 
@@ -5972,7 +5913,6 @@ MainTab:CreateToggle({
     Flag = "Toggle_ChompAutoMax",
     Callback = function(Value)
         chomp.autoMax = Value
-        chomp.log("autoMax", { on = Value })
     end,
 })
 
@@ -5985,29 +5925,6 @@ MainTab:CreateDropdown({
     Callback = function(Option)
         local selection = tostring(type(Option) == "table" and Option[1] or Option)
         chomp.manualDelay = math.max(chomp.MIN, tonumber(string.match(selection, "(%d+%.?%d*)")) or chomp.MIN)
-    end,
-})
-
-MainTab:CreateToggle({
-    Name = "Chomp Debug Log (cowhub/chomplogs)",
-    CurrentValue = false,
-    Flag = "Toggle_ChompDebugLog",
-    Callback = function(Value)
-        if Value then
-            chomp.debug = true
-            chomp.logPath = nil
-            chomp.log("start", {
-                placeId = game.PlaceId, jobId = game.JobId, mode = chomp.mode, autoMax = chomp.autoMax,
-                manualDelay = chomp.manualDelay, toggleSetting = plr:GetAttribute("CowGrazeToggle") == true,
-                chewCooldown = plr:GetAttribute("ChewCooldown"), mult = plr:GetAttribute("CowGrazingSpeedMultiplier"),
-            })
-            chomp.flushLog(true)
-            safeNotify({ Title = "Chomp Debug Log", Content = "Writing to " .. tostring(chomp.logPath), Duration = 6 })
-        else
-            chomp.log("stop", { stats = chomp.stats })
-            chomp.flushLog(true)
-            chomp.debug = false
-        end
     end,
 })
 

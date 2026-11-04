@@ -15,3 +15,6 @@
    - Preserve differing theme assignments (`frost` for preview, `rose` for cowhub).
    - Only promote features from `preview.lua` to `cowhub.lua` once tested and stable.
 
+4. **Promotion:**
+   - Promote with `python3 scripts/promote-preview.py`. It copies `preview.lua` to `cowhub.lua`, strips the staging-only chomp debug log, and sets the theme to `"rose"`.
+   - Run the Luau compile and register checks on `cowhub.lua` afterwards.
