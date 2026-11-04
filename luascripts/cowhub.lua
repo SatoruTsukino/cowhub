@@ -1,4 +1,4 @@
--- Cow Hub [98fb3c7] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [923f27f] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -54,7 +54,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [98fb3c7]",
+    Name = "Cow Hub [923f27f]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -404,9 +404,6 @@ local farm = {
     currentNodeStartTime = 0,
     lastNodeSearchTime = 0,
     onlyMatureGrass = true,
-    goldenAura = false,
-    goldenAuraRadius = 60,
-    lastGoldenAuraTime = 0,
 }
 
 -- Grass chomp module state (functions defined after spiderLogger / remotes; see CHOMP MODULE)
@@ -1105,7 +1102,6 @@ function afkRelog.saveState()
             On = farm.on == true,
             AutoChomp = farm.autoChomp == true,
             AutoChompMobs = farm.autoChompMobs == true,
-            GoldenAura = farm.goldenAura == true,
             AutoFish = farm.autoFish == true,
             AnchorPos = farm.anchorPos and { X = farm.anchorPos.X, Y = farm.anchorPos.Y, Z = farm.anchorPos.Z } or nil,
             Radius = farm.radius or 75,
@@ -1309,10 +1305,6 @@ function afkRelog.checkAndResumeState()
         if f.AutoChompMobs then
             farm.autoChompMobs = true
             pcall(function() Window:Set("Toggle_MobAura", true) end)
-        end
-        if f.GoldenAura then
-            farm.goldenAura = true
-            pcall(function() Window:Set("Toggle_GoldenAura", true) end)
         end
         if f.AutoFish then
             farm.autoFish = true
@@ -5447,42 +5439,6 @@ function farm.processGrassChomp(now, rootPos)
     end
 end
 
-function farm.applyGoldenAura(customRadius)
-    local rootPos = getRootPos(root)
-    if not rootPos then return 0 end
-    local radius = customRadius or farm.goldenAuraRadius or 60
-    local radiusSq = radius * radius
-    local grassNodes = cache.getGrassNodes()
-    local count = 0
-
-    for _, node in ipairs(grassNodes) do
-        if node and node.Parent then
-            local nodePos = cache.getNodePosition(node)
-            if nodePos and get2DDistanceSq(rootPos, nodePos) <= radiusSq then
-                local nodeId = cache.getNodeID(node)
-                if nodeId then
-                    local isGolden = node:GetAttribute("Golden")
-                    if isGolden == nil then
-                        isGolden = node:GetAttribute("golden")
-                    end
-                    if isGolden ~= true then
-                        pcall(function()
-                            node:SetAttribute("Golden", true)
-                        end)
-                        count = count + 1
-                    end
-                end
-            end
-        end
-    end
-    return count
-end
-farm.setGoldenGrassAroundMe = farm.applyGoldenAura
-
-if getgenv then
-    getgenv().ApplyGoldenAura = farm.applyGoldenAura
-end
-
 function farm.processFishing(now, rootPos)
     if not fishingEvent and cowRemotes then
         fishingEvent = cowRemotes:FindFirstChild("FishingRequest")
@@ -5603,7 +5559,7 @@ end
 -- MAIN ENGINE HEARTBEAT LOOP (Concise Dispatcher)
 -- ==========================
 function updateHeartbeatConnection()
-    if farm.on or farm.autoChomp or farm.autoFish or farm.autoChompMobs or dodge.auto or farm.goldenAura or (manatite and manatite.auto) or (mithril and mithril.auto) then
+    if farm.on or farm.autoChomp or farm.autoFish or farm.autoChompMobs or dodge.auto or (manatite and manatite.auto) or (mithril and mithril.auto) then
         if not HeartbeatConnection then
             HeartbeatConnection = RunService.Heartbeat:Connect(function(dt)
             _G.CowHubHeartbeat = HeartbeatConnection
@@ -5691,12 +5647,6 @@ function updateHeartbeatConnection()
                     end
                 elseif farm.autoChomp and not (manatite and manatite.auto) and not (mithril and mithril.auto) and not prioritizedMobThisFrame and not dodge.isUnderground and not dodge.isDodging then
                     farm.processGrassChomp(now, rootPos)
-                end
-
-                -- 3b. Golden Grass Aura Logic (Periodic Pulse)
-                if farm.goldenAura and (now - farm.lastGoldenAuraTime > 0.3) then
-                    farm.lastGoldenAuraTime = now
-                    farm.applyGoldenAura()
                 end
 
                 -- 4. Auto-Fishing Logic
@@ -5808,19 +5758,6 @@ MainTab:CreateToggle({
         farm.autoChomp = Value
         if not Value and chomp.mode == "Natural" then
             chomp.stopNatural()
-        end
-        updateHeartbeatConnection()
-    end,
-})
-
-MainTab:CreateToggle({
-    Name = "Enable Golden Grass Aura",
-    CurrentValue = false,
-    Flag = "Toggle_GoldenAura",
-    Callback = function(Value)
-        farm.goldenAura = Value
-        if Value then
-            farm.applyGoldenAura()
         end
         updateHeartbeatConnection()
     end,
@@ -6016,19 +5953,6 @@ MainTab:CreateDropdown({
     end,
 })
 
-MainTab:CreateButton({
-    Name = "Turn On Golden Grass (Once)",
-    Callback = function()
-        local count = farm.applyGoldenAura(farm.goldenAuraRadius or 60)
-        Window:Notify({
-            Title = "Golden Aura",
-            Content = "Turned golden for " .. tostring(count) .. " nearby grass nodes.",
-            Duration = 2.5,
-            Image = 4483362458,
-        })
-    end,
-})
-
 MainTab:CreateSlider({
     Name = "Farm Radius (Studs)",
     Range = {10, 300},
@@ -6042,18 +5966,6 @@ MainTab:CreateSlider({
         if penESP and penESP.update then
             pcall(penESP.update)
         end
-    end,
-})
-
-MainTab:CreateSlider({
-    Name = "Golden Aura Radius",
-    Range = {10, 150},
-    Increment = 5,
-    Suffix = "Studs",
-    CurrentValue = 60,
-    Flag = "Slider_GoldenRadius",
-    Callback = function(Value)
-        farm.goldenAuraRadius = Value
     end,
 })
 
@@ -12789,7 +12701,6 @@ SettingsTab:CreateButton({
             pcall(_G.CowHubChompCleanup)
             farm.autoChompMobs = false
             farm.autoFish = false
-            farm.goldenAura = false
             cache.cleanupRippleTracking()
             dodge.auto = false
 
