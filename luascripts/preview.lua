@@ -1,4 +1,4 @@
--- Cow Hub [99ff70a] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [efb83ea] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -54,10 +54,10 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [99ff70a]",
+    Name = "Cow Hub [efb83ea]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
-    theme = "frost",
+    theme = "rose",
     configuration = {
         autoSave = true,
         autoLoad = true,
@@ -426,7 +426,7 @@ local chomp = {
     logPath = nil,
     lastFlush = 0,
     stats = { sent = 0, accepted = 0, rejected = 0, cooldownRejects = 0 },
-    natural = { held = false, lastTap = 0, lastEngage = 0, notGrazingSince = nil, rearmAt = 0, lastGrazing = nil, lastGameResult = 0, input = nil, lastScan = -math.huge },
+    natural = { held = false, lastTap = 0, lastEngage = 0, notGrazingSince = nil, rearmAt = 0, lastGrazing = nil, lastGameResult = 0, input = nil, lastScan = -math.huge, engaged = false },
 }
 
 local dodge = {
@@ -1932,6 +1932,7 @@ function chomp.engage(now)
         -- Toggle setting: a press flips grazing, so tap sparingly
         if now - n.lastTap < (n.input and 3 or 6) then return end
         n.lastTap = now
+        n.engaged = true
         chomp.sendKey(true)
         task.delay(0.05, function() chomp.sendKey(false) end)
         chomp.log("natural", { act = "tap", toggleSetting = true })
@@ -1963,7 +1964,10 @@ end
 -- Full stop (mode switch / toggle off): also untoggle grazing under the Toggle Graze setting
 function chomp.stopNatural()
     chomp.release()
-    if plr:GetAttribute("CowGrazeToggle") == true and chomp.isGrazing() then
+    local engaged = chomp.natural.engaged
+    chomp.natural.engaged = false
+    -- Only undo a graze the hub turned on; never untoggle the player's own grazing
+    if engaged and plr:GetAttribute("CowGrazeToggle") == true and chomp.isGrazing() then
         chomp.sendKey(true)
         task.delay(0.05, function() chomp.sendKey(false) end)
         chomp.log("natural", { act = "untoggle" })
