@@ -77,8 +77,8 @@ Primary CowHub script containing autofarm engines, mining, dodging, auction scan
 | [2168](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2168) | `cache.getCleanGrassName(nodeName)` | Strips numerical suffixes from grass model names. |
 | [2190](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2190) | `cache.extractGrassNodeId(target)` | Extracts node ID from interaction target instance. |
 | [2215](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2215) | `cache.getMobPayload(mobName)` | Retrieves cached network attack payload table for mob species. |
-| [preview 1757](file:///Users/jsph/cowhub/luascripts/preview.lua#L1757) | `chomp.log(event, data)` | **Staging only.** Buffers a debug JSON line while Chomp Debug Log is on. Stripped from cowhub.lua by `scripts/promote-preview.py`. |
-| [preview 1766](file:///Users/jsph/cowhub/luascripts/preview.lua#L1766) | `chomp.flushLog(force)` | **Staging only.** Writes buffered debug lines to `cowhub/chomplogs/` at most every 2 s. |
+| [preview 1758](file:///Users/jsph/cowhub/luascripts/preview.lua#L1758) | `chomp.log(event, data)` | **Staging only.** Buffers a debug JSON line while Chomp Debug Log is on. Stripped from cowhub.lua by `scripts/promote-preview.py`. |
+| [preview 1767](file:///Users/jsph/cowhub/luascripts/preview.lua#L1767) | `chomp.flushLog(force)` | **Staging only.** Writes buffered debug lines to `cowhub/chomplogs/` at most every 2 s. |
 | [1753](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1753) | `chomp.serverInterval(node)` | Fastest server-accepted bite interval from live ChewCooldown / grazing multiplier (wheat & node cooldown aware). |
 | [1768](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1768) | `chomp.getInterval(node)` | Server interval + adaptive margin, floored at the manual delay when Auto Max is off. |
 | [1777](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1777) | `chomp.fire(nodeId, node, now)` | Single grass ChompRequest call site; fires `(nodeId, nil, serial)` when the interval has elapsed. |

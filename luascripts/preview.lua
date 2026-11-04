@@ -1,4 +1,4 @@
--- Cow Hub [6ed8ab3] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [ed2d340] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -54,7 +54,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [6ed8ab3]",
+    Name = "Cow Hub [ed2d340]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -427,6 +427,7 @@ local chomp = {
     logPath = nil,
     lastFlush = 0,
     stats = { sent = 0, accepted = 0, rejected = 0, cooldownRejects = 0 },
+    statConns = {},    -- golden probe: player attribute / leaderstats watchers (debug log only)
     natural = { held = false, lastTap = 0, lastEngage = 0, notGrazingSince = nil, rearmAt = 0, lastGrazing = nil, lastGameResult = 0, input = nil, lastScan = -math.huge, engaged = false },
 }
 
@@ -1811,6 +1812,36 @@ function chomp.findNodeById(nodeId)
         if tostring(cache.getNodeID(node)) == want then return node end
     end
     return nil
+end
+
+-- Golden probe: log every numeric player attribute / leaderstats change, so per-bite rewards
+-- can be read off the timeline (GrazeResult itself carries no reward fields)
+function chomp.watchStats(on)
+    for _, c in ipairs(chomp.statConns) do pcall(function() c:Disconnect() end) end
+    table.clear(chomp.statConns)
+    if not on then return end
+    local last = {}
+    local function track(key, value)
+        local prev = last[key]
+        last[key] = value
+        if type(value) == "number" and type(prev) == "number" and value ~= prev then
+            chomp.log("stat", { key = key, delta = value - prev, value = value })
+        end
+    end
+    for name, value in pairs(plr:GetAttributes()) do last["attr." .. name] = value end
+    table.insert(chomp.statConns, plr.AttributeChanged:Connect(function(name)
+        track("attr." .. name, plr:GetAttribute(name))
+    end))
+    local ls = plr:FindFirstChild("leaderstats")
+    if ls then
+        for _, v in ipairs(ls:GetDescendants()) do
+            if v:IsA("ValueBase") then
+                local key = "ls." .. v.Name
+                last[key] = v.Value
+                table.insert(chomp.statConns, v.Changed:Connect(function(value) track(key, value) end))
+            end
+        end
+    end
 end
 
 -- Fastest interval the server accepts right now (buffs read live from player attributes)
@@ -6040,9 +6071,11 @@ MainTab:CreateToggle({
                 chewCooldown = plr:GetAttribute("ChewCooldown"), mult = plr:GetAttribute("CowGrazingSpeedMultiplier"),
             })
             chomp.flushLog(true)
+            chomp.watchStats(true)
             safeNotify({ Title = "Chomp Debug Log", Content = "Writing to " .. tostring(chomp.logPath), Duration = 6 })
         else
             chomp.log("stop", { stats = chomp.stats })
+            chomp.watchStats(false)
             chomp.flushLog(true)
             chomp.debug = false
         end
@@ -13044,6 +13077,7 @@ SettingsTab:CreateButton({
                     pcall(function() conn:Disconnect() end)
                 end
             end
+            chomp.watchStats(false)
             if mapOptimizer and mapOptimizer.stopStreamHook then
                 pcall(function() mapOptimizer.stopStreamHook() end)
             end
