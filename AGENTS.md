@@ -35,5 +35,10 @@ On every modification/commit to `luascripts/cowhub.lua` and `luascripts/preview.
 ## Workspace File Storage
 All files generated or persisted by CowHub scripts (configs, state, logs, telemetry, caches) must reside in a dedicated `cowhub/` directory within executor workspace. Never write loose files to root workspace directory. Raft logs must generate into `cowhub/raftlogs/` and voyage telemetry into `cowhub/voyagelogs/`. Ensure `makefolder` and migrate legacy root/parent files when reading/writing.
 
+## Script Roles & Themes
+- `luascripts/preview.lua`: Staging for new features and debug modes. Theme: `"frost"`.
+- `luascripts/cowhub.lua`: Stable / production for features deployable without debugging. Theme: `"rose"`.
+- **Parity**: Do not force 100% parity between preview and cowhub. Keep themes distinct.
+
 
 

@@ -332,6 +332,11 @@ On every modification/commit to `luascripts/cowhub.lua` and `luascripts/preview.
 - Raft logs must generate into `cowhub/raftlogs/` and voyage telemetry into `cowhub/voyagelogs/`.
 - Never write loose files to root workspace directory.
 
+### Script Roles & Themes
+- `luascripts/preview.lua`: Staging for new features and debug modes. Theme: `frost`.
+- `luascripts/cowhub.lua`: Production for stable features deployable without debugging. Theme: `rose`.
+- Do not enforce 100% parity between preview and cowhub. Keep themes distinct.
+
 ---
 
 *GSD Methodology — Model-Agnostic Edition*
