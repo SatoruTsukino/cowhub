@@ -35,6 +35,8 @@ updated: 2026-11-03T00:00:00Z
 - [x] Plan 1.1: Chomp core — interval, wire shape, GrazeResult feedback (1f02e45)
 - [x] Plan 1.2: Natural mode, mob re-arm, bot-check E release (1f02e45)
 - [x] Plan 1.3: UI, debug log, relog persistence, docs, header
+- [x] Plan 1.4: Natural mode graze-state fix
+- [x] Plan 1.5: Autofarm chomp calories/hr stat
 
 ### Phase 2: Module Dumper
 **Status:** ⬜ Not Started

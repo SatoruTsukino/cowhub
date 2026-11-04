@@ -1,4 +1,4 @@
--- Cow Hub [f0f7d24] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [507de22] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -54,7 +54,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [f0f7d24]",
+    Name = "Cow Hub [507de22]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -423,6 +423,7 @@ local chomp = {
     logPath = nil,
     lastFlush = 0,
     stats = { sent = 0, accepted = 0, rejected = 0, cooldownRejects = 0 },
+    calories = { sessionGained = 0, startTime = 0, activeDuration = 0, lastTimestamp = 0, lastCalories = nil, ratePerHour = 0 },
     statConns = {},    -- golden probe: player attribute / leaderstats watchers (debug log only)
     natural = { held = false, lastTap = 0, lastEngage = 0, notGrazingSince = nil, rearmAt = 0, lastGrazing = nil, lastGameResult = 0, input = nil, lastScan = -math.huge, engaged = false },
 }
@@ -2069,6 +2070,68 @@ function chomp.onMobAttack(now)
     -- pressE() (cave mobs) sends an E release, so a held graze key is no longer held
     n.held = false
     chomp.log("mob", {})
+end
+
+-- Calorie tracking for Auto-Chomp stats
+function chomp.getCalories()
+    local val = tonumber(plr:GetAttribute("Calories"))
+    if val then return val end
+    local ls = plr:FindFirstChild("leaderstats")
+    if ls then
+        local c = ls:FindFirstChild("Calories")
+        if c and c:IsA("ValueBase") then
+            return tonumber(c.Value)
+        end
+    end
+    return nil
+end
+
+function chomp.resetCalories()
+    local now = os.clock()
+    local current = chomp.getCalories()
+    local cal = chomp.calories
+    cal.sessionGained = 0
+    cal.startTime = now
+    cal.activeDuration = 0
+    cal.lastTimestamp = now
+    cal.lastCalories = current
+    cal.ratePerHour = 0
+end
+
+function chomp.updateCalories()
+    local current = chomp.getCalories()
+    if not current then return end
+    local cal = chomp.calories
+    if not cal.lastCalories then
+        cal.lastCalories = current
+        return
+    end
+    local delta = current - cal.lastCalories
+    cal.lastCalories = current
+    if delta > 0 and farm.autoChomp then
+        cal.sessionGained = cal.sessionGained + delta
+    end
+end
+
+do
+    table.insert(scriptConnections, plr:GetAttributeChangedSignal("Calories"):Connect(function()
+        chomp.updateCalories()
+    end))
+    local function watchLeaderstats(parent)
+        local c = parent:FindFirstChild("Calories")
+        if c and c:IsA("ValueBase") then
+            table.insert(scriptConnections, c.Changed:Connect(function()
+                chomp.updateCalories()
+            end))
+        end
+    end
+    local ls = plr:FindFirstChild("leaderstats")
+    if ls then watchLeaderstats(ls) end
+    table.insert(scriptConnections, plr.ChildAdded:Connect(function(child)
+        if child.Name == "leaderstats" then
+            watchLeaderstats(child)
+        end
+    end))
 end
 
 _G.CowHubChompCleanup = function()
@@ -4248,6 +4311,23 @@ local function formatNumber(n)
     return formatted
 end
 
+local function formatCompact(n)
+    if not n or n ~= n then return "0" end
+    local abs = math.abs(n)
+    local sign = n < 0 and "-" or ""
+    if abs >= 1e12 then
+        return string.format("%s%.2fT", sign, abs / 1e12)
+    elseif abs >= 1e9 then
+        return string.format("%s%.2fB", sign, abs / 1e9)
+    elseif abs >= 1e6 then
+        return string.format("%s%.2fM", sign, abs / 1e6)
+    elseif abs >= 1e3 then
+        return string.format("%s%.2fK", sign, abs / 1e3)
+    else
+        return string.format("%s%.0f", sign, abs)
+    end
+end
+
 function auction.checkLots()
     if not httpRequest or WEBHOOK_URL == "" then return end
 
@@ -5881,6 +5961,9 @@ MainTab:CreateToggle({
         if not Value and chomp.mode == "Natural" then
             chomp.stopNatural()
         end
+        if Value then
+            chomp.resetCalories()
+        end
         chomp.log("toggle", { autoChomp = Value, mode = chomp.mode })
         updateHeartbeatConnection()
     end,
@@ -6027,11 +6110,33 @@ do
         while chomp.statusCard and _G.CowHubConnections == scriptConnections do
             task.wait(1)
             if farm.autoChomp then
+                chomp.updateCalories()
+                local now = os.clock()
+                local cal = chomp.calories
+                if cal.lastTimestamp == 0 then cal.lastTimestamp = now end
+                local dt = now - cal.lastTimestamp
+                cal.lastTimestamp = now
+                if not farm.botCheckActive and dt > 0 and dt < 5 then
+                    cal.activeDuration = cal.activeDuration + dt
+                end
+
+                if cal.activeDuration >= 3 and cal.sessionGained > 0 then
+                    cal.ratePerHour = (cal.sessionGained / cal.activeDuration) * 3600
+                end
+
+                local calRateStr = "--"
+                if cal.activeDuration >= 3 and cal.ratePerHour > 0 then
+                    calRateStr = string.format("%s/hr (%s)", formatCompact(cal.ratePerHour), formatNumber(math.floor(cal.ratePerHour)))
+                elseif cal.activeDuration < 3 then
+                    calRateStr = "Calculating..."
+                end
+
                 local st = chomp.stats
                 local t = string.format("Chomp: %s%s", chomp.mode, farm.botCheckActive and " | PAUSED (bot check)" or "")
-                local b = string.format("Interval: %.3fs (server %.3fs + margin %.3fs)\nSent %d | OK %d | Rejected %d (cooldown %d)\nGrazing: %s",
+                local b = string.format("Interval: %.3fs (server %.3fs + margin %.3fs)\nSent %d | OK %d | Rejected %d (cooldown %d)\nGrazing: %s\nAvg Calories/hr: %s",
                     chomp.getInterval(), chomp.serverInterval(), chomp.margin,
-                    st.sent, st.accepted, st.rejected, st.cooldownRejects, tostring(chomp.isGrazing()))
+                    st.sent, st.accepted, st.rejected, st.cooldownRejects, tostring(chomp.isGrazing()),
+                    calRateStr)
                 pcall(function()
                     if chomp.statusCard.SetTitle then
                         chomp.statusCard:SetTitle(t)
