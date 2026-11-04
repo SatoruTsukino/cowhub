@@ -1,4 +1,4 @@
--- Cow Hub [62fdf2f] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [b1fac9e] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -54,7 +54,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [62fdf2f]",
+    Name = "Cow Hub [b1fac9e]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -407,6 +407,7 @@ local farm = {
     goldenAura = false,
     goldenAuraRadius = 60,
     lastGoldenAuraTime = 0,
+    spoofedGolden = setmetatable({}, { __mode = "k" }), -- nodes Golden Aura flipped client-side (probe evidence)
 }
 
 -- Grass chomp module state (functions defined after spiderLogger / remotes; see CHOMP MODULE)
@@ -1784,6 +1785,34 @@ function chomp.flushLog(force)
     end)
 end
 
+-- Golden probe: JSON-safe copy of a remote payload (Instances, Vector3, etc. -> tostring)
+function chomp.sanitize(v, depth)
+    local t = type(v)
+    if t == "nil" or t == "boolean" or t == "number" or t == "string" then return v end
+    if t == "table" and (depth or 0) < 3 then
+        local out = {}
+        for k, item in pairs(v) do out[tostring(k)] = chomp.sanitize(item, (depth or 0) + 1) end
+        return out
+    end
+    return typeof(v) .. ":" .. tostring(v)
+end
+
+-- Golden probe: client view of a node; spoofed = Golden Aura set it locally (never replicates)
+function chomp.goldenState(node)
+    if not node or typeof(node) ~= "Instance" then return nil, false end
+    local golden = node:GetAttribute("Golden")
+    if golden == nil then golden = node:GetAttribute("golden") end
+    return golden, farm.spoofedGolden[node] == true
+end
+
+function chomp.findNodeById(nodeId)
+    local want = tostring(nodeId)
+    for _, node in ipairs(cache.getGrassNodes()) do
+        if tostring(cache.getNodeID(node)) == want then return node end
+    end
+    return nil
+end
+
 -- Fastest interval the server accepts right now (buffs read live from player attributes)
 function chomp.serverInterval(node)
     local base = math.clamp(tonumber(plr:GetAttribute("ChewCooldown")) or chomp.BASE, chomp.MIN, chomp.MAX_COOLDOWN)
@@ -1817,7 +1846,8 @@ function chomp.fire(nodeId, node, now)
     local serial = chomp.serial
     chomp.lastFire = now
     chomp.lastNode = nodeId
-    chomp.pending[serial] = { NodeId = nodeId, SentAt = now }
+    local golden, spoofed = chomp.goldenState(node)
+    chomp.pending[serial] = { NodeId = nodeId, SentAt = now, Golden = golden, Spoofed = spoofed }
     if serial % 32 == 0 then
         for k, p in pairs(chomp.pending) do
             if now - p.SentAt > 15 then chomp.pending[k] = nil end
@@ -1830,6 +1860,7 @@ function chomp.fire(nodeId, node, now)
     if chomp.debug then
         chomp.log("send", {
             id = serial, node = tostring(nodeId), interval = interval, margin = chomp.margin,
+            golden = golden, spoofed = spoofed,
             chewCooldown = plr:GetAttribute("ChewCooldown"), mult = plr:GetAttribute("CowGrazingSpeedMultiplier"),
         })
     end
@@ -1846,6 +1877,10 @@ do
             if not p then
                 -- Not ours: the game's own graze loop is biting (natural-mode evidence)
                 chomp.natural.lastGameResult = os.clock()
+                if chomp.debug then
+                    local golden, spoofed = chomp.goldenState(chomp.findNodeById(res.NodeId))
+                    chomp.log("result_game", { golden = golden, spoofed = spoofed, res = chomp.sanitize(res) })
+                end
                 return
             end
             if p.NodeId ~= res.NodeId then return end
@@ -1866,6 +1901,7 @@ do
                 chomp.log("result", {
                     id = res.RequestId, ok = res.Accepted == true, reason = res.Reason,
                     rttMs = math.floor((now - p.SentAt) * 1000), margin = chomp.margin,
+                    golden = p.Golden, spoofed = p.Spoofed, res = chomp.sanitize(res),
                 })
             end
         end))
@@ -5525,12 +5561,14 @@ function farm.applyGoldenAura(customRadius)
                         pcall(function()
                             node:SetAttribute("Golden", true)
                         end)
+                        farm.spoofedGolden[node] = true
                         count = count + 1
                     end
                 end
             end
         end
     end
+    if count > 0 then chomp.log("golden_spoof", { count = count, radius = radius }) end
     return count
 end
 farm.setGoldenGrassAroundMe = farm.applyGoldenAura
