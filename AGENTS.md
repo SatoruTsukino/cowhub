@@ -42,3 +42,9 @@ All files generated or persisted by CowHub scripts (configs, state, logs, teleme
 
 
 
+## FUNCTIONS.md Line Numbers
+Line numbers in `FUNCTIONS.md` must always match the code. After any change that shifts lines in an indexed script, run:
+```bash
+python3 scripts/update-functions-md.py
+```
+The pre-commit hook runs this automatically. Use `--check` to verify without writing; it exits 1 if any number is stale.
