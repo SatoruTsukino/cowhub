@@ -1,4 +1,4 @@
--- Cow Hub [f1c5445] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [c94b3e8] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -54,7 +54,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [f1c5445]",
+    Name = "Cow Hub [c94b3e8]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -526,6 +526,63 @@ local cache = {
 }
 updateWallRaycastFilter()
 
+-- Cosmetic ownership shared by the Town Auction and Skin Auction: the game's live profile
+-- (UIController.Store) + CosmeticConfig.IsOwned / GetOwnedCount, as the Closet uses
+local cosmetics = {
+    profileStore = nil,
+    profileScanAt = -math.huge,
+    config = nil,
+}
+
+function cosmetics.getProfile()
+    local store = cosmetics.profileStore
+    if store then
+        local ok, state = pcall(function() return store:GetState() end)
+        if ok and type(state) == "table" and type(state.Profile) == "table" then return state.Profile end
+        cosmetics.profileStore = nil
+    end
+    local now = os.clock()
+    if type(getgc) ~= "function" or now - cosmetics.profileScanAt < 5 then return nil end
+    cosmetics.profileScanAt = now
+    local ok, objs = pcall(getgc, true)
+    if not ok or type(objs) ~= "table" then return nil end
+    for _, t in ipairs(objs) do
+        if type(t) == "table" and rawget(t, "Remotes") ~= nil and type(rawget(t, "Store")) == "table" then
+            local s = rawget(t, "Store")
+            local okState, state = pcall(function() return s:GetState() end)
+            if okState and type(state) == "table" and type(state.Profile) == "table" then
+                cosmetics.profileStore = s
+                return state.Profile
+            end
+        end
+    end
+    return nil
+end
+
+function cosmetics.getConfig()
+    if cosmetics.config == nil then
+        local ok, mod = pcall(function()
+            return require(game:GetService("ReplicatedStorage").CowGame.Shared.CosmeticConfig)
+        end)
+        cosmetics.config = (ok and type(mod) == "table") and mod or false
+    end
+    return cosmetics.config or nil
+end
+
+-- true / false, or nil when unknown (no profile/config, not a cosmetic, or the lookup errored)
+function cosmetics.isOwned(id)
+    if type(id) ~= "string" or id == "" then return nil end
+    local config = cosmetics.getConfig()
+    if not config then return nil end
+    local okDef, def = pcall(config.Get, id)
+    if not okDef or not def then return nil end
+    local profile = cosmetics.getProfile()
+    if not profile then return nil end
+    local ok, owned = pcall(config.IsOwned, id, profile)
+    if not ok then return nil end
+    return owned == true
+end
+
 local auction = {
     lotNames = {"Lot1", "Lot2", "Lot3", "Lot4"},
     previousSignatures = {},
@@ -543,6 +600,7 @@ local auction = {
         Lot4 = false
     },
     maxAutoBidLimit = 0,
+    autoBidUnowned = false,
     autoBidConnections = {},
     autoBidLoopRunning = true,
     lastAutoBidTime = {},
@@ -583,10 +641,8 @@ local townAuction = {
     held = 0,
     lotsBySlot = {},
     ownedCopies = {},
-    profileStore = nil,
-    profileScanAt = -math.huge,
-    cosmeticConfig = nil,
     ownershipRedrawQueued = false,
+    autoBidUnowned = false,
     cards = {},
     customBidAmounts = {},
     infoCard = nil,
@@ -1153,8 +1209,12 @@ function afkRelog.saveState()
         },
         TownAuction = {
             AutoBidAll = townAuction and townAuction.autoBidAll == true,
+            AutoBidUnowned = townAuction and townAuction.autoBidUnowned == true,
             AutoBidActive = townAuction and townAuction.autoBidActive or {},
             MaxAutoBidLimit = townAuction and townAuction.maxAutoBidLimit or 0,
+        },
+        Auction = {
+            AutoBidUnowned = auction and auction.autoBidUnowned == true,
         },
     }
 
@@ -1360,6 +1420,10 @@ function afkRelog.checkAndResumeState()
                 townAuction.autoBidAll = true
                 pcall(function() Window:Set("Toggle_TownAutoBidAll", true) end)
             end
+            if ta.AutoBidUnowned then
+                townAuction.autoBidUnowned = true
+                pcall(function() Window:Set("Toggle_TownAutoBidUnowned", true) end)
+            end
             if type(ta.AutoBidActive) == "table" then
                 for slot, active in pairs(ta.AutoBidActive) do
                     if active then
@@ -1371,6 +1435,10 @@ function afkRelog.checkAndResumeState()
             if ta.MaxAutoBidLimit and ta.MaxAutoBidLimit > 0 then
                 townAuction.maxAutoBidLimit = ta.MaxAutoBidLimit
             end
+        end
+        if data.Auction and data.Auction.AutoBidUnowned then
+            auction.autoBidUnowned = true
+            pcall(function() Window:Set("Toggle_AuctionAutoBidUnowned", true) end)
         end
 
         if f.On then
@@ -7203,8 +7271,22 @@ end
 -- AUTO OUTBID SYSTEM
 -- ==========================
 
+-- Lot is a candidate: toggled per lot / all, or unowned mode (ownership checked in checkAndAutoBidLot)
+function auction.lotAutoBidEnabled(lotName)
+    return auction.autoBidAll or auction.autoBidActive[lotName] == true or auction.autoBidUnowned
+end
+
+function auction.hasAnyAutoBidActive()
+    if auction.autoBidAll or auction.autoBidUnowned then return true end
+    for _, active in pairs(auction.autoBidActive) do
+        if active then return true end
+    end
+    return false
+end
+
 function auction.checkAndAutoBidLot(lotName)
-    if not (auction.autoBidAll or auction.autoBidActive[lotName]) then return end
+    local toggled = auction.autoBidAll or auction.autoBidActive[lotName] == true
+    if not (toggled or auction.autoBidUnowned) then return end
     if not auction.remote then
         auction.remote = cowRemotes:FindFirstChild("SkinAuctionRequest")
         if not auction.remote then return end
@@ -7215,6 +7297,8 @@ function auction.checkAndAutoBidLot(lotName)
 
     local skinId = lot:GetAttribute("SkinId")
     if not skinId or skinId == "" or skinId == "None" then return end
+    -- Unowned mode bids only when the game confirms the skin isn't owned (unknown never bids)
+    if not toggled and cosmetics.isOwned(skinId) ~= false then return end
 
     local round = lot:GetAttribute("Round")
     local slot = lot:GetAttribute("Slot") or tonumber(lotName:match("%d+")) or 1
@@ -7275,7 +7359,7 @@ for _, lotName in ipairs(auction.lotNames) do
     if lot then
         local function onLotAttributeChanged()
             auction.updateLotDisplay(lotName)
-            if auction.autoBidAll or auction.autoBidActive[lotName] then
+            if auction.lotAutoBidEnabled(lotName) then
                 auction.checkAndAutoBidLot(lotName)
             end
         end
@@ -7303,9 +7387,9 @@ task.spawn(function()
     while auction.autoBidLoopRunning do
         task.wait(1)
         auction.updateAllLotDisplays()
-        if auction.autoBidAll or auction.autoBidActive.Lot1 or auction.autoBidActive.Lot2 or auction.autoBidActive.Lot3 or auction.autoBidActive.Lot4 then
+        if auction.hasAnyAutoBidActive() then
             for _, lotName in ipairs(auction.lotNames) do
-                if auction.autoBidAll or auction.autoBidActive[lotName] then
+                if auction.lotAutoBidEnabled(lotName) then
                     auction.checkAndAutoBidLot(lotName)
                 end
             end
@@ -7321,6 +7405,20 @@ ScannerTab:CreateToggle({
     Flag = "Toggle_AutoBidAll",
     Callback = function(Value)
         auction.autoBidAll = Value
+        if Value then
+            for _, lotName in ipairs(auction.lotNames) do
+                task.spawn(function() auction.checkAndAutoBidLot(lotName) end)
+            end
+        end
+    end,
+})
+
+ScannerTab:CreateToggle({
+    Name = "Auto Outbid Unowned Skins",
+    CurrentValue = false,
+    Flag = "Toggle_AuctionAutoBidUnowned",
+    Callback = function(Value)
+        auction.autoBidUnowned = Value
         if Value then
             for _, lotName in ipairs(auction.lotNames) do
                 task.spawn(function() auction.checkAndAutoBidLot(lotName) end)
@@ -7401,52 +7499,16 @@ function townAuction.getRemote()
     return townAuction.remote
 end
 
--- Closet ownership: the game's live profile (UIController.Store) + CosmeticConfig, as the Closet uses
-function townAuction.getProfile()
-    local store = townAuction.profileStore
-    if store then
-        local ok, state = pcall(function() return store:GetState() end)
-        if ok and type(state) == "table" and type(state.Profile) == "table" then return state.Profile end
-        townAuction.profileStore = nil
-    end
-    local now = os.clock()
-    if type(getgc) ~= "function" or now - townAuction.profileScanAt < 5 then return nil end
-    townAuction.profileScanAt = now
-    local ok, objs = pcall(getgc, true)
-    if not ok or type(objs) ~= "table" then return nil end
-    for _, t in ipairs(objs) do
-        if type(t) == "table" and rawget(t, "Remotes") ~= nil and type(rawget(t, "Store")) == "table" then
-            local s = rawget(t, "Store")
-            local okState, state = pcall(function() return s:GetState() end)
-            if okState and type(state) == "table" and type(state.Profile) == "table" then
-                townAuction.profileStore = s
-                return state.Profile
-            end
-        end
-    end
-    return nil
-end
-
-function townAuction.getCosmeticConfig()
-    if townAuction.cosmeticConfig == nil then
-        local ok, mod = pcall(function()
-            return require(game:GetService("ReplicatedStorage").CowGame.Shared.CosmeticConfig)
-        end)
-        townAuction.cosmeticConfig = (ok and type(mod) == "table") and mod or false
-    end
-    return townAuction.cosmeticConfig or nil
-end
-
 -- Card text for "Owned:" — closet count from the game, plus listable duplicates from the auction snapshot
 function townAuction.formatOwnership(itemId)
     if not itemId then return "-" end
     local listable = townAuction.ownedCopies[itemId] or 0
     local extra = listable > 0 and string.format(" (%d listable)", listable) or ""
-    local config = townAuction.getCosmeticConfig()
+    local config = cosmetics.getConfig()
     if config then
         local okDef, def = pcall(config.Get, itemId)
         if okDef and not def then return "n/a" end
-        local profile = okDef and townAuction.getProfile()
+        local profile = okDef and cosmetics.getProfile()
         if profile then
             local okOwned, owned = pcall(config.IsOwned, itemId, profile)
             if okOwned then
@@ -7712,7 +7774,7 @@ function townAuction.handleSnapshotResult(res)
 
     if townAuction.hasAnyAutoBidActive and townAuction.hasAnyAutoBidActive() then
         for _, slotName in ipairs(townAuction.slots) do
-            if townAuction.autoBidAll or townAuction.autoBidActive[slotName] then
+            if townAuction.slotAutoBidEnabled(slotName) then
                 task.spawn(function() townAuction.checkAndAutoBidSlot(slotName) end)
             end
         end
@@ -7844,8 +7906,13 @@ function townAuction.resolveCustomAmount(slotName)
     return nil
 end
 
+-- Slot is a candidate: toggled per slot / all, or unowned mode (ownership checked in checkAndAutoBidSlot)
+function townAuction.slotAutoBidEnabled(slotName)
+    return townAuction.autoBidAll or townAuction.autoBidActive[slotName] == true or townAuction.autoBidUnowned
+end
+
 function townAuction.hasAnyAutoBidActive()
-    if townAuction.autoBidAll then return true end
+    if townAuction.autoBidAll or townAuction.autoBidUnowned then return true end
     for _, active in pairs(townAuction.autoBidActive) do
         if active then return true end
     end
@@ -7853,7 +7920,8 @@ function townAuction.hasAnyAutoBidActive()
 end
 
 function townAuction.checkAndAutoBidSlot(slotName)
-    if not (townAuction.autoBidAll or townAuction.autoBidActive[slotName]) then return end
+    local toggled = townAuction.autoBidAll or townAuction.autoBidActive[slotName] == true
+    if not (toggled or townAuction.autoBidUnowned) then return end
 
     local remote = townAuction.getRemote()
     if not remote then return end
@@ -7873,6 +7941,8 @@ function townAuction.checkAndAutoBidSlot(slotName)
     local itemId = (lot and lot.ItemId)
         or (model and (model:GetAttribute("TownAuctionItemID") or model:GetAttribute("ItemId")))
     if not itemId or itemId == "" or itemId == "N/A" then return end
+    -- Unowned mode bids only when the game confirms the cosmetic isn't owned (unknown never bids)
+    if not toggled and cosmetics.isOwned(itemId) ~= false then return end
 
     local round = (lot and lot.Round)
         or (model and (model:GetAttribute("TownAuctionRound") or model:GetAttribute("Round")))
@@ -8098,6 +8168,7 @@ function townAuction.cleanup()
     townAuction.stopAutoRefresh()
     townAuction.autoBidLoopRunning = false
     townAuction.autoBidAll = false
+    townAuction.autoBidUnowned = false
     for _, conn in ipairs(townAuction.connections) do
         if conn and conn.Disconnect then
             pcall(function() conn:Disconnect() end)
@@ -8113,7 +8184,7 @@ function townAuction.cleanup()
     table.clear(townAuction.cards)
     table.clear(townAuction.lotsBySlot)
     table.clear(townAuction.ownedCopies)
-    townAuction.profileStore = nil
+    cosmetics.profileStore = nil
     table.clear(townAuction.customBidAmounts)
     table.clear(townAuction.autoBidActive)
 end
@@ -8128,7 +8199,7 @@ function townAuction.initWorkspaceListeners()
         if model then
             local conn = model.AttributeChanged:Connect(function()
                 townAuction.updateCard(slotName)
-                if townAuction.autoBidAll or townAuction.autoBidActive[slotName] then
+                if townAuction.slotAutoBidEnabled(slotName) then
                     townAuction.checkAndAutoBidSlot(slotName)
                 end
             end)
@@ -8279,6 +8350,20 @@ TownAuctionTab:CreateToggle({
     end,
 })
 
+TownAuctionTab:CreateToggle({
+    Name = "Auto Outbid / Buy Unowned Lots",
+    CurrentValue = false,
+    Flag = "Toggle_TownAutoBidUnowned",
+    Callback = function(Value)
+        townAuction.autoBidUnowned = Value
+        if Value then
+            for _, slotName in ipairs(townAuction.slots) do
+                task.spawn(function() townAuction.checkAndAutoBidSlot(slotName) end)
+            end
+        end
+    end,
+})
+
 for _, slotName in ipairs(townAuction.slots) do
     local isBuyNow = string.find(slotName, "BuyNow") ~= nil
     local toggleName = isBuyNow and ("Auto Buy Now (" .. slotName .. ")") or ("Auto Outbid " .. slotName)
@@ -8336,7 +8421,7 @@ task.spawn(function()
         task.wait(1)
         if townAuction.hasAnyAutoBidActive and townAuction.hasAnyAutoBidActive() then
             for _, slotName in ipairs(townAuction.slots) do
-                if townAuction.autoBidAll or townAuction.autoBidActive[slotName] then
+                if townAuction.slotAutoBidEnabled(slotName) then
                     townAuction.checkAndAutoBidSlot(slotName)
                 end
             end
