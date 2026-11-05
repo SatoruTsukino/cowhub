@@ -34,275 +34,275 @@ Primary CowHub script containing autofarm engines, mining, dodging, auction scan
 | [230](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L230) | `updateCharBaseParts(character)` | Caches all BaseParts in character for collision & physics manipulation. |
 | [280](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L280) | `updateWallRaycastFilter()` | Rebuilds RaycastParams collision mask ignoring player & transparent parts. |
 | [310](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L310) | `setupHumanoid(h)` | Hooks humanoid death & state signals for recovery. |
-| [619](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L619) | `mapOptimizer.optimizeInstance(inst)` | Disables shadows, lowers material fidelity, or removes decorative clutter. |
-| [654](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L654) | `mapOptimizer.applyLighting()` | Strips atmospheric effects, bloom, sunrays for maximum FPS. |
-| [671](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L671) | `mapOptimizer.applyTerrain()` | Lowers water wave size, disables decorations on terrain. |
-| [685](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L685) | `mapOptimizer.applyToWorld()` | Runs full optimization pass on Workspace instances. |
-| [702](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L702) | `mapOptimizer.startStreamHook()` | Pre-emptively requests streaming replication around target areas. |
-| [713](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L713) | `mapOptimizer.stopStreamHook()` | Cleans up streaming hooks and observers. |
-| [720](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L720) | `mapOptimizer.preloadAssets()` | Preloads critical meshes and animations via ContentProvider. |
-| [814](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L814) | `stopCharacterVelocity()` | Zeros AssemblyLinearVelocity and AssemblyAngularVelocity on all character parts. |
-| [831](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L831) | `isGuiObjectTrulyVisible(obj)` | Validates if GUI element is strictly visible (hierarchy, size, transparency). |
-| [869](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L869) | `isRewardDismissButton(desc)` | Determines if button text/name matches reward modal dismissals (done, claim, ok). |
-| [907](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L907) | `activateGuiButton(desc, vi)` | Simulates native click / VirtualInputManager press on GUI button. |
-| [982](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L982) | `resolveCowHubPath(fileName, subFolder)` | Resolves path inside dedicated cowhub folder/subfolder and migrates legacy files. |
-| [1051](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1051) | `loadWebhook()` | Reads Discord webhook URL from local config file. |
-| [1059](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1059) | `saveWebhook(url)` | Saves Discord webhook URL to disk. |
-| [1083](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1083) | `afkRelog.saveState()` | Persists session state before scheduled 6-hour rejoin. |
-| [1148](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1148) | `afkRelog.triggerRejoin()` | Executes TeleportService rejoin into current or reserve server. |
-| [1199](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1199) | `afkRelog.checkAndResumeState()` | Detects recent reconnect and restores active autofarms. |
-| [1375](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1375) | `afkRelog.startTimer()` | Spawns countdown timer for 6-hour auto-reconnect cycle. |
-| [1398](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1398) | `afkRelog.updateUI()` | Updates UI text card showing time remaining until next relog. |
-| [1444](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1444) | `getSpiderPosKey(pos)` | Generates grid-quantized string key from spider Vector3 coordinates. |
-| [1452](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1452) | `spiderLogger.load()` | Loads known spider identifier JSON cache from disk. |
-| [1478](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1478) | `spiderLogger.save()` | Flushes identified spider entries into JSON file on disk. |
-| [1490](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1490) | `spiderLogger.extractIdentifier(val, depth)` | Scans mob model attributes and string tags for unique spider IDs. |
-| [1539](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1539) | `spiderLogger.getMobPosition(mob)` | Extracts world position of spider PrimaryPart. |
-| [1554](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1554) | `spiderLogger.recordIdentifier(idStr, source, mobInstance, extraRaw)` | Saves newly resolved spider identifier with source context. |
-| [1615](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1615) | `spiderLogger.resolveSpiderIdentifier(mob)` | Matches runtime spider instance against known cached identifiers. |
-| [1653](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1653) | `onChompRemoteReceived(source, ...)` | Listens for server chomp network confirmations. |
-| [1685](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1685) | `chompEvent.OnClientInvoke(...)` | Handles server validation callbacks for player chomp events. |
-| [2046](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2046) | `get2DDistance(p1, p2)` | Calculates 2D Euclidean distance (X, Z plane) without heap allocations. |
-| [2053](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2053) | `get2DDistanceSq(p1, p2)` | Calculates squared 2D distance for high-speed radius comparisons. |
-| [2060](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2060) | `get3DDistanceSq(p1, p2)` | Calculates squared 3D distance between two points. |
-| [2073](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2073) | `getResourcesFolder()` | Returns cached reference to workspace Resources folder. |
-| [2081](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2081) | `cache.getNodePosition(node)` | Retrieves world position of grass / crop node. |
-| [2089](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2089) | `cache.getGrassNodes()` | Returns cached table of harvestable grass nodes. |
-| [2102](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2102) | `cache.getFishingSpotsFolder()` | Finds fishing zones folder in workspace. |
-| [2111](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2111) | `cache.getFishingSpots()` | Collects all fishing spot models with active waters. |
-| [2128](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2128) | `cache.getSpotPosition(spot)` | Extracts Vector3 center of target fishing spot. |
-| [2142](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2142) | `isValidGrassNodeID(id)` | Validates grass node ID against invalid / barren models. |
-| [2149](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2149) | `cache.resolveGrassNode(inst)` | Locates PrimaryPart and identity of grass node model. |
-| [2175](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2175) | `cache.getNodeID(node)` | Extracts numeric node identifier from instance name or attribute. |
-| [2223](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2223) | `cache.getCleanGrassName(nodeName)` | Strips numerical suffixes from grass model names. |
-| [2245](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2245) | `cache.extractGrassNodeId(target)` | Extracts node ID from interaction target instance. |
-| [2270](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2270) | `cache.getMobPayload(mobName)` | Retrieves cached network attack payload table for mob species. |
+| [623](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L623) | `mapOptimizer.optimizeInstance(inst)` | Disables shadows, lowers material fidelity, or removes decorative clutter. |
+| [658](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L658) | `mapOptimizer.applyLighting()` | Strips atmospheric effects, bloom, sunrays for maximum FPS. |
+| [675](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L675) | `mapOptimizer.applyTerrain()` | Lowers water wave size, disables decorations on terrain. |
+| [689](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L689) | `mapOptimizer.applyToWorld()` | Runs full optimization pass on Workspace instances. |
+| [706](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L706) | `mapOptimizer.startStreamHook()` | Pre-emptively requests streaming replication around target areas. |
+| [717](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L717) | `mapOptimizer.stopStreamHook()` | Cleans up streaming hooks and observers. |
+| [724](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L724) | `mapOptimizer.preloadAssets()` | Preloads critical meshes and animations via ContentProvider. |
+| [818](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L818) | `stopCharacterVelocity()` | Zeros AssemblyLinearVelocity and AssemblyAngularVelocity on all character parts. |
+| [835](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L835) | `isGuiObjectTrulyVisible(obj)` | Validates if GUI element is strictly visible (hierarchy, size, transparency). |
+| [873](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L873) | `isRewardDismissButton(desc)` | Determines if button text/name matches reward modal dismissals (done, claim, ok). |
+| [911](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L911) | `activateGuiButton(desc, vi)` | Simulates native click / VirtualInputManager press on GUI button. |
+| [986](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L986) | `resolveCowHubPath(fileName, subFolder)` | Resolves path inside dedicated cowhub folder/subfolder and migrates legacy files. |
+| [1055](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1055) | `loadWebhook()` | Reads Discord webhook URL from local config file. |
+| [1063](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1063) | `saveWebhook(url)` | Saves Discord webhook URL to disk. |
+| [1087](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1087) | `afkRelog.saveState()` | Persists session state before scheduled 6-hour rejoin. |
+| [1152](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1152) | `afkRelog.triggerRejoin()` | Executes TeleportService rejoin into current or reserve server. |
+| [1203](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1203) | `afkRelog.checkAndResumeState()` | Detects recent reconnect and restores active autofarms. |
+| [1379](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1379) | `afkRelog.startTimer()` | Spawns countdown timer for 6-hour auto-reconnect cycle. |
+| [1402](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1402) | `afkRelog.updateUI()` | Updates UI text card showing time remaining until next relog. |
+| [1448](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1448) | `getSpiderPosKey(pos)` | Generates grid-quantized string key from spider Vector3 coordinates. |
+| [1456](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1456) | `spiderLogger.load()` | Loads known spider identifier JSON cache from disk. |
+| [1482](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1482) | `spiderLogger.save()` | Flushes identified spider entries into JSON file on disk. |
+| [1494](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1494) | `spiderLogger.extractIdentifier(val, depth)` | Scans mob model attributes and string tags for unique spider IDs. |
+| [1543](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1543) | `spiderLogger.getMobPosition(mob)` | Extracts world position of spider PrimaryPart. |
+| [1558](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1558) | `spiderLogger.recordIdentifier(idStr, source, mobInstance, extraRaw)` | Saves newly resolved spider identifier with source context. |
+| [1619](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1619) | `spiderLogger.resolveSpiderIdentifier(mob)` | Matches runtime spider instance against known cached identifiers. |
+| [1657](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1657) | `onChompRemoteReceived(source, ...)` | Listens for server chomp network confirmations. |
+| [1689](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1689) | `chompEvent.OnClientInvoke(...)` | Handles server validation callbacks for player chomp events. |
+| [2050](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2050) | `get2DDistance(p1, p2)` | Calculates 2D Euclidean distance (X, Z plane) without heap allocations. |
+| [2057](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2057) | `get2DDistanceSq(p1, p2)` | Calculates squared 2D distance for high-speed radius comparisons. |
+| [2064](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2064) | `get3DDistanceSq(p1, p2)` | Calculates squared 3D distance between two points. |
+| [2077](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2077) | `getResourcesFolder()` | Returns cached reference to workspace Resources folder. |
+| [2085](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2085) | `cache.getNodePosition(node)` | Retrieves world position of grass / crop node. |
+| [2093](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2093) | `cache.getGrassNodes()` | Returns cached table of harvestable grass nodes. |
+| [2106](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2106) | `cache.getFishingSpotsFolder()` | Finds fishing zones folder in workspace. |
+| [2115](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2115) | `cache.getFishingSpots()` | Collects all fishing spot models with active waters. |
+| [2132](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2132) | `cache.getSpotPosition(spot)` | Extracts Vector3 center of target fishing spot. |
+| [2146](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2146) | `isValidGrassNodeID(id)` | Validates grass node ID against invalid / barren models. |
+| [2153](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2153) | `cache.resolveGrassNode(inst)` | Locates PrimaryPart and identity of grass node model. |
+| [2179](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2179) | `cache.getNodeID(node)` | Extracts numeric node identifier from instance name or attribute. |
+| [2227](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2227) | `cache.getCleanGrassName(nodeName)` | Strips numerical suffixes from grass model names. |
+| [2249](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2249) | `cache.extractGrassNodeId(target)` | Extracts node ID from interaction target instance. |
+| [2274](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2274) | `cache.getMobPayload(mobName)` | Retrieves cached network attack payload table for mob species. |
 | [preview 1754](file:///Users/jsph/cowhub/luascripts/preview.lua#L1754) | `chomp.log(event, data)` | **Staging only.** Buffers a debug JSON line while Chomp Debug Log is on. Stripped from cowhub.lua by `scripts/promote-preview.py`. |
 | [preview 1763](file:///Users/jsph/cowhub/luascripts/preview.lua#L1763) | `chomp.flushLog(force)` | **Staging only.** Writes buffered debug lines to `cowhub/chomplogs/` at most every 2 s. |
-| [1746](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1746) | `chomp.serverInterval(node)` | Fastest server-accepted bite interval from live ChewCooldown / grazing multiplier (wheat & node cooldown aware). |
-| [1761](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1761) | `chomp.getInterval(node)` | Server interval + adaptive margin, floored at the manual delay when Auto Max is off. |
-| [1770](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1770) | `chomp.fire(nodeId, node, now)` | Single grass ChompRequest call site; fires `(nodeId, nil, serial)` when the interval has elapsed. |
-| [1823](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1823) | `chomp.findInput(now)` | Locates the game InputController instance via `getgc` (cached, 5 s rescan throttle). |
-| [1842](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1842) | `chomp.isGrazing()` | Returns `grazing, source`: controller `_grazing`, else `CowAction` attr, else recent non-hub GrazeResult. |
-| [1852](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1852) | `chomp.canEngage()` | Blocks E input during cutscenes, capture, stun, bot check, or focused textbox. |
-| [1861](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1861) | `chomp.sendKey(down)` | Sends E key down/up through VirtualInputManager (keypress fallback). |
-| [1873](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1873) | `chomp.engage(now)` | Natural mode: taps E (Toggle Graze setting) or re-holds E (hold setting). |
-| [1897](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1897) | `chomp.release()` | Releases a held E key. |
-| [1907](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1907) | `chomp.stopNatural()` | Release + untoggle grazing when leaving Natural mode. |
-| [1918](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1918) | `chomp.tickNatural(now)` | Natural watchdog: re-engages grazing after drops and mob attacks. |
-| [1945](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1945) | `chomp.onMobAttack(now)` | Shares chew cooldown with mob bites and arms natural re-engage. |
-| [1957](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1957) | `chomp.getCalories()` | Returns current player calories from attribute or leaderstats. |
-| [1970](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1970) | `chomp.resetCalories()` | Resets active chomp session calorie counter and timer. |
-| [1982](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1982) | `chomp.updateCalories()` | Tracks positive calorie deltas during Auto-Chomp into session gained. |
-| [2284](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2284) | `cache.cleanupNodeBlacklist(now)` | Removes expired blacklisted nodes from memory. |
-| [2298](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2298) | `manatite.getFolder()` | Finds Manatite cluster folder in workspace. |
-| [2359](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2359) | `manatite.getModels()` | Collects all active Manatite crystal models. |
-| [2369](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2369) | `manatite.getGrazeTarget(model)` | Finds optimal hit point on Manatite cluster. |
-| [2382](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2382) | `manatite.getGrazeTargetYield(target, model)` | Estimates ore yield / remaining health of crystal. |
-| [2511](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2511) | `isOreAvailable(targetPart, model, checkYield)` | Checks if ore node is intact and not currently depleted. |
-| [2542](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2542) | `manatite.isAvailable(target, model)` | Verifies availability of target Manatite crystal. |
-| [2546](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2546) | `manatite.getPayload(modelName)` | Constructs network graze packet for Manatite harvesting. |
-| [2571](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2571) | `cleanupOreBlacklist(oreState, now)` | Clears expired ore node blacklist timestamps. |
-| [2582](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2582) | `manatite.cleanupBlacklist(now)` | Removes blacklisted Manatite nodes whose cooldowns elapsed. |
-| [2586](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2586) | `isPositionNearThreatMob(pos, distSq)` | Checks if target coordinates lie inside mob threat aggro radius. |
-| [2602](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2602) | `findNextOreCandidate(oreState, getTargetFn, checkYield, searchOrigin, avoidMobs)` | Scans workspace for closest valid, non-blacklisted ore candidate. |
-| [2657](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2657) | `manatite.findNext(searchOrigin, avoidMobs)` | Finds nearest valid Manatite node avoiding hostile mobs. |
-| [2661](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2661) | `teleportToOreNode(oreState, targetPart, model)` | Teleports character into harvesting position adjacent to ore node. |
-| [2687](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2687) | `manatite.teleport(grazeTarget, model)` | Moves player to target Manatite crystal. |
-| [2691](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2691) | `retreatOreNode(oreState, isMithril, title, content, now, rootPos)` | Executes emergency retreat away from dangerous ore spot. |
-| [2736](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2736) | `manatite.retreatToSafeCrystal(now, rootPos)` | Falls back to known safe crystal during threat. |
-| [2741](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2741) | `mithril.getFolder()` | Locates Mithril cave folder in workspace. |
-| [2820](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2820) | `mithril.getModels()` | Collects active Mithril ore models in cave systems. |
-| [2841](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2841) | `mithril.getOrePart(model)` | Finds interactable base part of Mithril node. |
-| [2857](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2857) | `mithril.isAvailable(orePart, model)` | Verifies Mithril ore node health and availability. |
-| [2861](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2861) | `mithril.getPayload(modelName)` | Builds network attack packet for Mithril harvesting. |
-| [2887](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2887) | `mithril.cleanupBlacklist(now)` | Purges expired entries from Mithril node blacklist. |
-| [2893](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2893) | `mithril.findNext(searchOrigin, avoidMobs)` | Finds nearest safe Mithril node in cave. |
-| [2897](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2897) | `mithril.retreatToSafeOre(now, rootPos)` | Retreats player away from hostile cave spiders. |
-| [2901](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2901) | `mithril.teleport(orePart, model)` | Teleports character to target Mithril ore part. |
-| [2906](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2906) | `dodge.getMobAttackOriginPart(mob)` | Resolves head/torso part where mob attack origin spawns. |
-| [2950](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2950) | `dodge.getMobAttackOrigin(mob)` | Calculates Vector3 world position of mob attack source. |
-| [2962](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2962) | `dodge.hasLineOfSight(origin, mobPos, mob)` | Raycasts between mob and player to verify threat line of sight. |
-| [2995](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2995) | `dodge.isMobAlive(mob)` | Verifies target mob has valid health and humanoid state. |
-| [3056](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3056) | `dodge.findAttackWarning(mob)` | Detects active red warning telegraphs or charge indicators. |
-| [3117](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3117) | `dodge.isWarningActive(warning, mob)` | Checks if detected threat warning is currently ticking. |
-| [3158](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3158) | `dodge.getLocalPlayerHearts()` | Reads current player heart count from UI / attributes. |
-| [3178](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3178) | `dodge.getLocalPlayerMaxHearts()` | Reads maximum player heart capacity. |
-| [3198](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3198) | `dodge.getLocalPlayerArmor()` | Reads current player armor durability. |
-| [3227](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3227) | `dodge.getLocalPlayerMaxArmor()` | Reads maximum player armor rating. |
-| [3256](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3256) | `dodge.findSafeDodgePosition(originPos, preCFrame, away2D, maxDist, preferredAngle, attackingMob)` | Calculates safe offset away from attack direction. |
-| [3362](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3362) | `pressE()` | Simulates pressing E key via VirtualInputManager. |
-| [3391](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3391) | `cache.findSpiderIdentifier(mob)` | Extracts unique identifier for cave spider mob. |
-| [3494](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3494) | `cache.getMithrilCaveSpidersFolder()` | Locates workspace folder containing cave spiders. |
-| [3539](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3539) | `dodge.isSpiderMobInstance(instance)` | Checks if instance is a hostile spider mob. |
-| [3551](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3551) | `dodge.isMithrilCaveMob(mob)` | Identifies if mob belongs to Mithril cave threat pool. |
-| [3567](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3567) | `dodge.collectSpidersFromChamber(chamber)` | Gathers all active spiders in specified cave chamber. |
-| [3592](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3592) | `cache.registerRipple(ripple)` | Adds newly spawned water ripple into active tracking table. |
-| [3598](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3598) | `cache.unregisterRipple(ripple)` | Removes despawned ripple from active tracking table. |
-| [3605](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3605) | `cache.cleanupRippleTracking()` | Cleans up all tracked water ripple connections. |
-| [3614](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3614) | `cache.initRippleTracking()` | Sets up workspace ChildAdded listener for water ripples. |
-| [3652](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3652) | `cache.cacheBackgroundElements()` | Updates background spatial partitions for mobs and nodes. |
-| [3705](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3705) | `cache.getRipplePosition(ripple)` | Extracts world position of water ripple part. |
-| [3719](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3719) | `cache.isSpotAvailable(spot)` | Checks if fishing spot is occupied or accessible. |
-| [3758](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3758) | `penESP.update()` | Renders bounding boxes and labels for animal pens. |
-| [3798](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3798) | `chestESP.removeVisual(model)` | Removes highlight and billboard adornments for a specific chest. |
-| [3814](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3814) | `chestESP.cleanup()` | Clears highlight and billboard adornments on all chests. |
-| [3826](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3826) | `chestESP.attach(trackedChest)` | Attaches visual ESP Adornment to newly discovered chest. |
-| [3886](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3886) | `chestESP.update()` | Refreshes chest ESP positions and distance tags. |
-| [3976](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3976) | `manatite.cleanupVisuals()` | Removes highlight adornments from Manatite crystals. |
-| [3988](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3988) | `manatite.updateESP()` | Renders ESP highlights and distance labels on Manatite nodes. |
-| [4071](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4071) | `mithril.cleanupVisuals()` | Removes highlight adornments from Mithril ore nodes. |
-| [4083](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4083) | `mithril.updateESP()` | Renders ESP highlights and distance labels on Mithril nodes. |
-| [4161](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4161) | `HandleSpam(keyName, state, delayTime)` | Debounces rapid key presses or remote invocations. |
-| [4183](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4183) | `formatNumber(n)` | Formats integers with comma separators for currency displays. |
-| [4210](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4210) | `auction.checkLots()` | Inspects active auction house lots for desired items/prices. |
-| [4271](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4271) | `auction.debouncedCheckLots()` | Debounced wrapper around auction lot scanner. |
-| [4283](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4283) | `cache.sanitizeMemory(now)` | Runs periodic garbage collection and clears stale cache references. |
-| [4357](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4357) | `aerial.process(now, rootPos)` | Maintains emergency aerial hover position during low health. |
-| [4391](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4391) | `aerial.checkHealth(now, rootPos)` | Evaluates player heart drops to trigger aerial retreat. |
-| [4448](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4448) | `dodge.process(now, rootPos)` | Executes main evasion step (underground retreat, blink, or run away). |
-| [4756](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4756) | `dodge.cleanup()` | Resets dodge state and restores original walkspeed / collision. |
-| [4801](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4801) | `dodge.checkNearbyThreat(now, rootPos, prioritizedMobThisFrame)` | Scans 3D radius for approaching hostile mobs. |
-| [4874](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4874) | `farm.isSolidObstacle(instance)` | Checks if part impedes direct farming traversal. |
-| [4906](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4906) | `farm.hasWallBetween(startPos, endPos)` | Raycasts between character and target to detect walls. |
-| [4945](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4945) | `farm.checkForwardWall(rootPos, moveDir, checkDist)` | Subsystem helper / execution logic. |
-| [5011](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5011) | `farm.findClearEscapeDirection(rootPos)` | Subsystem helper / execution logic. |
-| [5051](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5051) | `farm.processMovement(dt, now, rootPos)` | Controls character movement along farming patrol path. |
-| [5294](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5294) | `farm.processMobAura(now, rootPos)` | Dispatches auto-attacks against hostile mobs in aura range. |
-| [5402](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5402) | `farm.processGrassChomp(now, rootPos)` | Directs raycast grass harvesting toward nearest target. |
-| [5419](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5419) | `tryCandidate(inst, id)` | Subsystem helper / execution logic. |
-| [5522](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5522) | `farm.processFishing(now, rootPos)` | Manages automated casting, reel timing, and ripple interaction. |
-| [5552](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5552) | `processOreFarm(oreState, isMithril, now, rootPos)` | Generic mining loop step handling teleportation, grazing, and threat checks. |
-| [5630](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5630) | `manatite.process(now, rootPos)` | Heartbeat mining loop tick for Manatite farming. |
-| [5634](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5634) | `mithril.process(now, rootPos)` | Heartbeat mining loop tick for Mithril farming. |
-| [5641](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5641) | `updateHeartbeatConnection()` | Main RunService.Heartbeat connection dispatcher for all farms. |
-| [6534](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6534) | `auction.getLocalDisplayName()` | Returns local player username / display name. |
-| [6538](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6538) | `auction.formatRemainingTime(endsAt)` | Formats remaining lot duration into MM:SS format. |
-| [6550](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6550) | `auction.getLotDisplayInfo(lotName)` | Parses lot metadata, seller, bids, and current price. |
-| [6593](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6593) | `auction.updateLotDisplay(lotName)` | Subsystem helper / execution logic. |
-| [6607](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6607) | `auction.updateAllLotDisplays()` | Subsystem helper / execution logic. |
-| [6724](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6724) | `auction.executeBid(lotName, customAmount, isManual)` | Subsystem helper / execution logic. |
-| [6802](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6802) | `auction.parseAmount(input)` | Subsystem helper / execution logic. |
-| [6828](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6828) | `auction.findTextBox(lotName)` | Subsystem helper / execution logic. |
-| [6857](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6857) | `auction.resolveCustomAmount(lotName)` | Subsystem helper / execution logic. |
-| [6890](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6890) | `auction.setupLotUI(tab, lotName)` | Subsystem helper / execution logic. |
-| [6970](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6970) | `auction.checkAndAutoBidLot(lotName)` | Evaluates outbid threshold and automatically submits higher bid. |
-| [7040](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7040) | `onLotAttributeChanged()` | Triggers outbid check when lot attribute updates. |
-| [7130](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7130) | `townAuction.getFitoutModel()` | Finds Town Auction billboard and stage model in workspace. |
-| [7151](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7151) | `townAuction.getRemote()` | Locates network remote event for Town Auction bids. |
-| [7168](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7168) | `townAuction.formatRemainingTime(endsAt)` | Formats remaining Town Auction timer string. |
-| [7191](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7191) | `townAuction.getSlotDisplayInfo(slotName)` | Subsystem helper / execution logic. |
-| [7281](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7281) | `townAuction.updateCard(slotName)` | Subsystem helper / execution logic. |
-| [7295](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7295) | `townAuction.updateInfoCard()` | Subsystem helper / execution logic. |
-| [7333](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7333) | `townAuction.updateAllCards()` | Subsystem helper / execution logic. |
-| [7361](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7361) | `townAuction.handleSnapshotResult(res)` | Subsystem helper / execution logic. |
-| [7415](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7415) | `townAuction.fetchSnapshot(isManual)` | Requests snapshot of current town auction bids. |
-| [7452](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7452) | `townAuction.parseAmount(input)` | Subsystem helper / execution logic. |
-| [7478](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7478) | `townAuction.findTextBox(slotName)` | Subsystem helper / execution logic. |
-| [7507](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7507) | `townAuction.resolveCustomAmount(slotName)` | Subsystem helper / execution logic. |
-| [7540](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7540) | `townAuction.hasAnyAutoBidActive()` | Subsystem helper / execution logic. |
-| [7548](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7548) | `townAuction.checkAndAutoBidSlot(slotName)` | Subsystem helper / execution logic. |
-| [7657](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7657) | `townAuction.executeBid(slotName, customAmount, forcePrice)` | Subsystem helper / execution logic. |
-| [7755](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7755) | `townAuction.teleportToStore()` | Subsystem helper / execution logic. |
-| [7769](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7769) | `townAuction.startAutoRefresh()` | Subsystem helper / execution logic. |
-| [7785](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7785) | `townAuction.stopAutoRefresh()` | Subsystem helper / execution logic. |
-| [7790](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7790) | `townAuction.cleanup()` | Subsystem helper / execution logic. |
-| [7813](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7813) | `townAuction.initWorkspaceListeners()` | Subsystem helper / execution logic. |
-| [7833](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7833) | `townAuction.setupSlotUI(tab, slotName)` | Subsystem helper / execution logic. |
-| [8130](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8130) | `rafting.getRemote()` | Returns network remote event for Fjord Rafting commands. |
-| [8147](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8147) | `rafting.fireRemoteSafely(action, arg, debounceSec)` | Debounced network remote invocation for raft commands. |
-| [8168](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8168) | `rafting.deckSessionOf(deck, model)` | Session id a raft deck belongs to (RaftSessionId attribute or TeamRaft_ name). |
-| [8177](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8177) | `rafting.getRaftDeck()` | Finds this session's raft deck; caches only a deck whose RaftSessionId matches, never another crew's raft. |
-| [8248](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8248) | `getFjordLevel(posX)` | Subsystem helper / execution logic. |
-| [8259](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8259) | `getHarbourZ(posX)` | Subsystem helper / execution logic. |
-| [8280](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8280) | `placeCowAboveDeck(deck)` | Subsystem helper / execution logic. |
-| [8291](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8291) | `isCowOnDeck(deck)` | Subsystem helper / execution logic. |
-| [8303](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8303) | `rafting.pickCaveEntrance(siteId, coves)` | Subsystem helper / execution logic. |
-| [8330](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8330) | `rafting.ensureDynamicSites()` | Subsystem helper / execution logic. |
-| [8434](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8434) | `rafting.getSiteChannelZ(site)` | Subsystem helper / execution logic. |
-| [8454](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8454) | `rafting.getClearingById(siteId)` | Retrieves metadata for specified clearing identifier. |
-| [8459](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8459) | `rafting.getNearbyClearing(posX, posZ)` | Finds clearing closest to raft current coordinates. |
-| [8521](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8521) | `rafting.findChannel(reachIdx, nominalChZ)` | Resolves water channel segment for given reach index. |
-| [8537](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8537) | `rafting.getChannelCenterZ(reachIdx, nominalChZ, posX)` | Calculates central Z coordinate of river channel. |
-| [8555](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8555) | `rafting.getRouteCenterZ(reachIdx, nominalChZ, posX)` | Calculates target Z coordinate along selected route corridor. |
-| [8580](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8580) | `rafting.channelFrame(posX, posZ)` | Computes local coordinate frame relative to river channel. |
-| [8595](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8595) | `rafting.getCurrentChannel(posX, posZ)` | Identifies which water channel the raft currently occupies. |
-| [8667](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8667) | `rafting.selectOptimalPipeline()` | Determines best routing sequence based on selected clearings. |
-| [8711](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8711) | `getDownstreamChannelZ(reachIdx, curChZ, prefRoute)` | Calculates channel target Z coordinate for downstream reaches. |
-| [8770](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8770) | `getReachableChannelsInReach(curReach, curChZ, targetReach)` | Enumerates all reachable downstream channels from current position. |
-| [8855](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8855) | `rafting.isSiteReachable(site, posX, currentZ)` | Evaluates if clearing or cave can be reached without hitting rocks. |
-| [8895](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8895) | `rafting.channelLeadsToSite(curChZ, curReach, site, mouthX)` | Whether a channel can reach the site downstream. |
-| [8928](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8928) | `getEndCaveSite(currentZ)` | Returns final destination cave site for current route. |
-| [8975](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8975) | `rafting.isSiteSelected(site)` | Checks if clearing is checked in user configuration. |
-| [9004](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9004) | `rafting.logTargetChange(site, posX, posZ)` | Logs RaftTarget on each steering-target change, with selected sites already visited. |
-| [9023](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9023) | `rafting.getNextTargetClearing(posX, currentZ)` | Finds upcoming target clearing along travel path. |
-| [9134](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9134) | `parseSiteId(opt)` | Extracts clearing site ID from UI dropdown string. |
-| [9156](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9156) | `rafting.getSiteZone(siteOrId)` | Returns zone index (1-4) for specified clearing. |
-| [9175](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9175) | `rafting.updateZoneSites(zoneIdx, options)` | Updates selection state for all clearings in a zone. |
-| [9213](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9213) | `rafting.updateTargetClearings(options)` | Batch updates clearing selection from UI dropdown. |
-| [9220](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9220) | `parseOption(opt)` | Helper to parse UI multi-select option string. |
-| [9274](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9274) | `rafting.getWhiskerClearances(deck)` | Raycasts multi-whisker sensors ahead of raft to detect riverbanks. |
-| [9351](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9351) | `rafting.getTargetZ(posX, currentZ, clearances)` | Calculates target lateral Z position balancing route and obstacles. |
-| [9367](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9367) | `rafting.getRiverTargetZ(posX, currentZ, clearances)` | Refines target lateral position based on river current. |
-| [9508](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9508) | `walkToPosition(targetPos, timeout, stopDistance)` | Humanoid path walk to local target position with timeout. |
-| [9539](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9539) | `naturalWalkTo(targetWorldPos, timeout, stopDistance)` | Smooth movement step toward local world position. |
-| [9611](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9611) | `ensureCowOnDeck(deck, timeoutSecs)` | Safely verifies and resets character onto raft deck surface. |
-| [9636](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9636) | `triggerChestNatively(chestModel)` | Interacts with clearing chest prompt natively. |
-| [9658](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9658) | `sendRaftKey(keyCode, holdSec)` | Simulates key press (A/D) to steer raft rudder. |
-| [9670](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9670) | `getContinueButton()` | Finds dock 'Continue Voyage' UI button. |
-| [9688](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9688) | `isContinueButtonActive()` | Checks if dock continue prompt is currently visible. |
-| [9694](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9694) | `isBoardingAnimationActive()` | Checks if raft boarding camera animation is active. |
-| [9735](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9735) | `triggerRaftingCommand(cmd)` | Dispatches remote command (Board, CastOff, Repair). |
-| [9774](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9774) | `rafting.castOff()` | Casts off raft from dock to begin voyage. |
-| [9836](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9836) | `rafting.updateCards()` | Refreshes Rayfield UI cards with live voyage metrics. |
-| [9901](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9901) | `rafting.handleHobgoblinRock(rock)` | Predicts projectile impact point for thrown goblin rocks. |
-| [9911](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9911) | `rafting.handleHobgoblinLanded(landed)` | Avoids landing zone of hobgoblin rock. |
-| [9927](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9927) | `rafting.getRockThreats(deck)` | Lists rocks in flight whose landing lines up with the hull at impact. |
-| [9957](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9957) | `rafting.avoidRocks(deck, wantedDeckX, leftClear, rightClear, isCommitted)` | Keeps the wanted deck position unless it ends in a rock hit, then moves it as little as clears every rock. When committed (route error ≥ ROCK_COMMIT_ERROR), it never reverses the correction. |
-| [10005](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10005) | `rafting.dismissChestRewardGui(force)` | Dismisses clearing chest reward popup modal without equipping. |
-| [10111](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10111) | `rafting.pollRewardGuiUntilDismissed(timeoutSecs, force)` | Polls reward popup until dismissed or timeout expires. |
-| [10174](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10174) | `rafting.lootSingleSite(targetSite)` | Performs full looting sequence on target clearing / cave. |
-| [10243](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10243) | `rafting.findSiteChest(siteId)` | Returns the unopened chest named by that site's own snapshot, or whether it was already opened. |
-| [10257](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10257) | `rafting.awaitChestOutcome(chest, timeout)` | Waits for the server's answer to a chest request. |
-| [10278](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10278) | `rafting.siteIdOfChest(chest)` | Extracts the site id from a chest id. |
-| [10283](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10283) | `rafting.cowStandHeight()` | Root height above the floor when the cow stands (HipHeight + half root, fallback 4.8). |
-| [10297](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10297) | `rafting.placeCowAtChest(chest, standPos)` | Teleports the cow upright onto the chest ground facing the chest, and gets it up if it has fallen over. |
-| [10316](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10316) | `rafting.openChest(chest)` | Stands beside the chest and requests it, trying other sides if blocked; only a server answer counts. |
-| [10370](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10370) | `rafting.lootSiteGuarded(targetSite)` | Runs one site's loot under pcall and logs RaftLootError instead of leaving the loot lock held. |
-| [10383](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10383) | `rafting.armLootDeadline(siteId)` | Starts a dock's loot run; after 90 s a stalled run is abandoned, the cow reboarded and the raft cast off. |
-| [10406](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10406) | `rafting.sweepZoneChests(zoneNum, deck)` | Loots all available chests in current river zone. |
-| [10468](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10468) | `rafting.findStation(snap, stationId)` | Finds a repair station in the snapshot. |
-| [10476](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10476) | `rafting.pickDamagedStation(snap, cowRel)` | Picks the damaged station nearest the cow. |
-| [10490](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10490) | `rafting.energyReserve(posX, snap)` | Energy needed to reach the sea and leave a dock. |
-| [10496](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10496) | `rafting.gameConfig()` | Reads RaftingConfig values with fallbacks. |
-| [10509](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10509) | `rafting.isHealthLow(hp, maxHp)` | Low-health test: the slider value or 15% of max, whichever is higher. |
-| [10515](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10515) | `rafting.repairAtDock()` | Patches damaged stations with the full repair protocol while docked. |
-| [10571](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10571) | `rafting.stepRepairUnderway(snap, deck, posX, allowed)` | Patches while sailing: moves along the deck to the station row and keeps steering. |
-| [10609](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10609) | `rafting.lootReachChests(dockSite, deck)` | Loots dock and reach chests during mooring stop. |
-| [10721](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10721) | `rafting.telemetryText(value, depth)` | Formats telemetry data into structured key-value line. |
-| [10732](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10732) | `rafting.telemetryLine(line)` | Appends formatted telemetry line to buffer. |
-| [10738](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10738) | `rafting.telemetryFlush(force)` | Flushes voyage telemetry buffer to disk file. |
-| [10758](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10758) | `rafting.telemetryStart(sessionId)` | Initializes new telemetry logging session on disk. |
-| [10780](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10780) | `rafting.telemetryEvent(name, payload)` | Logs discrete telemetry event (damage, turn, dock). |
-| [10793](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10793) | `rafting.telemetryObserve(payload)` | Captures sensor observation snapshot for machine learning analysis. |
-| [10823](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10823) | `rafting.telemetryWeather(pos)` | Logs atmospheric conditions and wind vectors. |
-| [10850](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10850) | `rafting.telemetrySample(snap, deck, targetZ, errorZ, clearances)` | Records high-frequency navigation sample (speed, error, whiskers). |
-| [10890](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10890) | `rafting.surveyFacades()` | Surveys geometric cliff faces along river channel. |
-| [10931](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10931) | `rafting.handleSnapshot(payload)` | Processes server voyage state snapshot (health, distance, speed). |
-| [11204](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11204) | `rafting.handleBoarding(payload)` | Handles character seating and camera transition upon boarding. |
-| [11215](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11215) | `rafting.stepSteering(dt)` | Main PID steering tick calculating rudder corrections. |
-| [11682](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11682) | `rafting.stepSteeringAnimation(dt)` | Animates character steering wheel / oar interaction. |
-| [11725](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11725) | `rafting.getLaunchTarget()` | Calculates launch coordinates from dock into main river current. |
-| [11742](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11742) | `rafting.startVoyage()` | Initiates full autonomous rafting voyage sequence. |
-| [11918](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11918) | `rafting.onSessionEnded(reason)` | Handles voyage completion or premature termination. |
-| [11993](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11993) | `rafting.scheduleLoopRestart()` | Single auto-loop restart: waits for the server to close the session and for a live character, starts the next voyage, retries if no session appears. |
-| [12025](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L12025) | `rafting.endVoyage()` | Cleans up rafting session and resets character state. |
-| [12045](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L12045) | `rafting.teleportToRaftYard()` | Teleports player character to Fjord rafting entrance. |
-| [12054](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L12054) | `rafting.teleportToDeck()` | Teleports character onto raft deck safely. |
-| [12064](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L12064) | `rafting.initClientListener()` | Hooks server network events for rafting snapshots. |
-| [12125](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L12125) | `rafting.startSteeringLoop()` | Starts background steering task loop. |
-| [12157](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L12157) | `rafting.stopSteeringLoop()` | Stops steering task loop. |
-| [12192](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L12192) | `rafting.cleanup()` | Full teardown of rafting state, timers, and connections. |
+| [1750](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1750) | `chomp.serverInterval(node)` | Fastest server-accepted bite interval from live ChewCooldown / grazing multiplier (wheat & node cooldown aware). |
+| [1765](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1765) | `chomp.getInterval(node)` | Server interval + adaptive margin, floored at the manual delay when Auto Max is off. |
+| [1774](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1774) | `chomp.fire(nodeId, node, now)` | Single grass ChompRequest call site; fires `(nodeId, nil, serial)` when the interval has elapsed. |
+| [1827](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1827) | `chomp.findInput(now)` | Locates the game InputController instance via `getgc` (cached, 5 s rescan throttle). |
+| [1846](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1846) | `chomp.isGrazing()` | Returns `grazing, source`: controller `_grazing`, else `CowAction` attr, else recent non-hub GrazeResult. |
+| [1856](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1856) | `chomp.canEngage()` | Blocks E input during cutscenes, capture, stun, bot check, or focused textbox. |
+| [1865](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1865) | `chomp.sendKey(down)` | Sends E key down/up through VirtualInputManager (keypress fallback). |
+| [1877](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1877) | `chomp.engage(now)` | Natural mode: taps E (Toggle Graze setting) or re-holds E (hold setting). |
+| [1901](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1901) | `chomp.release()` | Releases a held E key. |
+| [1911](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1911) | `chomp.stopNatural()` | Release + untoggle grazing when leaving Natural mode. |
+| [1922](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1922) | `chomp.tickNatural(now)` | Natural watchdog: re-engages grazing after drops and mob attacks. |
+| [1949](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1949) | `chomp.onMobAttack(now)` | Shares chew cooldown with mob bites and arms natural re-engage. |
+| [1961](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1961) | `chomp.getCalories()` | Returns current player calories from attribute or leaderstats. |
+| [1974](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1974) | `chomp.resetCalories()` | Resets active chomp session calorie counter and timer. |
+| [1986](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1986) | `chomp.updateCalories()` | Tracks positive calorie deltas during Auto-Chomp into session gained. |
+| [2288](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2288) | `cache.cleanupNodeBlacklist(now)` | Removes expired blacklisted nodes from memory. |
+| [2302](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2302) | `manatite.getFolder()` | Finds Manatite cluster folder in workspace. |
+| [2363](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2363) | `manatite.getModels()` | Collects all active Manatite crystal models. |
+| [2373](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2373) | `manatite.getGrazeTarget(model)` | Finds optimal hit point on Manatite cluster. |
+| [2386](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2386) | `manatite.getGrazeTargetYield(target, model)` | Estimates ore yield / remaining health of crystal. |
+| [2515](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2515) | `isOreAvailable(targetPart, model, checkYield)` | Checks if ore node is intact and not currently depleted. |
+| [2546](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2546) | `manatite.isAvailable(target, model)` | Verifies availability of target Manatite crystal. |
+| [2550](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2550) | `manatite.getPayload(modelName)` | Constructs network graze packet for Manatite harvesting. |
+| [2575](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2575) | `cleanupOreBlacklist(oreState, now)` | Clears expired ore node blacklist timestamps. |
+| [2586](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2586) | `manatite.cleanupBlacklist(now)` | Removes blacklisted Manatite nodes whose cooldowns elapsed. |
+| [2590](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2590) | `isPositionNearThreatMob(pos, distSq)` | Checks if target coordinates lie inside mob threat aggro radius. |
+| [2606](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2606) | `findNextOreCandidate(oreState, getTargetFn, checkYield, searchOrigin, avoidMobs)` | Scans workspace for closest valid, non-blacklisted ore candidate. |
+| [2661](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2661) | `manatite.findNext(searchOrigin, avoidMobs)` | Finds nearest valid Manatite node avoiding hostile mobs. |
+| [2665](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2665) | `teleportToOreNode(oreState, targetPart, model)` | Teleports character into harvesting position adjacent to ore node. |
+| [2691](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2691) | `manatite.teleport(grazeTarget, model)` | Moves player to target Manatite crystal. |
+| [2695](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2695) | `retreatOreNode(oreState, isMithril, title, content, now, rootPos)` | Executes emergency retreat away from dangerous ore spot. |
+| [2740](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2740) | `manatite.retreatToSafeCrystal(now, rootPos)` | Falls back to known safe crystal during threat. |
+| [2745](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2745) | `mithril.getFolder()` | Locates Mithril cave folder in workspace. |
+| [2824](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2824) | `mithril.getModels()` | Collects active Mithril ore models in cave systems. |
+| [2845](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2845) | `mithril.getOrePart(model)` | Finds interactable base part of Mithril node. |
+| [2861](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2861) | `mithril.isAvailable(orePart, model)` | Verifies Mithril ore node health and availability. |
+| [2865](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2865) | `mithril.getPayload(modelName)` | Builds network attack packet for Mithril harvesting. |
+| [2891](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2891) | `mithril.cleanupBlacklist(now)` | Purges expired entries from Mithril node blacklist. |
+| [2897](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2897) | `mithril.findNext(searchOrigin, avoidMobs)` | Finds nearest safe Mithril node in cave. |
+| [2901](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2901) | `mithril.retreatToSafeOre(now, rootPos)` | Retreats player away from hostile cave spiders. |
+| [2905](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2905) | `mithril.teleport(orePart, model)` | Teleports character to target Mithril ore part. |
+| [2910](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2910) | `dodge.getMobAttackOriginPart(mob)` | Resolves head/torso part where mob attack origin spawns. |
+| [2954](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2954) | `dodge.getMobAttackOrigin(mob)` | Calculates Vector3 world position of mob attack source. |
+| [2966](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2966) | `dodge.hasLineOfSight(origin, mobPos, mob)` | Raycasts between mob and player to verify threat line of sight. |
+| [2999](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2999) | `dodge.isMobAlive(mob)` | Verifies target mob has valid health and humanoid state. |
+| [3060](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3060) | `dodge.findAttackWarning(mob)` | Detects active red warning telegraphs or charge indicators. |
+| [3121](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3121) | `dodge.isWarningActive(warning, mob)` | Checks if detected threat warning is currently ticking. |
+| [3162](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3162) | `dodge.getLocalPlayerHearts()` | Reads current player heart count from UI / attributes. |
+| [3182](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3182) | `dodge.getLocalPlayerMaxHearts()` | Reads maximum player heart capacity. |
+| [3202](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3202) | `dodge.getLocalPlayerArmor()` | Reads current player armor durability. |
+| [3231](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3231) | `dodge.getLocalPlayerMaxArmor()` | Reads maximum player armor rating. |
+| [3260](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3260) | `dodge.findSafeDodgePosition(originPos, preCFrame, away2D, maxDist, preferredAngle, attackingMob)` | Calculates safe offset away from attack direction. |
+| [3366](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3366) | `pressE()` | Simulates pressing E key via VirtualInputManager. |
+| [3395](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3395) | `cache.findSpiderIdentifier(mob)` | Extracts unique identifier for cave spider mob. |
+| [3498](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3498) | `cache.getMithrilCaveSpidersFolder()` | Locates workspace folder containing cave spiders. |
+| [3543](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3543) | `dodge.isSpiderMobInstance(instance)` | Checks if instance is a hostile spider mob. |
+| [3555](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3555) | `dodge.isMithrilCaveMob(mob)` | Identifies if mob belongs to Mithril cave threat pool. |
+| [3571](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3571) | `dodge.collectSpidersFromChamber(chamber)` | Gathers all active spiders in specified cave chamber. |
+| [3596](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3596) | `cache.registerRipple(ripple)` | Adds newly spawned water ripple into active tracking table. |
+| [3602](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3602) | `cache.unregisterRipple(ripple)` | Removes despawned ripple from active tracking table. |
+| [3609](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3609) | `cache.cleanupRippleTracking()` | Cleans up all tracked water ripple connections. |
+| [3618](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3618) | `cache.initRippleTracking()` | Sets up workspace ChildAdded listener for water ripples. |
+| [3656](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3656) | `cache.cacheBackgroundElements()` | Updates background spatial partitions for mobs and nodes. |
+| [3709](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3709) | `cache.getRipplePosition(ripple)` | Extracts world position of water ripple part. |
+| [3723](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3723) | `cache.isSpotAvailable(spot)` | Checks if fishing spot is occupied or accessible. |
+| [3762](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3762) | `penESP.update()` | Renders bounding boxes and labels for animal pens. |
+| [3802](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3802) | `chestESP.removeVisual(model)` | Removes highlight and billboard adornments for a specific chest. |
+| [3818](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3818) | `chestESP.cleanup()` | Clears highlight and billboard adornments on all chests. |
+| [3830](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3830) | `chestESP.attach(trackedChest)` | Attaches visual ESP Adornment to newly discovered chest. |
+| [3890](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3890) | `chestESP.update()` | Refreshes chest ESP positions and distance tags. |
+| [3980](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3980) | `manatite.cleanupVisuals()` | Removes highlight adornments from Manatite crystals. |
+| [3992](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L3992) | `manatite.updateESP()` | Renders ESP highlights and distance labels on Manatite nodes. |
+| [4075](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4075) | `mithril.cleanupVisuals()` | Removes highlight adornments from Mithril ore nodes. |
+| [4087](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4087) | `mithril.updateESP()` | Renders ESP highlights and distance labels on Mithril nodes. |
+| [4165](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4165) | `HandleSpam(keyName, state, delayTime)` | Debounces rapid key presses or remote invocations. |
+| [4187](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4187) | `formatNumber(n)` | Formats integers with comma separators for currency displays. |
+| [4214](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4214) | `auction.checkLots()` | Inspects active auction house lots for desired items/prices. |
+| [4275](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4275) | `auction.debouncedCheckLots()` | Debounced wrapper around auction lot scanner. |
+| [4287](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4287) | `cache.sanitizeMemory(now)` | Runs periodic garbage collection and clears stale cache references. |
+| [4361](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4361) | `aerial.process(now, rootPos)` | Maintains emergency aerial hover position during low health. |
+| [4395](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4395) | `aerial.checkHealth(now, rootPos)` | Evaluates player heart drops to trigger aerial retreat. |
+| [4452](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4452) | `dodge.process(now, rootPos)` | Executes main evasion step (underground retreat, blink, or run away). |
+| [4760](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4760) | `dodge.cleanup()` | Resets dodge state and restores original walkspeed / collision. |
+| [4805](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4805) | `dodge.checkNearbyThreat(now, rootPos, prioritizedMobThisFrame)` | Scans 3D radius for approaching hostile mobs. |
+| [4878](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4878) | `farm.isSolidObstacle(instance)` | Checks if part impedes direct farming traversal. |
+| [4910](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4910) | `farm.hasWallBetween(startPos, endPos)` | Raycasts between character and target to detect walls. |
+| [4949](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4949) | `farm.checkForwardWall(rootPos, moveDir, checkDist)` | Subsystem helper / execution logic. |
+| [5015](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5015) | `farm.findClearEscapeDirection(rootPos)` | Subsystem helper / execution logic. |
+| [5055](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5055) | `farm.processMovement(dt, now, rootPos)` | Controls character movement along farming patrol path. |
+| [5298](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5298) | `farm.processMobAura(now, rootPos)` | Dispatches auto-attacks against hostile mobs in aura range. |
+| [5406](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5406) | `farm.processGrassChomp(now, rootPos)` | Directs raycast grass harvesting toward nearest target. |
+| [5423](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5423) | `tryCandidate(inst, id)` | Subsystem helper / execution logic. |
+| [5526](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5526) | `farm.processFishing(now, rootPos)` | Manages automated casting, reel timing, and ripple interaction. |
+| [5556](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5556) | `processOreFarm(oreState, isMithril, now, rootPos)` | Generic mining loop step handling teleportation, grazing, and threat checks. |
+| [5634](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5634) | `manatite.process(now, rootPos)` | Heartbeat mining loop tick for Manatite farming. |
+| [5638](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5638) | `mithril.process(now, rootPos)` | Heartbeat mining loop tick for Mithril farming. |
+| [5645](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5645) | `updateHeartbeatConnection()` | Main RunService.Heartbeat connection dispatcher for all farms. |
+| [6538](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6538) | `auction.getLocalDisplayName()` | Returns local player username / display name. |
+| [6542](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6542) | `auction.formatRemainingTime(endsAt)` | Formats remaining lot duration into MM:SS format. |
+| [6554](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6554) | `auction.getLotDisplayInfo(lotName)` | Parses lot metadata, seller, bids, and current price. |
+| [6597](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6597) | `auction.updateLotDisplay(lotName)` | Subsystem helper / execution logic. |
+| [6611](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6611) | `auction.updateAllLotDisplays()` | Subsystem helper / execution logic. |
+| [6728](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6728) | `auction.executeBid(lotName, customAmount, isManual)` | Subsystem helper / execution logic. |
+| [6806](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6806) | `auction.parseAmount(input)` | Subsystem helper / execution logic. |
+| [6832](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6832) | `auction.findTextBox(lotName)` | Subsystem helper / execution logic. |
+| [6861](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6861) | `auction.resolveCustomAmount(lotName)` | Subsystem helper / execution logic. |
+| [6894](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6894) | `auction.setupLotUI(tab, lotName)` | Subsystem helper / execution logic. |
+| [6974](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6974) | `auction.checkAndAutoBidLot(lotName)` | Evaluates outbid threshold and automatically submits higher bid. |
+| [7044](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7044) | `onLotAttributeChanged()` | Triggers outbid check when lot attribute updates. |
+| [7134](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7134) | `townAuction.getFitoutModel()` | Finds Town Auction billboard and stage model in workspace. |
+| [7155](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7155) | `townAuction.getRemote()` | Locates network remote event for Town Auction bids. |
+| [7248](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7248) | `townAuction.formatRemainingTime(endsAt)` | Formats remaining Town Auction timer string. |
+| [7271](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7271) | `townAuction.getSlotDisplayInfo(slotName)` | Subsystem helper / execution logic. |
+| [7356](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7356) | `townAuction.updateCard(slotName)` | Subsystem helper / execution logic. |
+| [7370](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7370) | `townAuction.updateInfoCard()` | Subsystem helper / execution logic. |
+| [7408](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7408) | `townAuction.updateAllCards()` | Subsystem helper / execution logic. |
+| [7436](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7436) | `townAuction.handleSnapshotResult(res)` | Subsystem helper / execution logic. |
+| [7490](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7490) | `townAuction.fetchSnapshot(isManual)` | Requests snapshot of current town auction bids. |
+| [7527](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7527) | `townAuction.parseAmount(input)` | Subsystem helper / execution logic. |
+| [7553](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7553) | `townAuction.findTextBox(slotName)` | Subsystem helper / execution logic. |
+| [7582](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7582) | `townAuction.resolveCustomAmount(slotName)` | Subsystem helper / execution logic. |
+| [7615](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7615) | `townAuction.hasAnyAutoBidActive()` | Subsystem helper / execution logic. |
+| [7623](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7623) | `townAuction.checkAndAutoBidSlot(slotName)` | Subsystem helper / execution logic. |
+| [7732](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7732) | `townAuction.executeBid(slotName, customAmount, forcePrice)` | Subsystem helper / execution logic. |
+| [7830](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7830) | `townAuction.teleportToStore()` | Subsystem helper / execution logic. |
+| [7844](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7844) | `townAuction.startAutoRefresh()` | Subsystem helper / execution logic. |
+| [7860](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7860) | `townAuction.stopAutoRefresh()` | Subsystem helper / execution logic. |
+| [7865](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7865) | `townAuction.cleanup()` | Subsystem helper / execution logic. |
+| [7889](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7889) | `townAuction.initWorkspaceListeners()` | Subsystem helper / execution logic. |
+| [7909](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7909) | `townAuction.setupSlotUI(tab, slotName)` | Subsystem helper / execution logic. |
+| [8207](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8207) | `rafting.getRemote()` | Returns network remote event for Fjord Rafting commands. |
+| [8224](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8224) | `rafting.fireRemoteSafely(action, arg, debounceSec)` | Debounced network remote invocation for raft commands. |
+| [8245](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8245) | `rafting.deckSessionOf(deck, model)` | Session id a raft deck belongs to (RaftSessionId attribute or TeamRaft_ name). |
+| [8254](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8254) | `rafting.getRaftDeck()` | Finds this session's raft deck; caches only a deck whose RaftSessionId matches, never another crew's raft. |
+| [8325](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8325) | `getFjordLevel(posX)` | Subsystem helper / execution logic. |
+| [8336](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8336) | `getHarbourZ(posX)` | Subsystem helper / execution logic. |
+| [8357](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8357) | `placeCowAboveDeck(deck)` | Subsystem helper / execution logic. |
+| [8368](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8368) | `isCowOnDeck(deck)` | Subsystem helper / execution logic. |
+| [8380](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8380) | `rafting.pickCaveEntrance(siteId, coves)` | Subsystem helper / execution logic. |
+| [8407](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8407) | `rafting.ensureDynamicSites()` | Subsystem helper / execution logic. |
+| [8511](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8511) | `rafting.getSiteChannelZ(site)` | Subsystem helper / execution logic. |
+| [8531](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8531) | `rafting.getClearingById(siteId)` | Retrieves metadata for specified clearing identifier. |
+| [8536](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8536) | `rafting.getNearbyClearing(posX, posZ)` | Finds clearing closest to raft current coordinates. |
+| [8598](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8598) | `rafting.findChannel(reachIdx, nominalChZ)` | Resolves water channel segment for given reach index. |
+| [8614](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8614) | `rafting.getChannelCenterZ(reachIdx, nominalChZ, posX)` | Calculates central Z coordinate of river channel. |
+| [8632](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8632) | `rafting.getRouteCenterZ(reachIdx, nominalChZ, posX)` | Calculates target Z coordinate along selected route corridor. |
+| [8657](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8657) | `rafting.channelFrame(posX, posZ)` | Computes local coordinate frame relative to river channel. |
+| [8672](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8672) | `rafting.getCurrentChannel(posX, posZ)` | Identifies which water channel the raft currently occupies. |
+| [8744](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8744) | `rafting.selectOptimalPipeline()` | Determines best routing sequence based on selected clearings. |
+| [8788](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8788) | `getDownstreamChannelZ(reachIdx, curChZ, prefRoute)` | Calculates channel target Z coordinate for downstream reaches. |
+| [8847](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8847) | `getReachableChannelsInReach(curReach, curChZ, targetReach)` | Enumerates all reachable downstream channels from current position. |
+| [8932](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8932) | `rafting.isSiteReachable(site, posX, currentZ)` | Evaluates if clearing or cave can be reached without hitting rocks. |
+| [8972](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L8972) | `rafting.channelLeadsToSite(curChZ, curReach, site, mouthX)` | Whether a channel can reach the site downstream. |
+| [9005](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9005) | `getEndCaveSite(currentZ)` | Returns final destination cave site for current route. |
+| [9052](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9052) | `rafting.isSiteSelected(site)` | Checks if clearing is checked in user configuration. |
+| [9081](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9081) | `rafting.logTargetChange(site, posX, posZ)` | Logs RaftTarget on each steering-target change, with selected sites already visited. |
+| [9100](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9100) | `rafting.getNextTargetClearing(posX, currentZ)` | Finds upcoming target clearing along travel path. |
+| [9211](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9211) | `parseSiteId(opt)` | Extracts clearing site ID from UI dropdown string. |
+| [9233](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9233) | `rafting.getSiteZone(siteOrId)` | Returns zone index (1-4) for specified clearing. |
+| [9252](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9252) | `rafting.updateZoneSites(zoneIdx, options)` | Updates selection state for all clearings in a zone. |
+| [9290](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9290) | `rafting.updateTargetClearings(options)` | Batch updates clearing selection from UI dropdown. |
+| [9297](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9297) | `parseOption(opt)` | Helper to parse UI multi-select option string. |
+| [9351](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9351) | `rafting.getWhiskerClearances(deck)` | Raycasts multi-whisker sensors ahead of raft to detect riverbanks. |
+| [9428](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9428) | `rafting.getTargetZ(posX, currentZ, clearances)` | Calculates target lateral Z position balancing route and obstacles. |
+| [9444](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9444) | `rafting.getRiverTargetZ(posX, currentZ, clearances)` | Refines target lateral position based on river current. |
+| [9585](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9585) | `walkToPosition(targetPos, timeout, stopDistance)` | Humanoid path walk to local target position with timeout. |
+| [9616](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9616) | `naturalWalkTo(targetWorldPos, timeout, stopDistance)` | Smooth movement step toward local world position. |
+| [9688](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9688) | `ensureCowOnDeck(deck, timeoutSecs)` | Safely verifies and resets character onto raft deck surface. |
+| [9713](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9713) | `triggerChestNatively(chestModel)` | Interacts with clearing chest prompt natively. |
+| [9735](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9735) | `sendRaftKey(keyCode, holdSec)` | Simulates key press (A/D) to steer raft rudder. |
+| [9747](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9747) | `getContinueButton()` | Finds dock 'Continue Voyage' UI button. |
+| [9765](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9765) | `isContinueButtonActive()` | Checks if dock continue prompt is currently visible. |
+| [9771](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9771) | `isBoardingAnimationActive()` | Checks if raft boarding camera animation is active. |
+| [9812](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9812) | `triggerRaftingCommand(cmd)` | Dispatches remote command (Board, CastOff, Repair). |
+| [9851](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9851) | `rafting.castOff()` | Casts off raft from dock to begin voyage. |
+| [9913](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9913) | `rafting.updateCards()` | Refreshes Rayfield UI cards with live voyage metrics. |
+| [9978](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9978) | `rafting.handleHobgoblinRock(rock)` | Predicts projectile impact point for thrown goblin rocks. |
+| [9988](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L9988) | `rafting.handleHobgoblinLanded(landed)` | Avoids landing zone of hobgoblin rock. |
+| [10004](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10004) | `rafting.getRockThreats(deck)` | Lists rocks in flight whose landing lines up with the hull at impact. |
+| [10034](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10034) | `rafting.avoidRocks(deck, wantedDeckX, leftClear, rightClear, isCommitted)` | Keeps the wanted deck position unless it ends in a rock hit, then moves it as little as clears every rock. When committed (route error ≥ ROCK_COMMIT_ERROR), it never reverses the correction. |
+| [10082](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10082) | `rafting.dismissChestRewardGui(force)` | Dismisses clearing chest reward popup modal without equipping. |
+| [10188](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10188) | `rafting.pollRewardGuiUntilDismissed(timeoutSecs, force)` | Polls reward popup until dismissed or timeout expires. |
+| [10251](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10251) | `rafting.lootSingleSite(targetSite)` | Performs full looting sequence on target clearing / cave. |
+| [10320](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10320) | `rafting.findSiteChest(siteId)` | Returns the unopened chest named by that site's own snapshot, or whether it was already opened. |
+| [10334](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10334) | `rafting.awaitChestOutcome(chest, timeout)` | Waits for the server's answer to a chest request. |
+| [10355](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10355) | `rafting.siteIdOfChest(chest)` | Extracts the site id from a chest id. |
+| [10360](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10360) | `rafting.cowStandHeight()` | Root height above the floor when the cow stands (HipHeight + half root, fallback 4.8). |
+| [10374](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10374) | `rafting.placeCowAtChest(chest, standPos)` | Teleports the cow upright onto the chest ground facing the chest, and gets it up if it has fallen over. |
+| [10393](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10393) | `rafting.openChest(chest)` | Stands beside the chest and requests it, trying other sides if blocked; only a server answer counts. |
+| [10447](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10447) | `rafting.lootSiteGuarded(targetSite)` | Runs one site's loot under pcall and logs RaftLootError instead of leaving the loot lock held. |
+| [10460](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10460) | `rafting.armLootDeadline(siteId)` | Starts a dock's loot run; after 90 s a stalled run is abandoned, the cow reboarded and the raft cast off. |
+| [10483](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10483) | `rafting.sweepZoneChests(zoneNum, deck)` | Loots all available chests in current river zone. |
+| [10545](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10545) | `rafting.findStation(snap, stationId)` | Finds a repair station in the snapshot. |
+| [10553](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10553) | `rafting.pickDamagedStation(snap, cowRel)` | Picks the damaged station nearest the cow. |
+| [10567](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10567) | `rafting.energyReserve(posX, snap)` | Energy needed to reach the sea and leave a dock. |
+| [10573](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10573) | `rafting.gameConfig()` | Reads RaftingConfig values with fallbacks. |
+| [10586](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10586) | `rafting.isHealthLow(hp, maxHp)` | Low-health test: the slider value or 15% of max, whichever is higher. |
+| [10592](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10592) | `rafting.repairAtDock()` | Patches damaged stations with the full repair protocol while docked. |
+| [10648](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10648) | `rafting.stepRepairUnderway(snap, deck, posX, allowed)` | Patches while sailing: moves along the deck to the station row and keeps steering. |
+| [10686](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10686) | `rafting.lootReachChests(dockSite, deck)` | Loots dock and reach chests during mooring stop. |
+| [10798](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10798) | `rafting.telemetryText(value, depth)` | Formats telemetry data into structured key-value line. |
+| [10809](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10809) | `rafting.telemetryLine(line)` | Appends formatted telemetry line to buffer. |
+| [10815](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10815) | `rafting.telemetryFlush(force)` | Flushes voyage telemetry buffer to disk file. |
+| [10835](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10835) | `rafting.telemetryStart(sessionId)` | Initializes new telemetry logging session on disk. |
+| [10857](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10857) | `rafting.telemetryEvent(name, payload)` | Logs discrete telemetry event (damage, turn, dock). |
+| [10870](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10870) | `rafting.telemetryObserve(payload)` | Captures sensor observation snapshot for machine learning analysis. |
+| [10900](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10900) | `rafting.telemetryWeather(pos)` | Logs atmospheric conditions and wind vectors. |
+| [10927](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10927) | `rafting.telemetrySample(snap, deck, targetZ, errorZ, clearances)` | Records high-frequency navigation sample (speed, error, whiskers). |
+| [10967](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L10967) | `rafting.surveyFacades()` | Surveys geometric cliff faces along river channel. |
+| [11008](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11008) | `rafting.handleSnapshot(payload)` | Processes server voyage state snapshot (health, distance, speed). |
+| [11281](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11281) | `rafting.handleBoarding(payload)` | Handles character seating and camera transition upon boarding. |
+| [11292](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11292) | `rafting.stepSteering(dt)` | Main PID steering tick calculating rudder corrections. |
+| [11759](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11759) | `rafting.stepSteeringAnimation(dt)` | Animates character steering wheel / oar interaction. |
+| [11802](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11802) | `rafting.getLaunchTarget()` | Calculates launch coordinates from dock into main river current. |
+| [11819](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11819) | `rafting.startVoyage()` | Initiates full autonomous rafting voyage sequence. |
+| [11995](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L11995) | `rafting.onSessionEnded(reason)` | Handles voyage completion or premature termination. |
+| [12070](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L12070) | `rafting.scheduleLoopRestart()` | Single auto-loop restart: waits for the server to close the session and for a live character, starts the next voyage, retries if no session appears. |
+| [12102](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L12102) | `rafting.endVoyage()` | Cleans up rafting session and resets character state. |
+| [12122](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L12122) | `rafting.teleportToRaftYard()` | Teleports player character to Fjord rafting entrance. |
+| [12131](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L12131) | `rafting.teleportToDeck()` | Teleports character onto raft deck safely. |
+| [12141](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L12141) | `rafting.initClientListener()` | Hooks server network events for rafting snapshots. |
+| [12202](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L12202) | `rafting.startSteeringLoop()` | Starts background steering task loop. |
+| [12234](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L12234) | `rafting.stopSteeringLoop()` | Stops steering task loop. |
+| [12269](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L12269) | `rafting.cleanup()` | Full teardown of rafting state, timers, and connections. |
 
 ---
 

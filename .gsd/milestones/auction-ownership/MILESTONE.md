@@ -1,13 +1,13 @@
 ---
 name: auction-ownership
 version: v0.1
-status: planning
+status: complete
 created: 2026-11-04T00:00:00Z
 ---
 
 # Milestone: Town Auction Ownership
 
-> **Status:** 🧪 Plan 1.1 built; in-game UAT (Plan 1.2) pending.
+> **Status:** ✅ Complete 2026-11-04. UAT passed in preview; promoted to cowhub.
 > Replaces the earlier inventory-logger idea (no log files).
 > Independent of the autofarm chomp refactor (`.gsd/SPEC.md`, `.gsd/ROADMAP.md`).
 
@@ -45,14 +45,14 @@ Resolved (Plan 1.1 Task 1, dumps in executor workspace root):
 
 | ID | Requirement | Priority | Status |
 |----|-------------|----------|--------|
-| AO-01 | Find and cache the live UI profile store (`getgc`, throttled ≥5 s rescans) | Must-have | ✅ code (UAT pending) |
-| AO-02 | Per lot: Owned + copies via `CosmeticConfig.IsOwned` / `GetOwnedCount`; fallback to listable count | Must-have | ✅ code (UAT pending) |
-| AO-03 | Card line: `Owned: ✅ ×N (M listable)` / `Owned: ❌` / `Owned: n/a` | Must-have | ✅ code (UAT pending) |
-| AO-04 | Cards redraw on a `ClientEvent` `"Snapshot"` push (no extra remote calls) | Should-have | ✅ code (UAT pending) |
+| AO-01 | Find and cache the live UI profile store (`getgc`, throttled ≥5 s rescans) | Must-have | ✅ UAT passed |
+| AO-02 | Per lot: Owned + copies via `CosmeticConfig.IsOwned` / `GetOwnedCount`; fallback to listable count | Must-have | ✅ UAT passed |
+| AO-03 | Card line: `Owned: ✅ ×N (M listable)` / `Owned: ❌` / `Owned: n/a` | Must-have | ✅ UAT passed |
+| AO-04 | Cards redraw on a `ClientEvent` `"Snapshot"` push (no extra remote calls) | Should-have | ✅ UAT passed |
 
 ## Phases
 
 ### Phase 1: Preview Town Auction Ownership
 **Plans:**
 - [x] Plan 1.1: Ownership lookup + card line (preview.lua)
-- [ ] Plan 1.2: In-game UAT, then promote to cowhub
+- [x] Plan 1.2: In-game UAT, then promote to cowhub (feature commit applied directly; promote-preview.py would also ship the Plan 4.1 golden-probe debug code)
