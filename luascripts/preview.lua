@@ -1,4 +1,4 @@
--- Cow Hub [d5cf0b1] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [f1c5445] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -54,7 +54,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [d5cf0b1]",
+    Name = "Cow Hub [f1c5445]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -277,12 +277,25 @@ local LOW_OFFSET = Vector3.new(0, 0.6, 0)
 local HIGH_OFFSET = Vector3.new(0, 2.0, 0)
 local JUMP_OFFSET = Vector3.new(0, 3.8, 0)
 
+-- The game targets grass in the CowVirtualGrass folder flagged CowClientGrassRenderer
+-- (InputController:_findTarget); other folders with that name are not grazeable.
+local function findGrassFolder()
+    local first = nil
+    for _, child in ipairs(workspace:GetChildren()) do
+        if child.Name == "CowVirtualGrass" then
+            if child:GetAttribute("CowClientGrassRenderer") == true then return child end
+            first = first or child
+        end
+    end
+    return first
+end
+
 local function updateWallRaycastFilter()
     local filter = {}
     if char then
         table.insert(filter, char)
     end
-    local gFolder = (cache and cache.grassFolder) or workspace:FindFirstChild("CowVirtualGrass")
+    local gFolder = (cache and cache.grassFolder) or findGrassFolder()
     if gFolder and gFolder.Parent then
         table.insert(filter, gFolder)
     end
@@ -492,7 +505,7 @@ local cache = {
     mobWarning = setmetatable({}, { __mode = "kv" }),
     mobWarningCheckTime = setmetatable({}, { __mode = "kv" }),
     fishingSpotPos = setmetatable({}, { __mode = "k" }),
-    grassFolder = workspace:FindFirstChild("CowVirtualGrass"),
+    grassFolder = findGrassFolder(),
     grassNodes = {},
     lastGrassTime = 0,
     fishingSpots = {},
@@ -1890,6 +1903,10 @@ function chomp.canTarget(node, id, rootPos, now)
     local avail = node:GetAttribute("Available")
     if avail == nil and node:IsA("Model") and node.PrimaryPart then avail = node.PrimaryPart:GetAttribute("Available") end
     if avail ~= nil and avail ~= true then return false end
+    -- Same exclusions as the game's target scan
+    if node:GetAttribute("CowBiteTargetId") ~= nil or node:GetAttribute("CowPrivatePenHaySharedHidden") == true then return false end
+    local owner = node:GetAttribute("CowMountainsideOwner")
+    if owner ~= nil and owner ~= plr.UserId then return false end
     if not root then return false end
     local lv = root.CFrame.LookVector
     local look = Vector3.new(lv.X, 0, lv.Z)
@@ -2275,11 +2292,19 @@ end
 function cache.getGrassNodes()
     local now = os.clock()
     if not cache.grassFolder or not cache.grassFolder.Parent then
-        cache.grassFolder = workspace:FindFirstChild("CowVirtualGrass")
+        cache.grassFolder = findGrassFolder()
         updateWallRaycastFilter()
     end
     if cache.grassFolder and (now - cache.lastGrassTime > 4 or #cache.grassNodes == 0) then
         cache.lastGrassTime = now
+        if cache.grassFolder:GetAttribute("CowClientGrassRenderer") ~= true then
+            local folder = findGrassFolder()
+            if folder ~= cache.grassFolder then
+                cache.grassFolder = folder
+                table.clear(cache.nodeIDs)
+                updateWallRaycastFilter()
+            end
+        end
         cache.grassNodes = cache.grassFolder:GetChildren()
     end
     return cache.grassNodes
@@ -2334,7 +2359,7 @@ cache.isValidNodeID = isValidGrassNodeID
 
 function cache.resolveGrassNode(inst)
     if not inst then return nil end
-    local folder = cache.grassFolder or workspace:FindFirstChild("CowVirtualGrass")
+    local folder = cache.grassFolder or findGrassFolder()
     if not folder or inst == folder then return nil end
 
     -- Must strictly be within the CowVirtualGrass folder
@@ -2364,7 +2389,7 @@ function cache.getNodeID(node)
     if cached ~= nil then return cached or nil end
 
     -- Must be strictly in CowVirtualGrass
-    local folder = cache.grassFolder or workspace:FindFirstChild("CowVirtualGrass")
+    local folder = cache.grassFolder or findGrassFolder()
     if folder and not node:IsDescendantOf(folder) then
         cache.nodeIDs[node] = false
         return nil
