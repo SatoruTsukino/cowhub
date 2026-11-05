@@ -20,7 +20,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC = ROOT / "luascripts" / "preview.lua"
 DST = ROOT / "luascripts" / "cowhub.lua"
 
-STATE_FIELD = re.compile(r"^\s*(debug = false|logBuf = \{\}|logPath = nil|lastFlush = 0|statConns = \{\}),\s*(--.*)?$")
+STATE_FIELD = re.compile(r"^\s*(debug = false|logBuf = \{\}|logPath = nil|lastFlush = 0|lastIdleLog = 0|statConns = \{\}),\s*(--.*)?$")
 LOG_CALL = re.compile(r"^\s*chomp\.(log|flushLog|watchStats)\(.*\)\s*$")
 DEBUG_FUNCS = ("log", "flushLog", "sanitize", "goldenState", "findNodeById", "watchStats")
 GOLDEN_LOCAL = re.compile(r"^\s*local golden = chomp\.goldenState\(.*\)\s*$")
@@ -28,7 +28,7 @@ GOLDEN_FIELD = re.compile(r", Golden = golden \}")
 DEBUG_IF_LINE = re.compile(r"^\s*if chomp\.debug then .* end\s*$")
 THEME = re.compile(r'^(\s*theme = )"frost",\s*$')
 LEFTOVER = re.compile(
-    r"chomp\.(log|flushLog|debug|logBuf|logPath|lastFlush|sanitize|goldenState|findNodeById|watchStats|statConns)\b"
+    r"chomp\.(log|flushLog|debug|logBuf|logPath|lastFlush|lastIdleLog|sanitize|goldenState|findNodeById|watchStats|statConns)\b"
     r"|ChompDebug|chomplogs|Golden probe|\bgolden\b"
 )
 

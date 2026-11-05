@@ -1,4 +1,4 @@
--- Cow Hub [510a594] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [58d4fa9] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -54,7 +54,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [510a594]",
+    Name = "Cow Hub [58d4fa9]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -436,10 +436,12 @@ local chomp = {
     skip = {},         -- nodeId -> os.clock() until which the node is not targeted
     rtt = 0.25,        -- EMA of GrazeResult round trip (s)
     target = { src = nil, dist = 0, dot = 1 },
+    idleWhy = {},      -- per-tick tally of why nearby nodes failed chomp.canTarget
     debug = false,
     logBuf = {},
     logPath = nil,
     lastFlush = 0,
+    lastIdleLog = 0,
     stats = { sent = 0, accepted = 0, rejected = 0, cooldownRejects = 0, reasons = {} },
     calories = { sessionGained = 0, startTime = 0, activeDuration = 0, lastTimestamp = 0, lastCalories = nil, ratePerHour = 0 },
     statConns = {},    -- golden probe: player attribute / leaderstats watchers (debug log only)
@@ -1950,8 +1952,8 @@ function chomp.getInterval(node)
     return interval
 end
 
--- Mirrors InputController:_findTarget (Available, TargetDistance, forward cone), checked from the
--- current root position and from a lagged one (server sees the cow slightly behind the client).
+-- Mirrors InputController:_findTarget (Available, TargetDistance, forward cone). Range and cone are
+-- judged from where the server sees the cow: the root position minus horizontal velocity x lag.
 local function inReach(origin, pos, look, cosCone)
     local d = pos - origin
     if d.Magnitude > chomp.REACH then return false, d.Magnitude, 1 end
@@ -1961,35 +1963,36 @@ local function inReach(origin, pos, look, cosCone)
     return fm <= chomp.CLOSE or dot >= cosCone, d.Magnitude, dot
 end
 
+-- Returns ok, dist, dot (client-origin geometry, for logging), why (rejection cause)
 function chomp.canTarget(node, id, rootPos, now)
-    if not id or not node or typeof(node) ~= "Instance" or not node.Parent then return false end
+    if not id or not node or typeof(node) ~= "Instance" or not node.Parent then return false, 0, 1, "invalid" end
     local until_ = chomp.skip[id]
     if until_ then
-        if now < until_ then return false end
+        if now < until_ then return false, 0, 1, "skip" end
         chomp.skip[id] = nil
     end
     local avail = node:GetAttribute("Available")
     if avail == nil and node:IsA("Model") and node.PrimaryPart then avail = node.PrimaryPart:GetAttribute("Available") end
-    if avail ~= nil and avail ~= true then return false end
+    if avail ~= nil and avail ~= true then return false, 0, 1, "avail" end
     -- Same exclusions as the game's target scan
-    if node:GetAttribute("CowBiteTargetId") ~= nil or node:GetAttribute("CowPrivatePenHaySharedHidden") == true then return false end
+    if node:GetAttribute("CowBiteTargetId") ~= nil or node:GetAttribute("CowPrivatePenHaySharedHidden") == true then return false, 0, 1, "excluded" end
     local owner = node:GetAttribute("CowMountainsideOwner")
-    if owner ~= nil and owner ~= plr.UserId then return false end
-    if not root then return false end
+    if owner ~= nil and owner ~= plr.UserId then return false, 0, 1, "excluded" end
+    if not root then return false, 0, 1, "noroot" end
     local lv = root.CFrame.LookVector
     local look = Vector3.new(lv.X, 0, lv.Z)
-    if look.Magnitude < 0.001 then return false end
+    if look.Magnitude < 0.001 then return false, 0, 1, "noroot" end
     look = look.Unit
     local rest = node:GetAttribute("RestCFrame")
     local pos = typeof(rest) == "CFrame" and rest.Position or cache.getNodePosition(node)
-    if not pos then return false end
+    if not pos then return false, 0, 1, "invalid" end
     local cone = (tonumber(plr:GetAttribute("GrazeConeDegrees")) or 100) - chomp.CONE_MARGIN
     local cosCone = math.cos(math.rad(cone * 0.5))
-    local ok, dist, dot = inReach(rootPos, pos, look, cosCone)
-    if not ok then return false end
+    local _, dist, dot = inReach(rootPos, pos, look, cosCone)
     local v = root.AssemblyLinearVelocity
     local lag = math.clamp(chomp.rtt * 0.5, 0.05, 0.3)
-    if not inReach(rootPos - Vector3.new(v.X, 0, v.Z) * lag, pos, look, cosCone) then return false end
+    local ok, sDist = inReach(rootPos - Vector3.new(v.X, 0, v.Z) * lag, pos, look, cosCone)
+    if not ok then return false, dist, dot, sDist > chomp.REACH and "range" or "cone" end
     return true, dist, dot
 end
 
@@ -2003,6 +2006,8 @@ function chomp.fire(nodeId, node, now)
     chomp.lastFire = now
     local golden = chomp.goldenState(node)
     chomp.pending[serial] = { NodeId = nodeId, SentAt = now, Golden = golden }
+    -- Reserve until the server answers (the result handler sets the real skip), like the game's _grassReservations
+    chomp.skip[nodeId] = now + 1.5
     if serial % 32 == 0 then
         for k, p in pairs(chomp.pending) do
             if now - p.SentAt > 15 then chomp.pending[k] = nil end
@@ -5749,6 +5754,8 @@ function farm.processGrassChomp(now, rootPos)
         if not targetNodeId then
             local reachSq = chomp.REACH * chomp.REACH
             local best, bestDistSq, bestId = nil, math.huge, nil
+            local why = chomp.idleWhy
+            table.clear(why)
             for _, node in ipairs(cache.getGrassNodes()) do
                 if node and node.Parent then
                     local nodePos = cache.getNodePosition(node)
@@ -5756,8 +5763,11 @@ function farm.processGrassChomp(now, rootPos)
                         local dSq = get2DDistanceSq(rootPos, nodePos)
                         if dSq <= reachSq and dSq < bestDistSq then
                             local id = cache.getNodeID(node)
-                            if chomp.canTarget(node, id, rootPos, now) then
+                            local ok, _, _, reason = chomp.canTarget(node, id, rootPos, now)
+                            if ok then
                                 best, bestDistSq, bestId = node, dSq, id
+                            else
+                                why[reason] = (why[reason] or 0) + 1
                             end
                         end
                     end
@@ -5765,6 +5775,12 @@ function farm.processGrassChomp(now, rootPos)
             end
             if best then
                 tryCandidate(best, bestId, "near")
+            end
+            if chomp.debug then
+                if not best and now - chomp.lastIdleLog >= 1 then
+                    chomp.lastIdleLog = now
+                    chomp.log("idle", { why = why, speed = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z).Magnitude })
+                end
             end
         end
 
