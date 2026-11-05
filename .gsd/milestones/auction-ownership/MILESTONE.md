@@ -1,13 +1,13 @@
 ---
 name: auction-ownership
 version: v0.1
-status: planning
+status: complete
 created: 2026-11-04T00:00:00Z
 ---
 
 # Milestone: Town Auction Ownership
 
-> **Status:** 📝 Phase 1 complete (promoted to cowhub). Phase 2 (auto-bid unowned) UAT passed; promoted to cowhub 2026-11-04. Phase 3 (Skin Auction live display) built in preview; UAT (Plan 3.2) pending.
+> **Status:** 📝 Phase 1 complete (promoted to cowhub). Phase 2 (auto-bid unowned) UAT passed; promoted to cowhub 2026-11-04. Phase 3 (Skin Auction live display) UAT passed; promoted to cowhub 2026-11-04. All phases complete.
 > Replaces the earlier inventory-logger idea (no log files).
 > Independent of the autofarm chomp refactor (`.gsd/SPEC.md`, `.gsd/ROADMAP.md`).
 
@@ -54,9 +54,9 @@ Resolved (Plan 1.1 Task 1, dumps in executor workspace root):
 | AO-07 | Skin Auction toggle "Auto Bid Unowned": same for `SkinId` lots | Must-have | ✅ UAT passed |
 | AO-08 | Fail-safe: unknown ownership or non-cosmetic → never bid. No max-bid requirement (user decision 2026-11-04); an existing Max Auto Bid limit still applies if set | Must-have | ✅ UAT passed |
 | AO-09 | Both toggles persist across relog (TownAuction / Auction state) | Should-have | ✅ UAT passed |
-| AO-10 | "Live Auction House Display" section shows all skin lots live (name, rarity, owned, min bid, leader, time left) | Must-have | ✅ code (UAT pending) |
-| AO-11 | Lot reads match the game: server-time countdown, rarity from CosmeticConfig, leading by `LeaderId`, min bid falls back to `StartingBid` | Must-have | ✅ code (UAT pending) |
-| AO-12 | Remove the "Show Current Auction Skins" button | Must-have | ✅ code (UAT pending) |
+| AO-10 | "Live Auction House Display" section shows all skin lots live (name, rarity, owned, min bid, leader, time left) | Must-have | ✅ UAT passed |
+| AO-11 | Lot reads match the game: server-time countdown, rarity from CosmeticConfig, leading by `LeaderId`, min bid falls back to `StartingBid` | Must-have | ✅ UAT passed |
+| AO-12 | Remove the "Show Current Auction Skins" button | Must-have | ✅ UAT passed |
 
 ## Phases
 
@@ -77,4 +77,4 @@ Research: "Live Auction House Display" (preview ~L6852) is an empty section; the
 
 **Plans:**
 - [x] Plan 3.1: Shared lot reader + live overview card, remove Show button (preview.lua)
-- [ ] Plan 3.2: In-game UAT, then promote
+- [x] Plan 3.2: In-game UAT, then promote (commit a1334b6 applied directly)
