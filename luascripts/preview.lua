@@ -1,4 +1,4 @@
--- Cow Hub [32945ee] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [3e92300] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -54,7 +54,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [32945ee]",
+    Name = "Cow Hub [3e92300]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -4507,7 +4507,8 @@ function auction.checkLots()
                 auction.previousSignatures[lotName] = currentSignature
 
                 local skinName = lot:GetAttribute("SkinName") or "Unknown Skin"
-                local rarity = lot:GetAttribute("Rarity") or "Default"
+                local lotInfo = auction.readLot(lotName)
+                local rarity = (lotInfo and lotInfo.Rarity) or "Default"
                 local scope = lot:GetAttribute("Scope") or "N/A"
                 local bid = lot:GetAttribute("Bid")
                 local minBid = lot:GetAttribute("MinimumBid")
@@ -6849,71 +6850,112 @@ ScannerTab:CreateToggle({
 -- ==========================
 -- LIVE AUCTION HOUSE DISPLAY
 -- ==========================
-ScannerTab:CreateSection({ Name = "Live Auction House Display" })
-
 function auction.getLocalDisplayName()
     return tostring(plr:GetAttribute("DisplayName") or plr.DisplayName or plr.Name)
 end
 
+-- Counts down against server time, as the game's SkinAuctionController does
 function auction.formatRemainingTime(endsAt)
     if not endsAt or type(endsAt) ~= "number" then return "N/A" end
-    local remaining = math.max(0, endsAt - os.time())
+    local remaining = math.max(0, math.floor(endsAt - workspace:GetServerTimeNow()))
     if remaining <= 0 then
         return "Ended / Rotating"
     end
-    local minutes = math.floor(remaining / 60)
-    local seconds = remaining % 60
-    return string.format("%dm %02ds", minutes, seconds)
+    return string.format("%dm %02ds", math.floor(remaining / 60), remaining % 60)
 end
 
+-- One lot read the way SkinAuctionController:_lots does; nil when missing or empty
+function auction.readLot(lotName)
+    local lot = skinAuction:FindFirstChild(lotName)
+    if not lot then return nil, "missing" end
+    local skinId = lot:GetAttribute("SkinId")
+    if type(skinId) ~= "string" or skinId == "" or skinId == "None" then return nil, "empty" end
+
+    local def
+    local config = cosmetics.getConfig()
+    if config then
+        local ok, d = pcall(config.Get, skinId)
+        def = ok and d or nil
+    end
+    local bid = tonumber(lot:GetAttribute("Bid")) or 0
+    local leaderId = lot:GetAttribute("LeaderId")
+    local leaderName = lot:GetAttribute("LeaderName")
+    local leading
+    if leaderId ~= nil then
+        leading = bid > 0 and leaderId == plr.UserId
+    else
+        leading = leaderName ~= nil and (leaderName == auction.getLocalDisplayName() or leaderName == plr.Name)
+    end
+    return {
+        SkinId = skinId,
+        SkinName = lot:GetAttribute("SkinName") or (def and def.DisplayName) or skinId,
+        Rarity = (def and def.Rarity) or "Common",
+        Bid = bid,
+        MinimumBid = lot:GetAttribute("MinimumBid") or lot:GetAttribute("StartingBid"),
+        Round = lot:GetAttribute("Round"),
+        EndsAt = lot:GetAttribute("EndsAt"),
+        LeaderName = (leaderName ~= "" and leaderName ~= "None") and leaderName or nil,
+        Leading = leading,
+        Owned = cosmetics.isOwned(skinId),
+    }
+end
+
+local function ownedMark(owned)
+    if owned == true then return "✅" elseif owned == false then return "❌" end
+    return "?"
+end
 
 function auction.getLotDisplayInfo(lotName)
-    local lot = skinAuction:FindFirstChild(lotName)
-    if not lot then
-        return lotName .. ": [Not Found]", "Lot folder does not exist in ReplicatedStorage."
-    end
-
-    local skinName = lot:GetAttribute("SkinName")
-    local skinId = lot:GetAttribute("SkinId")
-    if not skinId or skinId == "" or skinId == "None" then
+    local info, why = auction.readLot(lotName)
+    if not info then
+        if why == "missing" then
+            return lotName .. ": [Not Found]", "Lot folder does not exist in ReplicatedStorage."
+        end
         return lotName .. ": [Empty / Inactive]", "No skin currently on auction in this lot."
     end
 
-    local rarity = lot:GetAttribute("Rarity") or "Common"
-    local bid = lot:GetAttribute("Bid")
-    local minBid = lot:GetAttribute("MinimumBid")
-    local round = lot:GetAttribute("Round") or "N/A"
-    local endsAt = lot:GetAttribute("EndsAt")
-    local leaderName = lot:GetAttribute("LeaderName")
-
-    local myDisplayName = auction.getLocalDisplayName()
-    local myUsername = plr.Name
-
     local leaderStatus
-    if not leaderName or leaderName == "" or leaderName == "None" then
+    if not info.LeaderName then
         leaderStatus = "None (No bids yet)"
-    elseif leaderName == myDisplayName or leaderName == myUsername or leaderName == plr.DisplayName then
-        leaderStatus = "⭐ YOU (" .. tostring(leaderName) .. ") - Leading"
+    elseif info.Leading then
+        leaderStatus = "⭐ YOU (" .. tostring(info.LeaderName) .. ") - Leading"
     else
-        leaderStatus = "👤 " .. tostring(leaderName) .. " (Outbid)"
+        leaderStatus = "👤 " .. tostring(info.LeaderName) .. " (Outbid)"
     end
 
-    local title = string.format("%s: %s [%s]", lotName, tostring(skinName or skinId), tostring(rarity))
-    local body = string.format("Current Bid: 🪙 %s | Next Min: 🪙 %s\nLeader: %s\nRound: %s | Ends In: %s",
-        formatNumber(bid),
-        formatNumber(minBid),
+    local title = string.format("%s: %s [%s]", lotName, tostring(info.SkinName), tostring(info.Rarity))
+    local body = string.format("Current Bid: 🪙 %s | Next Min: 🪙 %s\nLeader: %s\nRound: %s | Ends In: %s\nOwned: %s",
+        formatNumber(info.Bid),
+        formatNumber(info.MinimumBid),
         leaderStatus,
-        tostring(round),
-        auction.formatRemainingTime(endsAt)
+        tostring(info.Round or "N/A"),
+        auction.formatRemainingTime(info.EndsAt),
+        ownedMark(info.Owned)
     )
 
     return title, body
 end
 
-function auction.updateLotDisplay(lotName)
-    local card = auction.cards[lotName]
+-- All lots on one live card for the "Live Auction House Display" section
+function auction.getOverviewInfo()
+    local lines, active = {}, 0
+    for _, lotName in ipairs(auction.lotNames) do
+        local info = auction.readLot(lotName)
+        if info then
+            active += 1
+            local leader = info.Leading and "⭐ You" or (info.LeaderName and ("👤 " .. info.LeaderName)) or "—"
+            table.insert(lines, string.format("%s: %s [%s] · %s · Min 🪙 %s · %s · %s",
+                lotName, tostring(info.SkinName), tostring(info.Rarity), ownedMark(info.Owned),
+                formatNumber(info.MinimumBid), leader, auction.formatRemainingTime(info.EndsAt)))
+        else
+            table.insert(lines, lotName .. ": Empty")
+        end
+    end
+    return string.format("Live Auction House · %d active lots", active), table.concat(lines, "\n")
+end
+
+local function setCard(card, title, body)
     if not card then return end
-    local title, body = auction.getLotDisplayInfo(lotName)
     pcall(function()
         if card.SetTitle then
             card:SetTitle(title)
@@ -6924,9 +6966,28 @@ function auction.updateLotDisplay(lotName)
     end)
 end
 
+function auction.updateLotDisplay(lotName)
+    local card = auction.cards[lotName]
+    if not card then return end
+    setCard(card, auction.getLotDisplayInfo(lotName))
+end
+
 function auction.updateAllLotDisplays()
     for _, lotName in ipairs(auction.lotNames) do
         auction.updateLotDisplay(lotName)
+    end
+    setCard(auction.overviewCard, auction.getOverviewInfo())
+end
+
+ScannerTab:CreateSection({ Name = "Live Auction House Display" })
+
+do
+    local title, body = auction.getOverviewInfo()
+    if ScannerTab.CreateText then
+        pcall(function() auction.overviewCard = ScannerTab:CreateText({ name = title, text = body }) end)
+    end
+    if not auction.overviewCard and ScannerTab.CreateParagraph then
+        pcall(function() auction.overviewCard = ScannerTab:CreateParagraph({ Title = title, Content = body }) end)
     end
 end
 
@@ -6937,42 +6998,6 @@ ScannerTab:CreateButton({
     Callback = function()
         auction.updateAllLotDisplays()
         Window:Notify({ Title = "Refreshed", Content = "Auction lot displays updated.", Duration = 2 })
-    end,
-})
-
--- Show Current Auction Skins button
-ScannerTab:CreateButton({
-    Name = "Show Current Auction Skins",
-    Callback = function()
-        local lines = {}
-        for _, lotName in ipairs(auction.lotNames) do
-            local lot = skinAuction:FindFirstChild(lotName)
-            if lot then
-                local skinName = lot:GetAttribute("SkinName")
-                local skinId = lot:GetAttribute("SkinId")
-                if skinName and skinName ~= "" and skinId and skinId ~= "" then
-                    local rarity = lot:GetAttribute("Rarity") or "?"
-                    local bid = lot:GetAttribute("Bid")
-                    local minBid = lot:GetAttribute("MinimumBid")
-                    local leader = lot:GetAttribute("LeaderName") or "None"
-                    table.insert(lines,
-                        lotName .. ": " .. tostring(skinName)
-                        .. " [" .. tostring(rarity) .. "]"
-                        .. " | Leader: " .. tostring(leader)
-                        .. " | Min: " .. formatNumber(minBid)
-                    )
-                else
-                    table.insert(lines, lotName .. ": Empty")
-                end
-            else
-                table.insert(lines, lotName .. ": Not Found")
-            end
-        end
-        Window:Notify({
-            Title = "Current Auction Lots",
-            Content = table.concat(lines, "\n"),
-            Duration = 10
-        })
     end,
 })
 
@@ -7326,11 +7351,10 @@ function auction.checkAndAutoBidLot(lotName)
     end
 
     local leaderName = lot:GetAttribute("LeaderName")
-    local myDisplayName = auction.getLocalDisplayName()
-    local myUsername = plr.Name
 
-    -- Check if we are already leading
-    if leaderName and (leaderName == myDisplayName or leaderName == myUsername or leaderName == plr.DisplayName) then
+    -- Already leading: by LeaderId, as the game decides (readLot)
+    local info = auction.readLot(lotName)
+    if info and info.Leading then
         return
     end
 

@@ -1,13 +1,13 @@
 ---
 name: auction-ownership
 version: v0.1
-status: complete
+status: planning
 created: 2026-11-04T00:00:00Z
 ---
 
 # Milestone: Town Auction Ownership
 
-> **Status:** 📝 Phase 1 complete (promoted to cowhub). Phase 2 (auto-bid unowned) UAT passed; promoted to cowhub 2026-11-04.
+> **Status:** 📝 Phase 1 complete (promoted to cowhub). Phase 2 (auto-bid unowned) UAT passed; promoted to cowhub 2026-11-04. Phase 3 (Skin Auction live display) built in preview; UAT (Plan 3.2) pending.
 > Replaces the earlier inventory-logger idea (no log files).
 > Independent of the autofarm chomp refactor (`.gsd/SPEC.md`, `.gsd/ROADMAP.md`).
 
@@ -54,6 +54,9 @@ Resolved (Plan 1.1 Task 1, dumps in executor workspace root):
 | AO-07 | Skin Auction toggle "Auto Bid Unowned": same for `SkinId` lots | Must-have | ✅ UAT passed |
 | AO-08 | Fail-safe: unknown ownership or non-cosmetic → never bid. No max-bid requirement (user decision 2026-11-04); an existing Max Auto Bid limit still applies if set | Must-have | ✅ UAT passed |
 | AO-09 | Both toggles persist across relog (TownAuction / Auction state) | Should-have | ✅ UAT passed |
+| AO-10 | "Live Auction House Display" section shows all skin lots live (name, rarity, owned, min bid, leader, time left) | Must-have | ✅ code (UAT pending) |
+| AO-11 | Lot reads match the game: server-time countdown, rarity from CosmeticConfig, leading by `LeaderId`, min bid falls back to `StartingBid` | Must-have | ✅ code (UAT pending) |
+| AO-12 | Remove the "Show Current Auction Skins" button | Must-have | ✅ code (UAT pending) |
 
 ## Phases
 
@@ -68,3 +71,10 @@ Research: `SkinAuctionController` L109–116 decides ownership with the same `Co
 **Plans:**
 - [x] Plan 2.1: Shared ownership helper + two toggles (preview.lua)
 - [x] Plan 2.2: In-game UAT, then promote (commit 510a594 applied directly: a full promote would also ship untested preview chomp commits f1c5445, c94b3e8, 9363000)
+
+### Phase 3: Skin Auction Live Display
+Research: "Live Auction House Display" (preview ~L6852) is an empty section; the live cards are made later under "Skin Lot: LotN". `SkinAuctionController` L130–154 reads lots with `GetServerTimeNow`, `CosmeticConfig.Get(skinId).Rarity` (no `Rarity` attribute exists), `LeaderId == UserId and Bid > 0`, and `MinimumBid or StartingBid`.
+
+**Plans:**
+- [x] Plan 3.1: Shared lot reader + live overview card, remove Show button (preview.lua)
+- [ ] Plan 3.2: In-game UAT, then promote
