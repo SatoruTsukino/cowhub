@@ -25,11 +25,17 @@ local plr = Players.LocalPlayer
 -- CONSTANTS
 -- ============================
 local PLACE_ID = (game.PlaceId and game.PlaceId > 0) and game.PlaceId or 82507849398215
-local SCRIPT_SOURCE_URL = "https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/skinhunter.lua"
+local SCRIPT_SOURCE_URL = "https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/luascripts/skinhunter.lua"
 local LOT_NAMES = {"Lot1", "Lot2", "Lot3", "Lot4"}
 
-local STATE_FILE = "SkinHunterState.json"
-local CONFIG_FILE = "SkinHunterConfig.json"
+-- Files live in the executor workspace under cowhub/skinhunter/ (AGENTS.md workspace storage)
+local STORAGE_DIR = "cowhub/skinhunter"
+local STATE_FILE = STORAGE_DIR .. "/SkinHunterState.json"
+local CONFIG_FILE = STORAGE_DIR .. "/SkinHunterConfig.json"
+local LEGACY_FILES = {
+    ["SkinHunterState.json"] = STATE_FILE,
+    ["SkinHunterConfig.json"] = CONFIG_FILE,
+}
 
 -- ============================
 -- UTILITY & QUEUE HELPERS
@@ -363,259 +369,94 @@ local function loadState()
 end
 
 -- Load config and state before building UI
+-- Create cowhub/skinhunter/ and move files left in the workspace root by older versions
+local function prepareStorage()
+    if not (isFileFunc and readFileFunc and writeFileFunc) then return end
+    pcall(function()
+        if makefolder then
+            if not (isfolder and isfolder("cowhub")) then makefolder("cowhub") end
+            if not (isfolder and isfolder(STORAGE_DIR)) then makefolder(STORAGE_DIR) end
+        end
+    end)
+    for legacy, target in pairs(LEGACY_FILES) do
+        pcall(function()
+            if isFileFunc(legacy) and not isFileFunc(target) then
+                writeFileFunc(target, readFileFunc(legacy))
+                if isFileFunc(target) and delfile then delfile(legacy) end
+                log("Migrated " .. legacy .. " -> " .. target)
+            end
+        end)
+    end
+end
+
+prepareStorage()
 loadConfig()
 loadState()
 
 -- ============================
 -- AUCTION SKINS CATALOGUE
+-- Built live from the game's CosmeticConfig.Definitions: every Coat with
+-- UnlockRule "Auction", grouped by Rarity and AuctionStatus (missing = Active).
 -- ============================
-local DEFAULT_AUCTION_SKINS = {
-    "AcrobatCoat",
-    "AerialStuntCoat",
-    "AngusCoat",
-    "AuctionKingCoat",
-    "AyrshireCoat",
-    "BeltedGallowayCoat",
-    "BlueRoanCoat",
-    "BlueRobotCoat",
-    "BrindleCoat",
-    "BrownSwissCoat",
-    "BubblegumCoat",
-    "BumbleCoat",
-    "BurgerCoat",
-    "CharolaisCoat",
-    "ChocolateMilkCoat",
-    "CopperSocksCoat",
-    "CreamHighlandCoat",
-    "DinoCoat",
-    "DutchBeltedCoat",
-    "FireflySquidCoat",
-    "GiantIsopodCoat",
-    "GuernseyCoat",
-    "HazmatCoat",
-    "HerefordCoat",
-    "HolsteinCoat",
-    "JackOLanternCoat",
-    "JerseyCoat",
-    "JuicySliceCoat",
-    "KrakenCoat",
-    "LanternfishCoat",
-    "LovestruckCoat",
-    "MatchaLatteCoat",
-    "MintChipCoat",
-    "MoonWalkerCoat",
-    "NeapolitanCoat",
-    "NormandeCoat",
-    "OrcaCoat",
-    "PandaCoat",
-    "PirateCoat",
-    "PlushieCoat",
-    "RainCloudCoat",
-    "RedAngusCoat",
-    "RedHolsteinCoat",
-    "RoboCoat",
-    "RocktailCoat",
-    "SheepCoat",
-    "SilverHighlandCoat",
-    "SleepyheadCoat",
-    "SpaDayCoat",
-    "SpeckleParkCoat",
-    "UnicornCoat",
-    "YinAndYangCoat",
-}
-
--- Comprehensive rarity & auction status catalog for all auction coats
-local AUCTION_COAT_META = {
-    -- Mythic (Active)
-    AuctionKingCoat = { Rarity = "Mythic", Status = "Active" },
-    UnicornCoat = { Rarity = "Mythic", Status = "Active" },
-
-    -- Super Rare (Active)
-    DinoCoat = { Rarity = "Super Rare", Status = "Active" },
-    MoonWalkerCoat = { Rarity = "Super Rare", Status = "Active" },
-    RainCloudCoat = { Rarity = "Super Rare", Status = "Active" },
-    RoboCoat = { Rarity = "Super Rare", Status = "Active" },
-
-    -- Rare (Active)
-    ChocolateMilkCoat = { Rarity = "Rare", Status = "Active" },
-    MatchaLatteCoat = { Rarity = "Rare", Status = "Active" },
-    MintChipCoat = { Rarity = "Rare", Status = "Active" },
-    NeapolitanCoat = { Rarity = "Rare", Status = "Active" },
-    PandaCoat = { Rarity = "Rare", Status = "Active" },
-    PlushieCoat = { Rarity = "Rare", Status = "Active" },
-    SleepyheadCoat = { Rarity = "Rare", Status = "Active" },
-    SpaDayCoat = { Rarity = "Rare", Status = "Active" },
-
-    -- Uncommon (Active)
-    AngusCoat = { Rarity = "Uncommon", Status = "Active" },
-    BeltedGallowayCoat = { Rarity = "Uncommon", Status = "Active" },
-    BrindleCoat = { Rarity = "Uncommon", Status = "Active" },
-    CopperSocksCoat = { Rarity = "Uncommon", Status = "Active" },
-    CreamHighlandCoat = { Rarity = "Uncommon", Status = "Active" },
-    DutchBeltedCoat = { Rarity = "Uncommon", Status = "Active" },
-    JuicySliceCoat = { Rarity = "Uncommon", Status = "Active" },
-    RedAngusCoat = { Rarity = "Uncommon", Status = "Active" },
-    SheepCoat = { Rarity = "Uncommon", Status = "Active" },
-    SilverHighlandCoat = { Rarity = "Uncommon", Status = "Active" },
-    SpeckleParkCoat = { Rarity = "Uncommon", Status = "Active" },
-
-    -- Common (Active)
-    AyrshireCoat = { Rarity = "Common", Status = "Active" },
-    BlueRoanCoat = { Rarity = "Common", Status = "Active" },
-    BrownSwissCoat = { Rarity = "Common", Status = "Active" },
-    CharolaisCoat = { Rarity = "Common", Status = "Active" },
-    GuernseyCoat = { Rarity = "Common", Status = "Active" },
-    HerefordCoat = { Rarity = "Common", Status = "Active" },
-    HolsteinCoat = { Rarity = "Common", Status = "Active" },
-    JerseyCoat = { Rarity = "Common", Status = "Active" },
-    NormandeCoat = { Rarity = "Common", Status = "Active" },
-    RedHolsteinCoat = { Rarity = "Common", Status = "Active" },
-
-    -- Super Rare (Deferred / Other Status)
-    AcrobatCoat = { Rarity = "Super Rare", Status = "Deferred" },
-    AerialStuntCoat = { Rarity = "Super Rare", Status = "Deferred" },
-    BlueRobotCoat = { Rarity = "Super Rare", Status = "Deferred" },
-    BumbleCoat = { Rarity = "Super Rare", Status = "Deferred" },
-    BurgerCoat = { Rarity = "Super Rare", Status = "Deferred" },
-    FireflySquidCoat = { Rarity = "Super Rare", Status = "Deferred" },
-    GiantIsopodCoat = { Rarity = "Super Rare", Status = "Deferred" },
-    HazmatCoat = { Rarity = "Super Rare", Status = "Deferred" },
-    JackOLanternCoat = { Rarity = "Super Rare", Status = "Deferred" },
-    KrakenCoat = { Rarity = "Super Rare", Status = "Deferred" },
-    LanternfishCoat = { Rarity = "Super Rare", Status = "Deferred" },
-    LovestruckCoat = { Rarity = "Super Rare", Status = "Deferred" },
-    OrcaCoat = { Rarity = "Super Rare", Status = "Deferred" },
-    PirateCoat = { Rarity = "Super Rare", Status = "Deferred" },
-    RocktailCoat = { Rarity = "Super Rare", Status = "Deferred" },
-    YinAndYangCoat = { Rarity = "Super Rare", Status = "Deferred" },
-
-    -- Rare (Deferred / Other Status)
-    BubblegumCoat = { Rarity = "Rare", Status = "Deferred" },
-}
-
-local ACTIVE_COATS_BY_RARITY = {
-    Mythic = {},
-    ["Super Rare"] = {},
-    Rare = {},
-    Uncommon = {},
-    Common = {},
-}
-
-local OTHER_COATS_BY_RARITY = {
-    Mythic = {},
-    ["Super Rare"] = {},
-    Rare = {},
-    Uncommon = {},
-    Common = {},
-}
-
+local ACTIVE_COATS_BY_RARITY = {}
+local OTHER_COATS_BY_RARITY = {}
 local ALL_ACTIVE_COATS = {}
 local ALL_OTHER_COATS = {}
 local HALLOWEEN_SKINS = {}
+local skinMeta = {} -- [skinId] = { Rarity, Status, DisplayName }
+local catalogueError = nil
+local cosmeticConfigCache = nil
+
+local function getCosmeticConfig()
+    if cosmeticConfigCache == nil then
+        local ok, mod = pcall(function()
+            return require(ReplicatedStorage:WaitForChild("CowGame", 10).Shared.CosmeticConfig)
+        end)
+        cosmeticConfigCache = (ok and type(mod) == "table") and mod or false
+    end
+    return cosmeticConfigCache or nil
+end
+
+-- Rarity for a lot's SkinId, from the catalogue or the game's definition
+local function getSkinRarity(skinId)
+    if type(skinId) ~= "string" then return "Unknown" end
+    if skinMeta[skinId] then return skinMeta[skinId].Rarity end
+    local config = getCosmeticConfig()
+    if config then
+        local ok, def = pcall(config.Get, skinId)
+        if ok and type(def) == "table" and def.Rarity then return def.Rarity end
+    end
+    return "Unknown"
+end
 
 local function getAuctionSkins()
-    local seen = {}
     local skins = {}
-    local hwSeen = {}
-
-    local function add(id)
-        if type(id) == "string" and id ~= "" and not seen[id] then
-            seen[id] = true
-            table.insert(skins, id)
-        end
+    local config = getCosmeticConfig()
+    if not (config and type(config.Definitions) == "table") then
+        catalogueError = "CosmeticConfig could not be loaded"
+        log("Skin catalogue unavailable: " .. catalogueError)
+        return skins
     end
 
-    local function addHalloween(id)
-        if type(id) == "string" and id ~= "" and not hwSeen[id] then
-            hwSeen[id] = true
-            table.insert(HALLOWEEN_SKINS, id)
-        end
-    end
-
-    for _, id in ipairs(DEFAULT_AUCTION_SKINS) do
-        add(id)
-    end
-
+    local halloweenCollection = nil
     pcall(function()
-        local cowGame = ReplicatedStorage:FindFirstChild("CowGame")
-        local shared = cowGame and cowGame:FindFirstChild("Shared")
-        if shared then
-            local cosmeticConfigMod = shared:FindFirstChild("CosmeticConfig")
-            if cosmeticConfigMod then
-                local cosmeticCfg = require(cosmeticConfigMod)
-                if type(cosmeticCfg) == "table" and type(cosmeticCfg.Definitions) == "table" then
-                    for id, def in pairs(cosmeticCfg.Definitions) do
-                        if type(def) == "table" and def.Slot == "Coat" and def.UnlockRule == "Auction" then
-                            add(id)
-                            local r = def.Rarity or (AUCTION_COAT_META[id] and AUCTION_COAT_META[id].Rarity) or "Common"
-                            local s = def.AuctionStatus or (AUCTION_COAT_META[id] and AUCTION_COAT_META[id].Status) or "Active"
-                            AUCTION_COAT_META[id] = { Rarity = r, Status = s }
-                        end
-                    end
-                end
-            end
-
-            local auctionConfigMod = shared:FindFirstChild("SkinAuctionConfig")
-            if auctionConfigMod then
-                local cfg = require(auctionConfigMod)
-                if type(cfg) == "table" then
-                    if type(cfg.HalloweenSkins) == "table" then
-                        for _, id in pairs(cfg.HalloweenSkins) do
-                            add(id)
-                            addHalloween(id)
-                        end
-                    end
-                    for _, tbl in ipairs({cfg.Skins, cfg.LegacySkins, cfg.VersionThreeSkins}) do
-                        if type(tbl) == "table" then
-                            for _, id in pairs(tbl) do add(id) end
-                        end
-                    end
-                end
-            end
-
-            local halloweenMod = shared:FindFirstChild("HalloweenConfig")
-            if halloweenMod then
-                local hw = require(halloweenMod)
-                if type(hw) == "table" and type(hw.AuctionSet) == "table" then
-                    for _, id in pairs(hw.AuctionSet) do
-                        add(id)
-                        addHalloween(id)
-                    end
-                end
-                if type(hw) == "table" and hw.EventRunning == true then
-                    if AUCTION_COAT_META.JackOLanternCoat then
-                        AUCTION_COAT_META.JackOLanternCoat.Status = "Active"
-                    end
-                end
-            end
-        end
+        local hw = require(ReplicatedStorage.CowGame.Shared.HalloweenConfig)
+        halloweenCollection = type(hw) == "table" and hw.CollectionId or nil
     end)
 
-    for _, id in ipairs({"JackOLanternCoat", "MoonWalkerCoat"}) do
-        if seen[id] then
-            addHalloween(id)
-        end
-    end
-
-    -- Re-categorize all discovered skins into Active and Other by rarity
-    table.clear(ALL_ACTIVE_COATS)
-    table.clear(ALL_OTHER_COATS)
-    for _, tbl in pairs(ACTIVE_COATS_BY_RARITY) do table.clear(tbl) end
-    for _, tbl in pairs(OTHER_COATS_BY_RARITY) do table.clear(tbl) end
-
-    for _, id in ipairs(skins) do
-        local meta = AUCTION_COAT_META[id] or { Rarity = "Common", Status = "Active" }
-        local rarity = meta.Rarity or "Common"
-        local status = meta.Status or "Active"
-
-        if status == "Active" then
-            table.insert(ALL_ACTIVE_COATS, id)
-            if not ACTIVE_COATS_BY_RARITY[rarity] then ACTIVE_COATS_BY_RARITY[rarity] = {} end
-            table.insert(ACTIVE_COATS_BY_RARITY[rarity], id)
-        else
-            table.insert(ALL_OTHER_COATS, id)
-            if not OTHER_COATS_BY_RARITY[rarity] then OTHER_COATS_BY_RARITY[rarity] = {} end
-            table.insert(OTHER_COATS_BY_RARITY[rarity], id)
+    for id, def in pairs(config.Definitions) do
+        if type(id) == "string" and type(def) == "table" and def.Slot == "Coat" and def.UnlockRule == "Auction" then
+            local rarity = def.Rarity or "Common"
+            local status = def.AuctionStatus or "Active"
+            skinMeta[id] = { Rarity = rarity, Status = status, DisplayName = def.DisplayName or id }
+            table.insert(skins, id)
+            local byRarity = (status == "Active") and ACTIVE_COATS_BY_RARITY or OTHER_COATS_BY_RARITY
+            byRarity[rarity] = byRarity[rarity] or {}
+            table.insert(byRarity[rarity], id)
+            table.insert((status == "Active") and ALL_ACTIVE_COATS or ALL_OTHER_COATS, id)
+            if halloweenCollection and def.CollectionId == halloweenCollection then
+                table.insert(HALLOWEEN_SKINS, id)
+            end
         end
     end
 
@@ -625,15 +466,17 @@ local function getAuctionSkins()
     table.sort(HALLOWEEN_SKINS)
     for _, tbl in pairs(ACTIVE_COATS_BY_RARITY) do table.sort(tbl) end
     for _, tbl in pairs(OTHER_COATS_BY_RARITY) do table.sort(tbl) end
-
+    log(string.format("Skin catalogue: %d auction coats (%d active, %d other)", #skins, #ALL_ACTIVE_COATS, #ALL_OTHER_COATS))
     return skins
 end
 
 local AUCTION_SKIN_OPTIONS = getAuctionSkins()
 
 if #getTargetSkinList() == 0 then
-    local defaultSkin = (ALL_ACTIVE_COATS and ALL_ACTIVE_COATS[1]) or AUCTION_SKIN_OPTIONS[1] or "HolsteinCoat"
-    setTargetSkins({ defaultSkin }, false)
+    local defaultSkin = ALL_ACTIVE_COATS[1] or AUCTION_SKIN_OPTIONS[1]
+    if defaultSkin then
+        setTargetSkins({ defaultSkin }, false)
+    end
 end
 
 -- ============================
@@ -666,6 +509,16 @@ if getgenv then
         pcall(function() Rayfield:Destroy() end)
         destroyAllRayfieldGuis()
     end
+end
+
+if catalogueError then
+    pcall(function()
+        Rayfield:Notify({
+            Title = "Skin catalogue unavailable",
+            Content = catalogueError .. ". Use the manual Skin ID input.",
+            Duration = 8,
+        })
+    end)
 end
 
 -- Rayfield 2022 CreateTab takes (Title, ImageId)
@@ -793,7 +646,7 @@ local function getAuctionData()
         if lot then
             local skinId = lot:GetAttribute("SkinId")
             local skinName = lot:GetAttribute("SkinName") or "Unknown"
-            local rarity = lot:GetAttribute("Rarity") or "Unknown"
+            local rarity = getSkinRarity(skinId)
             local scope = lot:GetAttribute("Scope") or "N/A"
             local round = lot:GetAttribute("Round") or "N/A"
             local bid = lot:GetAttribute("Bid")
@@ -1305,7 +1158,7 @@ local function waitForAuctionChange()
                     log("🎯 TARGET SKIN APPEARED ON CURRENT SERVER WHILE WAITING: " .. tostring(currentSkinId))
 
                     local skinName = lot:GetAttribute("SkinName") or "Unknown"
-                    local rarity = lot:GetAttribute("Rarity") or "Unknown"
+                    local rarity = getSkinRarity(currentSkinId)
                     local scope = lot:GetAttribute("Scope") or "N/A"
                     local round = lot:GetAttribute("Round") or "N/A"
                     local bid = lot:GetAttribute("Bid")
@@ -1664,8 +1517,23 @@ TargetDropdown = {
     Refresh = function(...) end,
 }
 
-local ACTIVE_RARITY_ORDER = {"Mythic", "Super Rare", "Rare", "Uncommon", "Common"}
-local OTHER_RARITY_ORDER = {"Super Rare", "Rare", "Mythic", "Uncommon", "Common"}
+-- Preferred order, then any rarity the game adds that isn't listed (so it is never hidden)
+local function rarityOrder(preferred, byRarity)
+    local order, listed, extra = {}, {}, {}
+    for _, r in ipairs(preferred) do
+        table.insert(order, r)
+        listed[r] = true
+    end
+    for r in pairs(byRarity) do
+        if not listed[r] then table.insert(extra, r) end
+    end
+    table.sort(extra)
+    for _, r in ipairs(extra) do table.insert(order, r) end
+    return order
+end
+
+local ACTIVE_RARITY_ORDER = rarityOrder({"Mythic", "Super Rare", "Rare", "Uncommon", "Common"}, ACTIVE_COATS_BY_RARITY)
+local OTHER_RARITY_ORDER = rarityOrder({"Super Rare", "Rare", "Mythic", "Uncommon", "Common"}, OTHER_COATS_BY_RARITY)
 
 -- ============================
 -- SECTION: ACTIVE AUCTION COATS

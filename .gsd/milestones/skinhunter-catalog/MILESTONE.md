@@ -7,7 +7,7 @@ created: 2026-11-05T00:00:00Z
 
 # Milestone: Skin Hunter Links + Live Skin Catalogue
 
-> **Status:** 📝 Planning: Plan 1.1 awaiting approval.
+> **Status:** 🧪 Plan 1.1 built; push to GitHub + in-game UAT (Plan 1.2) pending.
 > Independent of the hub milestones; touches `luascripts/skinhunter.lua` only.
 
 ## Vision
@@ -29,14 +29,14 @@ Skin Hunter reloads itself after every server hop, and its target dropdowns list
 
 | ID | Requirement | Priority | Status |
 |----|-------------|----------|--------|
-| SH-01 | `SCRIPT_SOURCE_URL` → `luascripts/skinhunter.lua` (HTTP 200) | Must-have | ⬜ |
-| SH-02 | Dropdowns built only from `CosmeticConfig.Definitions` (Coat + UnlockRule Auction); rarity from `Rarity`, Active vs Deferred from `AuctionStatus` (missing → Active) | Must-have | ⬜ |
-| SH-03 | Remove `DEFAULT_AUCTION_SKINS` / `AUCTION_COAT_META` and the hardcoded Halloween ids | Must-have | ⬜ |
-| SH-04 | Lot rarity in logs/webhooks from the definition, not the missing attribute | Should-have | ⬜ |
-| SH-05 | State/config under `cowhub/skinhunter/`, migrating legacy root files | Must-have (AGENTS.md) | ⬜ |
+| SH-01 | `SCRIPT_SOURCE_URL` → `luascripts/skinhunter.lua` (HTTP 200) | Must-have | ✅ code (UAT pending) |
+| SH-02 | Dropdowns built only from `CosmeticConfig.Definitions` (Coat + UnlockRule Auction); rarity from `Rarity`, Active vs Deferred from `AuctionStatus` (missing → Active) | Must-have | ✅ code (UAT pending) |
+| SH-03 | Remove `DEFAULT_AUCTION_SKINS` / `AUCTION_COAT_META` and the hardcoded Halloween ids | Must-have | ✅ code (UAT pending) |
+| SH-04 | Lot rarity in logs/webhooks from the definition, not the missing attribute | Should-have | ✅ code (UAT pending) |
+| SH-05 | State/config under `cowhub/skinhunter/`, migrating legacy root files | Must-have (AGENTS.md) | ✅ code (UAT pending) |
 
 ## Phases
 
 ### Phase 1: Links + Live Catalogue
-- [ ] Plan 1.1: skinhunter.lua changes
+- [x] Plan 1.1: skinhunter.lua changes
 - [ ] Plan 1.2: In-game UAT (dropdown counts, hop + reload)
