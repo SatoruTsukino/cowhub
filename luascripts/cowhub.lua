@@ -1,4 +1,4 @@
--- Cow Hub [a1334b6] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [cd37b42] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -54,7 +54,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [a1334b6]",
+    Name = "Cow Hub [cd37b42]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -277,12 +277,25 @@ local LOW_OFFSET = Vector3.new(0, 0.6, 0)
 local HIGH_OFFSET = Vector3.new(0, 2.0, 0)
 local JUMP_OFFSET = Vector3.new(0, 3.8, 0)
 
+-- The game targets grass in the CowVirtualGrass folder flagged CowClientGrassRenderer
+-- (InputController:_findTarget); other folders with that name are not grazeable.
+local function findGrassFolder()
+    local first = nil
+    for _, child in ipairs(workspace:GetChildren()) do
+        if child.Name == "CowVirtualGrass" then
+            if child:GetAttribute("CowClientGrassRenderer") == true then return child end
+            first = first or child
+        end
+    end
+    return first
+end
+
 local function updateWallRaycastFilter()
     local filter = {}
     if char then
         table.insert(filter, char)
     end
-    local gFolder = (cache and cache.grassFolder) or workspace:FindFirstChild("CowVirtualGrass")
+    local gFolder = (cache and cache.grassFolder) or findGrassFolder()
     if gFolder and gFolder.Parent then
         table.insert(filter, gFolder)
     end
@@ -417,8 +430,14 @@ local chomp = {
     serial = 0,
     pending = {},
     lastFire = 0,
-    lastNode = nil,
-    stats = { sent = 0, accepted = 0, rejected = 0, cooldownRejects = 0 },
+    REACH = 8,         -- studs; game client targets <= Config.Grass.TargetDistance (9)
+    CLOSE = 3,         -- studs; inside this the facing cone is ignored (game: 3.5)
+    CONE_MARGIN = 10,  -- degrees trimmed off GrazeConeDegrees
+    skip = {},         -- nodeId -> os.clock() until which the node is not targeted
+    rtt = 0.25,        -- EMA of GrazeResult round trip (s)
+    target = { src = nil, dist = 0, dot = 1 },
+    idleWhy = {},      -- per-tick tally of why nearby nodes failed chomp.canTarget
+    stats = { sent = 0, accepted = 0, rejected = 0, cooldownRejects = 0, reasons = {} },
     calories = { sessionGained = 0, startTime = 0, activeDuration = 0, lastTimestamp = 0, lastCalories = nil, ratePerHour = 0 },
     natural = { held = false, lastTap = 0, lastEngage = 0, notGrazingSince = nil, rearmAt = 0, lastGrazing = nil, lastGameResult = 0, input = nil, lastScan = -math.huge, engaged = false },
 }
@@ -482,7 +501,7 @@ local cache = {
     mobWarning = setmetatable({}, { __mode = "kv" }),
     mobWarningCheckTime = setmetatable({}, { __mode = "kv" }),
     fishingSpotPos = setmetatable({}, { __mode = "k" }),
-    grassFolder = workspace:FindFirstChild("CowVirtualGrass"),
+    grassFolder = findGrassFolder(),
     grassNodes = {},
     lastGrassTime = 0,
     fishingSpots = {},
@@ -1838,6 +1857,50 @@ function chomp.getInterval(node)
     return interval
 end
 
+-- Mirrors InputController:_findTarget (Available, TargetDistance, forward cone). Range and cone are
+-- judged from where the server sees the cow: the root position minus horizontal velocity x lag.
+local function inReach(origin, pos, look, cosCone)
+    local d = pos - origin
+    if d.Magnitude > chomp.REACH then return false, d.Magnitude, 1 end
+    local flat = Vector3.new(d.X, 0, d.Z)
+    local fm = flat.Magnitude
+    local dot = fm > 0.001 and look:Dot(flat / fm) or 1
+    return fm <= chomp.CLOSE or dot >= cosCone, d.Magnitude, dot
+end
+
+-- Returns ok, dist, dot (client-origin geometry, for logging), why (rejection cause)
+function chomp.canTarget(node, id, rootPos, now)
+    if not id or not node or typeof(node) ~= "Instance" or not node.Parent then return false, 0, 1, "invalid" end
+    local until_ = chomp.skip[id]
+    if until_ then
+        if now < until_ then return false, 0, 1, "skip" end
+        chomp.skip[id] = nil
+    end
+    local avail = node:GetAttribute("Available")
+    if avail == nil and node:IsA("Model") and node.PrimaryPart then avail = node.PrimaryPart:GetAttribute("Available") end
+    if avail ~= nil and avail ~= true then return false, 0, 1, "avail" end
+    -- Same exclusions as the game's target scan
+    if node:GetAttribute("CowBiteTargetId") ~= nil or node:GetAttribute("CowPrivatePenHaySharedHidden") == true then return false, 0, 1, "excluded" end
+    local owner = node:GetAttribute("CowMountainsideOwner")
+    if owner ~= nil and owner ~= plr.UserId then return false, 0, 1, "excluded" end
+    if not root then return false, 0, 1, "noroot" end
+    local lv = root.CFrame.LookVector
+    local look = Vector3.new(lv.X, 0, lv.Z)
+    if look.Magnitude < 0.001 then return false, 0, 1, "noroot" end
+    look = look.Unit
+    local rest = node:GetAttribute("RestCFrame")
+    local pos = typeof(rest) == "CFrame" and rest.Position or cache.getNodePosition(node)
+    if not pos then return false, 0, 1, "invalid" end
+    local cone = (tonumber(plr:GetAttribute("GrazeConeDegrees")) or 100) - chomp.CONE_MARGIN
+    local cosCone = math.cos(math.rad(cone * 0.5))
+    local _, dist, dot = inReach(rootPos, pos, look, cosCone)
+    local v = root.AssemblyLinearVelocity
+    local lag = math.clamp(chomp.rtt * 0.5, 0.05, 0.3)
+    local ok, sDist = inReach(rootPos - Vector3.new(v.X, 0, v.Z) * lag, pos, look, cosCone)
+    if not ok then return false, dist, dot, sDist > chomp.REACH and "range" or "cone" end
+    return true, dist, dot
+end
+
 -- Single grass ChompRequest call site; wire shape matches InputController (nodeId, nil, serial)
 function chomp.fire(nodeId, node, now)
     if farm.botCheckActive or chomp.mode ~= "Remote" then return false end
@@ -1846,11 +1909,15 @@ function chomp.fire(nodeId, node, now)
     chomp.serial += 1
     local serial = chomp.serial
     chomp.lastFire = now
-    chomp.lastNode = nodeId
     chomp.pending[serial] = { NodeId = nodeId, SentAt = now }
+    -- Reserve until the server answers (the result handler sets the real skip), like the game's _grassReservations
+    chomp.skip[nodeId] = now + 1.5
     if serial % 32 == 0 then
         for k, p in pairs(chomp.pending) do
             if now - p.SentAt > 15 then chomp.pending[k] = nil end
+        end
+        for k, t in pairs(chomp.skip) do
+            if now >= t then chomp.skip[k] = nil end
         end
     end
     chomp.stats.sent += 1
@@ -1875,6 +1942,18 @@ do
             if p.NodeId ~= res.NodeId then return end
             chomp.pending[res.RequestId] = nil
             local now = os.clock()
+            chomp.rtt = chomp.rtt * 0.8 + math.clamp(now - p.SentAt, 0, 2) * 0.2
+            local reason = res.Reason
+            if res.Accepted == true or reason == "Consumed" or reason == "Unavailable" then
+                -- One bite consumes a node; regrow takes >= 15 s, so don't come back soon
+                chomp.skip[p.NodeId] = now + 10
+            elseif reason == "OutOfRange" or reason == "BehindCow" or reason == "OutsideCone" or reason == "Obstructed" then
+                chomp.skip[p.NodeId] = now + 1
+            end
+            if res.Accepted ~= true then
+                local r = tostring(reason)
+                chomp.stats.reasons[r] = (chomp.stats.reasons[r] or 0) + 1
+            end
             if res.Accepted == true then
                 chomp.stats.accepted += 1
                 chomp.margin = math.max(0.01, chomp.margin - 0.002)
@@ -2161,11 +2240,19 @@ end
 function cache.getGrassNodes()
     local now = os.clock()
     if not cache.grassFolder or not cache.grassFolder.Parent then
-        cache.grassFolder = workspace:FindFirstChild("CowVirtualGrass")
+        cache.grassFolder = findGrassFolder()
         updateWallRaycastFilter()
     end
     if cache.grassFolder and (now - cache.lastGrassTime > 4 or #cache.grassNodes == 0) then
         cache.lastGrassTime = now
+        if cache.grassFolder:GetAttribute("CowClientGrassRenderer") ~= true then
+            local folder = findGrassFolder()
+            if folder ~= cache.grassFolder then
+                cache.grassFolder = folder
+                table.clear(cache.nodeIDs)
+                updateWallRaycastFilter()
+            end
+        end
         cache.grassNodes = cache.grassFolder:GetChildren()
     end
     return cache.grassNodes
@@ -2220,7 +2307,7 @@ cache.isValidNodeID = isValidGrassNodeID
 
 function cache.resolveGrassNode(inst)
     if not inst then return nil end
-    local folder = cache.grassFolder or workspace:FindFirstChild("CowVirtualGrass")
+    local folder = cache.grassFolder or findGrassFolder()
     if not folder or inst == folder then return nil end
 
     -- Must strictly be within the CowVirtualGrass folder
@@ -2250,7 +2337,7 @@ function cache.getNodeID(node)
     if cached ~= nil then return cached or nil end
 
     -- Must be strictly in CowVirtualGrass
-    local folder = cache.grassFolder or workspace:FindFirstChild("CowVirtualGrass")
+    local folder = cache.grassFolder or findGrassFolder()
     if folder and not node:IsDescendantOf(folder) then
         cache.nodeIDs[node] = false
         return nil
@@ -5486,21 +5573,18 @@ function farm.processGrassChomp(now, rootPos)
 
         local targetNodeId = nil
         local targetInstance = nil
-        local repeatDelay = chompDelay + 0.2
 
-        local function tryCandidate(inst, id)
+        -- Accept a candidate only if the server would (see chomp.canTarget)
+        local function tryCandidate(inst, id, src)
             if not id and inst then
                 id = cache.getNodeID(inst) or cache.extractGrassNodeId(inst)
             end
-            if not id then return false end
-
-            -- If candidate is the last chomped node, only accept if repeatDelay has elapsed
-            if id == chomp.lastNode and (now - chomp.lastFire < repeatDelay) then
-                return false
-            end
-
+            local ok, dist, dot = chomp.canTarget(inst, id, rootPos, now)
+            if not ok then return false end
             targetNodeId = id
             targetInstance = inst
+            local t = chomp.target
+            t.src, t.dist, t.dot = src, dist, dot
             return true
         end
 
@@ -5518,11 +5602,9 @@ function farm.processGrassChomp(now, rootPos)
 
             if adornee then
                 local resolved = (typeof(adornee) == "Instance" and cache.resolveGrassNode(adornee)) or adornee
-                local pos = (typeof(resolved) == "Instance" and cache.getNodePosition(resolved))
-                -- Ensure prediction target is within reasonable eating reach (<= 7 studs / 49 sq)
-                if not pos or get2DDistanceSq(rootPos, pos) <= 49 then
-                    local id = cache.extractGrassNodeId(resolved) or (typeof(resolved) == "Instance" and cache.getNodeID(resolved))
-                    tryCandidate(resolved, id)
+                if typeof(resolved) == "Instance" then
+                    local id = cache.extractGrassNodeId(resolved) or cache.getNodeID(resolved)
+                    tryCandidate(resolved, id, "pred")
                 end
             end
         end
@@ -5533,41 +5615,41 @@ function farm.processGrassChomp(now, rootPos)
             if hit and hit.Instance then
                 local rayNode = cache.resolveGrassNode(hit.Instance)
                 if rayNode then
-                    tryCandidate(rayNode, cache.getNodeID(rayNode))
+                    tryCandidate(rayNode, cache.getNodeID(rayNode), "ray")
                 end
             end
         end
 
-        -- 3. Proximity Fallback 1: Current target node within 6 studs (36 sq)
+        -- 3. Current autofarm target node
         if not targetNodeId and farm.currentTargetNode and farm.currentTargetNode.Parent then
-            local tPos = cache.getNodePosition(farm.currentTargetNode)
-            if tPos and get2DDistanceSq(rootPos, tPos) <= 36 then
-                tryCandidate(farm.currentTargetNode, cache.getNodeID(farm.currentTargetNode))
-            end
+            tryCandidate(farm.currentTargetNode, cache.getNodeID(farm.currentTargetNode), "target")
         end
 
-        -- 4. Proximity Fallback 2: Any grass node in CowVirtualGrass within 6 studs (closest)
+        -- 4. Closest valid grass node in CowVirtualGrass
         if not targetNodeId then
-            local grassNodes = cache.getGrassNodes()
-            local bestDistSq = 36
-            local bestNode = nil
-            for _, node in ipairs(grassNodes) do
+            local reachSq = chomp.REACH * chomp.REACH
+            local best, bestDistSq, bestId = nil, math.huge, nil
+            local why = chomp.idleWhy
+            table.clear(why)
+            for _, node in ipairs(cache.getGrassNodes()) do
                 if node and node.Parent then
                     local nodePos = cache.getNodePosition(node)
                     if nodePos then
                         local dSq = get2DDistanceSq(rootPos, nodePos)
-                        if dSq < bestDistSq then
+                        if dSq <= reachSq and dSq < bestDistSq then
                             local id = cache.getNodeID(node)
-                            if id and (id ~= chomp.lastNode or (now - chomp.lastFire >= repeatDelay)) then
-                                bestDistSq = dSq
-                                bestNode = node
+                            local ok, _, _, reason = chomp.canTarget(node, id, rootPos, now)
+                            if ok then
+                                best, bestDistSq, bestId = node, dSq, id
+                            else
+                                why[reason] = (why[reason] or 0) + 1
                             end
                         end
                     end
                 end
             end
-            if bestNode then
-                tryCandidate(bestNode, cache.getNodeID(bestNode))
+            if best then
+                tryCandidate(best, bestId, "near")
             end
         end
 
@@ -6055,10 +6137,15 @@ do
 
                 local st = chomp.stats
                 local t = string.format("Chomp: %s%s", chomp.mode, farm.botCheckActive and " | PAUSED (bot check)" or "")
-                local b = string.format("Interval: %.3fs (server %.3fs + margin %.3fs)\nSent %d | OK %d | Rejected %d (cooldown %d)\nGrazing: %s\nAvg Calories/hr: %s",
-                    chomp.getInterval(), chomp.serverInterval(), chomp.margin,
-                    st.sent, st.accepted, st.rejected, st.cooldownRejects, tostring(chomp.isGrazing()),
-                    calRateStr)
+                local reasons = {}
+                for r, c in pairs(st.reasons) do table.insert(reasons, { r, c }) end
+                table.sort(reasons, function(a, b) return a[2] > b[2] end)
+                for i, rc in ipairs(reasons) do reasons[i] = rc[1] .. " " .. rc[2] end
+                local b = string.format("Interval: %.3fs (server %.3fs + margin %.3fs) | RTT %dms\nSent %d | OK %d | Rejected %d (%.0f%%)\nRejects: %s\nGrazing: %s\nAvg Calories/hr: %s",
+                    chomp.getInterval(), chomp.serverInterval(), chomp.margin, math.floor(chomp.rtt * 1000),
+                    st.sent, st.accepted, st.rejected, st.sent > 0 and st.rejected / st.sent * 100 or 0,
+                    #reasons > 0 and table.concat(reasons, ", ") or "none",
+                    tostring(chomp.isGrazing()), calRateStr)
                 pcall(function()
                     if chomp.statusCard.SetTitle then
                         chomp.statusCard:SetTitle(t)
