@@ -10,6 +10,7 @@ updated: 2026-11-03T00:00:00Z
 > **Status:** verifying — Plans 1.0–1.3 built; awaiting in-game UAT logs (Plan 3.1)
 >
 > Separate milestone (blocked on dev availability): branch `gsd/botcheck-pentest`
+> Separate milestone (planning): `.gsd/milestones/auction-ownership/MILESTONE.md`
 
 ## Must-Haves (from SPEC)
 

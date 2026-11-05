@@ -1,4 +1,4 @@
--- Cow Hub [228db36] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [57a775d] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -54,7 +54,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [228db36]",
+    Name = "Cow Hub [57a775d]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -565,6 +565,10 @@ local townAuction = {
     held = 0,
     lotsBySlot = {},
     ownedCopies = {},
+    profileStore = nil,
+    profileScanAt = -math.huge,
+    cosmeticConfig = nil,
+    ownershipRedrawQueued = false,
     cards = {},
     customBidAmounts = {},
     infoCard = nil,
@@ -7315,6 +7319,82 @@ function townAuction.getRemote()
     return townAuction.remote
 end
 
+-- Closet ownership: the game's live profile (UIController.Store) + CosmeticConfig, as the Closet uses
+function townAuction.getProfile()
+    local store = townAuction.profileStore
+    if store then
+        local ok, state = pcall(function() return store:GetState() end)
+        if ok and type(state) == "table" and type(state.Profile) == "table" then return state.Profile end
+        townAuction.profileStore = nil
+    end
+    local now = os.clock()
+    if type(getgc) ~= "function" or now - townAuction.profileScanAt < 5 then return nil end
+    townAuction.profileScanAt = now
+    local ok, objs = pcall(getgc, true)
+    if not ok or type(objs) ~= "table" then return nil end
+    for _, t in ipairs(objs) do
+        if type(t) == "table" and rawget(t, "Remotes") ~= nil and type(rawget(t, "Store")) == "table" then
+            local s = rawget(t, "Store")
+            local okState, state = pcall(function() return s:GetState() end)
+            if okState and type(state) == "table" and type(state.Profile) == "table" then
+                townAuction.profileStore = s
+                return state.Profile
+            end
+        end
+    end
+    return nil
+end
+
+function townAuction.getCosmeticConfig()
+    if townAuction.cosmeticConfig == nil then
+        local ok, mod = pcall(function()
+            return require(game:GetService("ReplicatedStorage").CowGame.Shared.CosmeticConfig)
+        end)
+        townAuction.cosmeticConfig = (ok and type(mod) == "table") and mod or false
+    end
+    return townAuction.cosmeticConfig or nil
+end
+
+-- Card text for "Owned:" — closet count from the game, plus listable duplicates from the auction snapshot
+function townAuction.formatOwnership(itemId)
+    if not itemId then return "-" end
+    local listable = townAuction.ownedCopies[itemId] or 0
+    local extra = listable > 0 and string.format(" (%d listable)", listable) or ""
+    local config = townAuction.getCosmeticConfig()
+    if config then
+        local okDef, def = pcall(config.Get, itemId)
+        if okDef and not def then return "n/a" end
+        local profile = okDef and townAuction.getProfile()
+        if profile then
+            local okOwned, owned = pcall(config.IsOwned, itemId, profile)
+            if okOwned then
+                if owned ~= true then return "❌" end
+                local okCount, count = pcall(config.GetOwnedCount, itemId, profile)
+                count = okCount and tonumber(count) or nil
+                if count and count > 0 then return string.format("✅ ×%d%s", count, extra) end
+                return "✅" .. extra
+            end
+        end
+    end
+    if listable > 0 then return "✅" .. extra end
+    return "? (Closet unavailable)"
+end
+
+-- Redraw cards after the server pushes a profile Snapshot (buy/win/list changes ownership)
+function townAuction.initOwnershipListener()
+    local clientEvent = cowRemotes and cowRemotes:FindFirstChild("ClientEvent")
+    if not (clientEvent and clientEvent:IsA("RemoteEvent")) then return end
+    table.insert(townAuction.connections, clientEvent.OnClientEvent:Connect(function(name)
+        if name ~= "Snapshot" or townAuction.ownershipRedrawQueued then return end
+        townAuction.ownershipRedrawQueued = true
+        -- let the game's own handler apply the new profile first
+        task.delay(0.25, function()
+            townAuction.ownershipRedrawQueued = false
+            townAuction.updateAllCards()
+        end)
+    end))
+end
+
 function townAuction.formatRemainingTime(endsAt)
     if not endsAt or type(endsAt) ~= "number" or endsAt <= 0 then return "N/A" end
     local nowTime = os.time()
@@ -7400,11 +7480,6 @@ function townAuction.getSlotDisplayInfo(slotName)
         leaderStatus = "👤 " .. tostring(leaderName) .. " (Outbid)"
     end
 
-    local ownedCount = 0
-    if itemId and townAuction.ownedCopies[itemId] then
-        ownedCount = townAuction.ownedCopies[itemId]
-    end
-
     local isBuyNow = string.find(slotName, "BuyNow") ~= nil
     local title = string.format("%s: %s [%s] (%s)", slotName, tostring(itemName), tostring(rarity), tostring(scope))
     local priceLine = ""
@@ -7416,13 +7491,13 @@ function townAuction.getSlotDisplayInfo(slotName)
         priceLine = string.format("Current Bid: 🪙 %s %s | Next Min: 🪙 %s %s", formatNumber(bid), currency, formatNumber(minBid), currency)
     end
 
-    local body = string.format("%s\nLeader: %s\nRound: %s | Ends In: %s\nItem ID: %s | Owned Copies: %d",
+    local body = string.format("%s\nLeader: %s\nRound: %s | Ends In: %s\nItem ID: %s | Owned: %s",
         priceLine,
         leaderStatus,
         tostring(round),
         townAuction.formatRemainingTime(endsAt),
         tostring(itemId),
-        ownedCount
+        townAuction.formatOwnership(itemId)
     )
 
     return title, body, itemName, minBid, round
@@ -7956,6 +8031,7 @@ function townAuction.cleanup()
     table.clear(townAuction.cards)
     table.clear(townAuction.lotsBySlot)
     table.clear(townAuction.ownedCopies)
+    townAuction.profileStore = nil
     table.clear(townAuction.customBidAmounts)
     table.clear(townAuction.autoBidActive)
 end
@@ -8171,6 +8247,7 @@ townAuction.setupSlotUI(TownAuctionTab, "Player1")
 townAuction.setupSlotUI(TownAuctionTab, "Player2")
 
 townAuction.initWorkspaceListeners()
+townAuction.initOwnershipListener()
 
 task.spawn(function()
     while townAuction.autoBidLoopRunning do
