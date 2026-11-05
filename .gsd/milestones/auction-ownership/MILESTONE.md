@@ -1,13 +1,13 @@
 ---
 name: auction-ownership
 version: v0.1
-status: planning
+status: complete
 created: 2026-11-04T00:00:00Z
 ---
 
 # Milestone: Town Auction Ownership
 
-> **Status:** 📝 Phase 1 complete (promoted to cowhub). Phase 2 (auto-bid unowned) built in preview; UAT (Plan 2.2) pending.
+> **Status:** 📝 Phase 1 complete (promoted to cowhub). Phase 2 (auto-bid unowned) UAT passed; promoted to cowhub 2026-11-04.
 > Replaces the earlier inventory-logger idea (no log files).
 > Independent of the autofarm chomp refactor (`.gsd/SPEC.md`, `.gsd/ROADMAP.md`).
 
@@ -49,11 +49,11 @@ Resolved (Plan 1.1 Task 1, dumps in executor workspace root):
 | AO-02 | Per lot: Owned + copies via `CosmeticConfig.IsOwned` / `GetOwnedCount`; fallback to listable count | Must-have | ✅ UAT passed |
 | AO-03 | Card line: `Owned: ✅ ×N (M listable)` / `Owned: ❌` / `Owned: n/a` | Must-have | ✅ UAT passed |
 | AO-04 | Cards redraw on a `ClientEvent` `"Snapshot"` push (no extra remote calls) | Should-have | ✅ UAT passed |
-| AO-05 | Shared `cosmetics.isOwned(id)` helper (true / false / nil = unknown) used by both auctions | Must-have | ✅ code (UAT pending) |
-| AO-06 | Town Auction toggle "Auto Bid Unowned": auto-bid/buy every lot whose cosmetic is not owned | Must-have | ✅ code (UAT pending) |
-| AO-07 | Skin Auction toggle "Auto Bid Unowned": same for `SkinId` lots | Must-have | ✅ code (UAT pending) |
-| AO-08 | Fail-safe: unknown ownership or non-cosmetic → never bid. No max-bid requirement (user decision 2026-11-04); an existing Max Auto Bid limit still applies if set | Must-have | ✅ code (UAT pending) |
-| AO-09 | Both toggles persist across relog (TownAuction / Auction state) | Should-have | ✅ code (UAT pending) |
+| AO-05 | Shared `cosmetics.isOwned(id)` helper (true / false / nil = unknown) used by both auctions | Must-have | ✅ UAT passed |
+| AO-06 | Town Auction toggle "Auto Bid Unowned": auto-bid/buy every lot whose cosmetic is not owned | Must-have | ✅ UAT passed |
+| AO-07 | Skin Auction toggle "Auto Bid Unowned": same for `SkinId` lots | Must-have | ✅ UAT passed |
+| AO-08 | Fail-safe: unknown ownership or non-cosmetic → never bid. No max-bid requirement (user decision 2026-11-04); an existing Max Auto Bid limit still applies if set | Must-have | ✅ UAT passed |
+| AO-09 | Both toggles persist across relog (TownAuction / Auction state) | Should-have | ✅ UAT passed |
 
 ## Phases
 
@@ -67,4 +67,4 @@ Research: `SkinAuctionController` L109–116 decides ownership with the same `Co
 
 **Plans:**
 - [x] Plan 2.1: Shared ownership helper + two toggles (preview.lua)
-- [ ] Plan 2.2: In-game UAT, then promote via `scripts/promote-preview.py`
+- [x] Plan 2.2: In-game UAT, then promote (commit 510a594 applied directly: a full promote would also ship untested preview chomp commits f1c5445, c94b3e8, 9363000)
