@@ -77,10 +77,11 @@ Primary CowHub script containing autofarm engines, mining, dodging, auction scan
 | [2227](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2227) | `cache.getCleanGrassName(nodeName)` | Strips numerical suffixes from grass model names. |
 | [2249](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2249) | `cache.extractGrassNodeId(target)` | Extracts node ID from interaction target instance. |
 | [2274](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2274) | `cache.getMobPayload(mobName)` | Retrieves cached network attack payload table for mob species. |
-| [preview 1754](file:///Users/jsph/cowhub/luascripts/preview.lua#L1754) | `chomp.log(event, data)` | **Staging only.** Buffers a debug JSON line while Chomp Debug Log is on. Stripped from cowhub.lua by `scripts/promote-preview.py`. |
-| [preview 1763](file:///Users/jsph/cowhub/luascripts/preview.lua#L1763) | `chomp.flushLog(force)` | **Staging only.** Writes buffered debug lines to `cowhub/chomplogs/` at most every 2 s. |
+| [preview 1759](file:///Users/jsph/cowhub/luascripts/preview.lua#L1759) | `chomp.log(event, data)` | **Staging only.** Buffers a debug JSON line while Chomp Debug Log is on. Stripped from cowhub.lua by `scripts/promote-preview.py`. |
+| [preview 1768](file:///Users/jsph/cowhub/luascripts/preview.lua#L1768) | `chomp.flushLog(force)` | **Staging only.** Writes buffered debug lines to `cowhub/chomplogs/` at most every 2 s. |
 | [1750](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1750) | `chomp.serverInterval(node)` | Fastest server-accepted bite interval from live ChewCooldown / grazing multiplier (wheat & node cooldown aware). |
 | [1765](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1765) | `chomp.getInterval(node)` | Server interval + adaptive margin, floored at the manual delay when Auto Max is off. |
+| [preview 1883](file:///Users/jsph/cowhub/luascripts/preview.lua#L1883) | `chomp.canTarget(node, id, rootPos, now)` | **Staging (Plan 1.6).** Mirrors the game's target rules: skip list, `Available`, 8-stud reach and forward cone, checked from the current and a lag-compensated position. |
 | [1774](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1774) | `chomp.fire(nodeId, node, now)` | Single grass ChompRequest call site; fires `(nodeId, nil, serial)` when the interval has elapsed. |
 | [1827](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1827) | `chomp.findInput(now)` | Locates the game InputController instance via `getgc` (cached, 5 s rescan throttle). |
 | [1846](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L1846) | `chomp.isGrazing()` | Returns `grazing, source`: controller `_grazing`, else `CowAction` attr, else recent non-hub GrazeResult. |

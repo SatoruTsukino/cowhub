@@ -38,6 +38,7 @@ updated: 2026-11-03T00:00:00Z
 - [x] Plan 1.3: UI, debug log, relog persistence, docs, header
 - [x] Plan 1.4: Natural mode graze-state fix
 - [x] Plan 1.5: Autofarm chomp calories/hr stat
+- [ ] Plan 1.6: Remote chomp target validation — skip consumed nodes, range/cone check, reject breakdown (built in preview; UAT pending)
 
 ### Phase 2: Module Dumper
 **Status:** ⬜ Not Started
