@@ -38,7 +38,7 @@ updated: 2026-11-03T00:00:00Z
 - [x] Plan 1.3: UI, debug log, relog persistence, docs, header
 - [x] Plan 1.4: Natural mode graze-state fix
 - [x] Plan 1.5: Autofarm chomp calories/hr stat
-- [x] Plan 1.6: Remote chomp target validation — rejects 32% → 9.1%, throughput held (preview; promote pending)
+- [x] Plan 1.6: Remote chomp target validation — rejects 32% → 9.1%, throughput held (shipped to cowhub)
 
 ### Phase 2: Module Dumper
 **Status:** ⬜ Not Started
