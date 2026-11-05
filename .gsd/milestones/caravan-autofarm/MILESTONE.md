@@ -1,0 +1,60 @@
+---
+name: caravan-autofarm
+version: v0.1
+status: planning
+created: 2026-11-05T00:00:00Z
+---
+
+# Milestone: Caravan Autofarm
+
+> **Status:** 🧪 Plan 1.1 built; standalone UAT (Plan 1.2) pending.
+> Prototype in `luascripts/caravan_autofarm.lua` first, then port into `preview.lua` (theme `frost`), then promote to cowhub via `scripts/promote-preview.py`.
+
+## Vision
+When a caravan spawns, the hub scares the guide until it stops, loots every crate and barrel during the loot window, closes the crate reveal, then goes back to what it was doing. No manual input. Caravans come every 8–16 min, so it runs alongside the existing autofarm.
+
+## Research (2026-11-05, dumps in `~/Opiumware/workspace/*_82507849398215_Source.txt`)
+
+| Source | Finding |
+|--------|---------|
+| CaravanController L134–147 | State is the Folder `ReplicatedStorage.CowGame.CaravanState`. It can be recreated, so watch `CowGame.ChildAdded`. All state is in attributes. |
+| CaravanController L255–326 | Attributes: `Phase` (`OnRoad` / `Stopped` / `Leaving`), `EventId` (number), `Kind` (`Supply` / `Fright`), `Route` (string), `Layout` (JSON), `StartAt`, `EndsAt`, `Speed`, `StopDistance`, `StoppedAt`, `LootEndsAt`, `GoneAt`, `LeftAt`, `Fear`, `FearAt`, `LeaveReason`, `Barrels` (JSON `{index: portions}`), `Crates` (JSON `{index: true | {userId: true}}`). |
+| CaravanConfig | Schedule: every 720 s ± 240 s. Road phase 180 s. Loot phase 90 s. Guide goal 1000 (Supply) / 500 (Fright). Scare radius 15 studs, close radius 4 (+2). Base points: Moo 5, GrumpyMoo 7, Stomp 7. Armor adds +1 to +5. Herd bonus +2..4 when 2+ cows moo. Barrel capacity 50 (35 for CrazyCoal and Candy). Bite cooldown is `AppleSupplyRules.Cooldown`. |
+| CaravanRules / CaravanRoute | Shared, pure modules. Position along the route = `CaravanRules.Pose(CaravanRoute.Build(Route), CaravanRules.Travelled(route, StartAt, Speed, serverNow))`. Once stopped, the distance is `StopDistance`. **Require them; don't copy the math.** |
+| CaravanController L521–608 | Barrel hitbox: `NodeId = "Caravan<EventId>_B<index>"`, `CowBiteTargetKind = "CaravanBarrel"`, tag `CowBiteTarget` only while `Phase == "Stopped"`. Crate hitbox has `CanQuery = false` and a `CrateKickPrompt` BillboardGui with MaxDistance 18. Models are under `Workspace.CaravanConvoy`. |
+| InputController L1296, L1438 | Barrel bite = `ChompRequest:FireServer(nodeId, nil, serial)`, the same wire as grass. The result is matched on `^Caravan%d+_B%d+$`. Rate limit 8 cap, 8/s. |
+| InputController L2113–2213 | Kick = `KickRequest:FireServer({ Position, RequestId [, Target] [, FarmerId] }, "Hold"?)`. Rate limit 4 cap, 3/s. Needs `CowUpgrade_HindStrength >= 1`, and the server cooldown `CowNextKickAt`. |
+| InputController L2386–2403, Config L216 | Moo = `MooRequest:FireServer(style?)`. Client cooldown 1.5 s; rate limit 2 cap, 2/3 per s. |
+| CaravanController L1353–1425 | Server events: `Started`, `Stopped`, `Escaped`, `PackedUp`, `Fright` (Target Guide/Farmer, Total, Level), `FrightMissed` (too far), `Loot`, `CrateOpened`, `Crate` (reveal). **The carrying remote is not in the dumps.** |
+| preview.lua L10449 | The existing reward-GUI closer already includes `CaravanCrateReveal`. Reuse it. |
+
+### Unknowns (Plan 1.2 resolves; manual search list in SEARCH.md)
+- U1: Which remote delivers `HandleEvent` payloads (needed for `FrightMissed` / `Fright` feedback).
+- U2: ~~Stomp~~ → replaced by Grumpy Moo (user decision 2026-11-05): `MooRequest:FireServer("Grumpy")`. Confirmed from CowExpressions: `MooStyles.Grumpy` has no Earned/Hidden/Disabled gate, and `IsMooStyle("Grumpy")` is true. The server should credit it as Action `GrumpyMoo` (+7); the script still falls back to a plain Moo if it is credited as Moo.
+- U3: Whether a kick at a crate's `Position` (no `Target`, since the hitbox has CanQuery=false) opens it, and the kick reach.
+- U4: Barrel bite range and cooldown (`AppleSupplyRules.Cooldown`), and whether one bite takes 1 portion (`BiteAmount = 1`).
+- U5: Where the guide is in `CaravanConvoy` (seated model). The route pose is the fallback.
+
+## Requirements
+
+| ID | Requirement | Priority |
+|----|-------------|----------|
+| CV-01 | Detect caravan phases from `CaravanState` attributes, and survive the folder being recreated | Must |
+| CV-02 | OnRoad: stay within 4 studs of the guide/lead wagon and moo on cooldown (GrumpyMoo if owned; Stomp if U2 allows) until `Phase` leaves `OnRoad` | Must |
+| CV-03 | Stopped: kick every unopened crate (opened = `Crates[i] == true` or `Crates[i][userId]`) | Must |
+| CV-04 | Stopped: bite barrels with portions > 0 until they're empty or `LootEndsAt` passes, within rate limits | Must |
+| CV-05 | Close the crate reveal (existing closer) | Must |
+| CV-06 | Restore the previous position/farm afterwards, and pause the other autofarm loops while a caravan runs | Must |
+| CV-07 | Respect the hub bot-check pause gate (Plan 1.0 heartbeat) and `BLOCK_ATTRS` | Must (safety) |
+| CV-08 | Rayfield toggles: Caravan Autofarm, Loot Only, Debug Log | Must |
+| CV-09 | Debug log in `cowhub/caravanlogs/` (JSONL) | Should |
+| CV-11 | Natural mode: walk with Humanoid MoveTo / PathfindingService along the caravan route (intercept point ahead when far, beside the guide when close), act only within reach, walk back afterwards. No teleports | Must |
+| CV-10 | Stats: caravans stopped / looted, barrels, crates, skins | Nice |
+
+## Phases
+
+### Phase 1: Caravan Autofarm
+- [x] Plan 1.1: Standalone `luascripts/caravan_autofarm.lua` (watcher + probe + experimental farm)
+- [ ] Plan 1.2: Standalone UAT (resolves U1–U5, proves farm)
+- [ ] Plan 1.3: Integrate into preview.lua
+- [ ] Plan 1.4: Hub UAT + promote to cowhub

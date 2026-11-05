@@ -12,6 +12,7 @@ updated: 2026-11-03T00:00:00Z
 > Separate milestone (blocked on dev availability): branch `gsd/botcheck-pentest`
 > Separate milestone (complete): `.gsd/milestones/auction-ownership/MILESTONE.md`
 > Separate milestone (planning): `.gsd/milestones/skinhunter-catalog/MILESTONE.md`
+> Separate milestone (planning): `.gsd/milestones/caravan-autofarm/MILESTONE.md`
 
 ## Must-Haves (from SPEC)
 
