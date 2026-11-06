@@ -453,7 +453,7 @@ local function startProbe()
     S.hookInstalled = true
     local original
     local handler = function(self, ...)
-        if S.debug and getnamecallmethod() == "FireServer" and typeof(self) == "Instance"
+        if S.running and S.debug and getnamecallmethod() == "FireServer" and typeof(self) == "Instance"
             and self.Parent == remotes and WATCH_OUT[self.Name] then
             local a = ...
             if self.Name ~= "ChompRequest" or (type(a) == "string" and string.match(a, "^Caravan")) then
@@ -550,6 +550,7 @@ local function walkTo(goal, now)
         w.computedAt, w.goal = now, goal
         local path = PathfindingService:CreatePath({ AgentRadius = 2.5, AgentHeight = 5, AgentCanJump = true, WaypointSpacing = 6 })
         local ok = pcall(function() path:ComputeAsync(r.Position, goal) end)
+        if not S.running then return math.huge end  -- destroyed while ComputeAsync yielded
         if ok and path.Status == Enum.PathStatus.Success then
             w.waypoints, w.idx = path:GetWaypoints(), 2
         else
@@ -837,6 +838,7 @@ local function lootStep(st, now)
 end
 
 local function step(now)
+    if not S.running then return end
     if not S.folder or not S.folder.Parent then
         bindFolder(cowGame:FindFirstChild("CaravanState"))
     end
@@ -898,13 +900,16 @@ end
 -- UI
 ----------------------------------------------------------------------------------------------------
 
-local Rayfield = _G.CowHubRayfield
-if not Rayfield then
+-- Own Rayfield instance: Destroy Script tears it down with Rayfield:Destroy() (as cowhub does);
+-- reusing _G.CowHubRayfield would close the hub's window too
+local Rayfield = nil
+do
     local ok, res = pcall(function()
         return loadstring(game:HttpGet("https://sirius.menu/gen2"))()
     end)
     if ok then Rayfield = res end
 end
+S.rayfield = Rayfield
 
 local Window, statusCard
 local function setCard(title, body)
@@ -919,20 +924,28 @@ local function setCard(title, body)
     end)
 end
 
+-- Every step is isolated so one failure can't leave connections or the UI behind.
+-- The __namecall hook stays installed (restoring it would clobber hooks added after ours);
+-- its handler passes straight through once S.running is false.
 local function destroy()
+    if S.destroyed then return end
+    S.destroyed = true
     S.running = false
     S.farm = false
-    restore()
-    stopProbe()
+    local function try(label, f)
+        local ok, err = pcall(f)
+        if not ok then warn("[CaravanAutofarm] destroy/" .. label .. ": " .. tostring(err)) end
+    end
+    try("restore", restore)
+    try("log", stopProbe)
     for _, c in ipairs(S.probeConns) do pcall(function() c:Disconnect() end) end
     table.clear(S.probeConns)
-    if S.folderConn then S.folderConn:Disconnect() end
+    if S.folderConn then pcall(function() S.folderConn:Disconnect() end) end
     for _, c in ipairs(S.conns) do pcall(function() c:Disconnect() end) end
-    if S.originalNamecall and hookmetamethod then
-        pcall(hookmetamethod, game, "__namecall", S.originalNamecall)
-        S.originalNamecall = nil
-    end
-    if Window and Window.Destroy then pcall(function() Window:Destroy() end) end
+    table.clear(S.conns)
+    try("ui", function()
+        if S.rayfield and S.rayfield.Destroy then S.rayfield:Destroy() end
+    end)
     if _G.CowCaravanAutofarm == S then _G.CowCaravanAutofarm = nil end
 end
 S.destroy = destroy
@@ -1035,7 +1048,7 @@ if Window then
             S.debug = was
         end,
     })
-    tab:CreateButton({ Name = "Destroy Script", Callback = destroy })
+    tab:CreateButton({ Name = "Destroy Script", Callback = function() task.defer(destroy) end })
     tab:CreateSection({ Name = "Status" })
     pcall(function()
         if tab.CreateText then
