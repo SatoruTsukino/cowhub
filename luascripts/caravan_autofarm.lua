@@ -34,6 +34,10 @@ local CONFIG = {
     LOOP_DT = 0.1,
     MOO_INTERVAL = 1.6,       -- client cooldown 1.5 s; server bucket 2 cap / 0.667 per s
     KICK_INTERVAL = 0.4,      -- server bucket 4 cap / 3 per s
+    KICK_KEEP = 0.4,          -- InputController:_updateKickHold sends "Keep" every 0.4 s
+    KICK_HOLD_CONFIRM = 1,    -- hold dropped if CowKickHolding isn't set after 1 s
+    KICK_HOLD_MAX = 8,        -- give up on one crate after this long
+    KICK_RETRY = 1.5,         -- back off after a dropped hold
     BITE_SPACING = 0.15,      -- server bucket 8 cap / 8 per s
     BITE_COOLDOWN_PAD = 0.05,
     GUIDE_OFFSET = 3,         -- CloseRadius is 4 (+2 per moo)
@@ -96,6 +100,9 @@ local S = {
     grumpyMisses = 0,
     grumpyUnanswered = 0,
     lastMooStyle = nil,
+    eventsSeen = 0,
+    hold = nil,               -- { part, since, lastKeep } while a held kick is active
+    kickBackoff = 0,
     walk = { waypoints = nil, idx = 0, goal = nil, computedAt = 0, lastGoal = nil, lastMoveAt = 0, failures = 0 },
     sprinting = false,
     returningSince = nil,
@@ -114,13 +121,13 @@ local S = {
     lastReveal = 0,
     lastFearLog = 0,
     lastScan = 0,
-    kickId = 0,
+    kickId = 100000,          -- above the game's own counter in case the server wants increasing RequestIds
     serial = 0,
     barrelNext = {},
     crates = {},
     barrels = {},
     status = "Idle",
-    stats = { caravans = 0, stopped = 0, moos = 0, kicks = 0, bites = 0, opened = 0, loot = 0, frights = 0, missed = 0, skins = 0 },
+    stats = { caravans = 0, stopped = 0, moos = 0, kicks = 0, bites = 0, opened = 0, kickOk = 0, kickBad = 0, loot = 0, frights = 0, missed = 0, skins = 0 },
     logFile = nil,
     pending = {},
     lastFlush = 0,
@@ -379,11 +386,36 @@ end
 -- Probe: incoming caravan events + outgoing requests
 ----------------------------------------------------------------------------------------------------
 
+-- The caravan payload may not be the first arg (Aura/FjordStorm HandleEvent take (name, payload))
+local function caravanPayload(...)
+    for i = 1, select("#", ...) do
+        local a = select(i, ...)
+        if type(a) == "table" and CARAVAN_KINDS[a.Kind] then return a end
+    end
+    return nil
+end
+
+local function kickResult(...)
+    for i = 1, select("#", ...) do
+        local a = select(i, ...)
+        if type(a) == "table" and type(a.RequestId) == "number" and a.Ok ~= nil then return a end
+    end
+    return nil
+end
+
 local function watchIncoming(rem)
-    if not rem:IsA("RemoteEvent") then return end
+    if not (rem:IsA("RemoteEvent") or rem:IsA("UnreliableRemoteEvent")) then return end
     table.insert(S.probeConns, rem.OnClientEvent:Connect(function(...)
-        local a = ...
-        if type(a) ~= "table" or not CARAVAN_KINDS[a.Kind] then return end
+        local a = caravanPayload(...)
+        if not a then
+            local kr = kickResult(...)
+            if kr and kr.RequestId >= 100000 then
+                if kr.Ok == true then S.stats.kickOk += 1 else S.stats.kickBad += 1 end
+                log("kick_result", { remote = rem:GetFullName(), args = { ... } })
+            end
+            return
+        end
+        S.eventsSeen += 1
         local mine = tostring(a.ActorId) == tostring(plr.UserId)
         if a.Kind == "Fright" and mine then
             S.stats.frights += 1
@@ -405,14 +437,14 @@ local function watchIncoming(rem)
         if a.Kind == "CrateOpened" and mine then S.stats.opened += 1 end
         if a.Kind == "Loot" then S.stats.loot += 1 end
         if a.Kind == "Crate" then S.stats.skins += 1 end
-        log("in", { remote = rem.Name, mine = mine, args = { ... } })
+        log("in", { remote = rem:GetFullName(), mine = mine, args = { ... } })
     end))
 end
 
 -- Incoming listeners always run (they feed the stats); log() itself is gated by Debug Log
 local function listenIncoming()
-    for _, rem in ipairs(remotes:GetChildren()) do watchIncoming(rem) end
-    table.insert(S.probeConns, remotes.ChildAdded:Connect(watchIncoming))
+    for _, rem in ipairs(ReplicatedStorage:GetDescendants()) do watchIncoming(rem) end
+    table.insert(S.probeConns, ReplicatedStorage.DescendantAdded:Connect(watchIncoming))
 end
 
 -- Outgoing hook is installed on first Debug Log enable; the handler passes through while debug is off
@@ -460,7 +492,7 @@ local function tryMoo(now)
     local ok
     if grumpy then
         ok = fire("MooRequest", "Grumpy") -- CowExpressions.MooStyles.Grumpy (no unlock)
-        if S.grumpyState == "unknown" then
+        if S.grumpyState == "unknown" and S.eventsSeen > 0 then
             -- No Fright / FrightMissed reply at all → server dropped the style
             S.grumpyUnanswered += 1
             if S.grumpyUnanswered >= CONFIG.GRUMPY_UNANSWERED then
@@ -547,7 +579,10 @@ end
 -- Get within reach of a part: teleport mode stands there, natural mode walks there
 local function approach(part, now)
     if not S.natural then
-        standAt(part.Position, CONFIG.TARGET_OFFSET)
+        local r = getRoot()
+        if not r or flatDist(r.Position, part.Position) > CONFIG.ACT_REACH or math.abs(r.Position.Y - part.Position.Y) > 6 then
+            standAt(part.Position, CONFIG.TARGET_OFFSET)
+        end
         return true
     end
     local goal = standPoint(part.Position, CONFIG.TARGET_OFFSET)
@@ -565,15 +600,69 @@ local function kickReady(now)
     return true
 end
 
-local function tryKick(part, now)
-    local ok, why = kickReady(now)
-    if not ok then return why end
-    S.lastKick = now
+-- Matches InputController:_kickAim: Target = the model the aim locked onto (tree, crate, ...),
+-- sent on "Hold" only; "Keep" carries just Position + RequestId
+local function kickAim(part, withTarget)
     S.kickId = S.kickId % 2147483647 + 1
-    local payload = { Position = part.Position, RequestId = S.kickId }
-    if fire("KickRequest", payload, nil) then S.stats.kicks += 1 end
-    log("kick", { part = part, pos = part.Position, id = S.kickId })
-    return "sent"
+    local aim = { Position = part.Position, RequestId = S.kickId }
+    if withTarget then
+        local model = part.Parent
+        aim.Target = (model and model:IsA("Model")) and model or part
+    end
+    return aim
+end
+
+local function releaseKick(why)
+    if not S.hold then return end
+    fire("KickRequest", nil, "Release")
+    log("kick_release", { why = why, held = os.clock() - S.hold.since })
+    S.hold = nil
+end
+
+local function grounded()
+    local c = plr.Character
+    local h = c and c:FindFirstChildOfClass("Humanoid")
+    return h ~= nil and h.FloorMaterial ~= Enum.Material.Air and not h.Sit
+end
+
+-- Crates say "Hold Kick to open": same wire as InputController:_updateKickHold
+-- ("Hold" once, "Keep" every 0.4 s, "Release" at the end)
+local function holdKick(part, now)
+    local hold = S.hold
+    if hold and hold.part ~= part then
+        releaseKick("target_changed")
+        hold = nil
+    end
+    if not hold then
+        if now < S.kickBackoff then return "backoff" end
+        if not grounded() then return "airborne" end
+        local ok, why = kickReady(now)
+        if not ok then return why end
+        S.lastKick = now
+        if fire("KickRequest", kickAim(part, true), "Hold") then S.stats.kicks += 1 end
+        S.hold = { part = part, since = now, lastKeep = now }
+        log("kick_hold", { part = part, id = S.kickId })
+        return "hold"
+    end
+    if now - hold.since > CONFIG.KICK_HOLD_MAX then
+        releaseKick("timeout")
+        S.kickBackoff = now + CONFIG.KICK_RETRY
+        return "timeout"
+    end
+    if now - hold.lastKeep < CONFIG.KICK_KEEP then return "holding" end
+    local c = plr.Character
+    if now - hold.since > CONFIG.KICK_HOLD_CONFIRM and not (c and c:GetAttribute("CowKickHolding") == true) then
+        releaseKick("not_holding")
+        S.kickBackoff = now + CONFIG.KICK_RETRY
+        return "dropped"
+    end
+    if not grounded() then
+        releaseKick("airborne")
+        return "airborne"
+    end
+    hold.lastKeep = now
+    fire("KickRequest", kickAim(part), "Keep")
+    return "holding"
 end
 
 local function biteReady(part, now)
@@ -648,6 +737,7 @@ end
 
 -- Teleport mode: snap back. Natural mode: stop walking here (step() walks back while the farm is on).
 local function restore()
+    releaseKick("restore")
     if S.natural then
         stopWalk()
     elseif S.savedCF then
@@ -717,13 +807,14 @@ local function lootStep(st, now)
     end
     local crate = S.crates[1]
     if crate and crate.Parent then
-        local why = approach(crate, now) and tryKick(crate, now) or "walking"
+        local why = approach(crate, now) and holdKick(crate, now) or "walking"
         -- Without HindStrength we can't kick: fall through and graze
         if why ~= "no_hind_strength" then
             S.status = string.format("Kicking crates · %d left · %s", #S.crates, why)
             return
         end
     end
+    releaseKick("no_crate")
     local best, bestId
     local soonest, soonPart = math.huge, nil
     for _, b in ipairs(S.barrels) do
@@ -783,6 +874,7 @@ local function step(now)
     S.returningSince = nil
     local why = blocked()
     if why then
+        releaseKick("blocked")
         if S.natural then stopWalk() end
         S.status = "Paused: " .. why
         return
@@ -982,10 +1074,10 @@ task.spawn(function()
             local st = S.snap
             local s = S.stats
             setCard("Status: " .. S.status, string.format(
-                "Mode: %s · Grumpy: %s\nPhase: %s · Kind: %s\nCaravans %d · Stopped %d\nMoos %d · Frights %d · Missed %d\nKicks %d · Crates opened %d · Skins %d\nBites %d · Loot drops %d%s",
+                "Mode: %s · Grumpy: %s\nPhase: %s · Kind: %s\nCaravans %d · Stopped %d\nMoos %d · Frights %d · Missed %d\nKicks %d (ok %d / rejected %d) · Crates opened %d · Skins %d\nBites %d · Loot drops %d%s",
                 S.natural and "Natural (walk)" or "Teleport", S.useGrumpy and S.grumpyState or "off",
                 tostring(st and st.Phase or "none"), tostring(st and st.Kind or "-"),
-                s.caravans, s.stopped, s.moos, s.frights, s.missed, s.kicks, s.opened, s.skins, s.bites, s.loot,
+                s.caravans, s.stopped, s.moos, s.frights, s.missed, s.kicks, s.kickOk, s.kickBad, s.opened, s.skins, s.bites, s.loot,
                 S.debug and ("\nLog: " .. tostring(S.logFile)) or ""))
         end
         task.wait(CONFIG.LOOP_DT)

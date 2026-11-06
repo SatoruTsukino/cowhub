@@ -28,6 +28,12 @@ When a caravan spawns, the hub scares the guide until it stops, loots every crat
 | CaravanController L1353–1425 | Server events: `Started`, `Stopped`, `Escaped`, `PackedUp`, `Fright` (Target Guide/Farmer, Total, Level), `FrightMissed` (too far), `Loot`, `CrateOpened`, `Crate` (reveal). **The carrying remote is not in the dumps.** |
 | preview.lua L10449 | The existing reward-GUI closer already includes `CaravanCrateReveal`. Reuse it. |
 
+### UAT run 1 findings (2026-11-05, caravan_20261105_162746 / _163119)
+- Moo reaches the server: in our-moos-only windows fear rose 22–42 per 5 s at 3.5 studs, and caravan #2 hit 996 → Stopped. Manual moos share the 2-cap bucket, so don't moo by hand while the farm runs.
+- Zero `in` events: the listener only checked arg 1 of `CowGame.Remotes` RemoteEvents. Now it covers every (Unreliable)RemoteEvent under ReplicatedStorage and finds the payload in any arg.
+- That made the Grumpy "no_reply" rejection a false positive. "No reply" now counts only once the listener has heard a caravan event.
+- Crates show "Hold Kick to open": a held kick (`"Hold"`, then `"Keep"` every 0.4 s, `CowKickHolding` must be set within 1 s, then `KickRequest(nil, "Release")`, grounded). Taps (no 2nd arg) never open them.
+
 ### Unknowns (Plan 1.2 resolves; manual search list in SEARCH.md)
 - U1: Which remote delivers `HandleEvent` payloads (needed for `FrightMissed` / `Fright` feedback).
 - U2: ~~Stomp~~ → replaced by Grumpy Moo (user decision 2026-11-05): `MooRequest:FireServer("Grumpy")`. Confirmed from CowExpressions: `MooStyles.Grumpy` has no Earned/Hidden/Disabled gate, and `IsMooStyle("Grumpy")` is true. The server should credit it as Action `GrumpyMoo` (+7); the script still falls back to a plain Moo if it is credited as Moo.
