@@ -1,4 +1,4 @@
--- Cow Hub [07720e4] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [17f8031] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -19,7 +19,10 @@ if _G.CowHubLoaded then
         _G.CowHubChompCleanup = nil
     end
     pcall(function()
-        if _G.CowHubRayfield and _G.CowHubRayfield.Destroy then
+        -- gen2 library has no Destroy; the old window tears itself down via Unload
+        if _G.CowHubWindow and _G.CowHubWindow.Unload then
+            _G.CowHubWindow:Unload()
+        elseif _G.CowHubRayfield and _G.CowHubRayfield.Destroy then
             _G.CowHubRayfield:Destroy()
         end
     end)
@@ -34,6 +37,7 @@ if _G.CowHubLoaded then
     end
     _G.CowHubConnections = nil
     _G.CowHubRayfield = nil
+    _G.CowHubWindow = nil
     task.wait(0.3)
 end
 _G.CowHubLoaded = true
@@ -54,7 +58,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [07720e4]",
+    Name = "Cow Hub [17f8031]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -66,6 +70,7 @@ local Window = Rayfield:CreateWindow({
     },
     KeySystem = false
 })
+_G.CowHubWindow = Window
 
 local function safeNotify(opts)
     if not Window or not opts then return end
@@ -13228,6 +13233,7 @@ SettingsTab:CreateButton({
 
             _G.CowHubLoaded = nil
             _G.CowHubRayfield = nil
+            _G.CowHubWindow = nil
             _G.CowHubConnections = nil
             _G.CowHubHeartbeat = nil
         end)
