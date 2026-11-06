@@ -457,11 +457,10 @@ local function startProbe()
             and self.Parent == remotes and WATCH_OUT[self.Name] then
             local a = ...
             if self.Name ~= "ChompRequest" or (type(a) == "string" and string.match(a, "^Caravan")) then
-                log("out", {
-                    remote = self.Name,
-                    ours = checkcaller and checkcaller() or nil,
-                    args = { ... },
-                })
+                -- Log outside the hook: log() makes namecalls (GetServerTimeNow) that would
+                -- overwrite the pending namecall method before original() runs
+                local entry = { remote = self.Name, ours = checkcaller and checkcaller() or nil, args = { ... } }
+                task.defer(log, "out", entry)
             end
         end
         return original(self, ...)
