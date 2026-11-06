@@ -60,7 +60,7 @@ local CONFIG = {
     RETURN_TIMEOUT = 90,
     -- Grumpy Moo (replaces Stomp): fall back to plain Moo if the server won't credit it
     GRUMPY_MISSES = 3,
-    GRUMPY_UNANSWERED = 4,
+    GRUMPY_UNANSWERED = 5,    -- Grumpy sends in range with no Fear rise → fall back to plain Moo
 }
 
 local BLOCK_ATTRS = { "CowBotCheckActive", "CowBotQuarantined", "CowCaptured", "CowStunned", "CowMoofCutscene", "CatapultActive" }
@@ -485,19 +485,25 @@ local function fire(name, ...)
     return (pcall(function() rem:FireServer(table.unpack(args, 1, args.n)) end))
 end
 
-local function tryMoo(now)
+local function tryMoo(now, st)
     if now - S.lastMoo < CONFIG.MOO_INTERVAL then return end
     S.lastMoo = now
     local grumpy = S.useGrumpy and S.grumpyState ~= "rejected"
     local ok
     if grumpy then
         ok = fire("MooRequest", "Grumpy") -- CowExpressions.MooStyles.Grumpy (no unlock)
-        if S.grumpyState == "unknown" and S.eventsSeen > 0 then
-            -- No Fright / FrightMissed reply at all → server dropped the style
+        if S.grumpyState == "unknown" and st then
+            -- Caravan events never reach us, so judge by the replicated Fear attribute:
+            -- a window of Grumpy sends in range with no rise → server is not crediting it
+            local fear = st.Fear or 0
+            if S.grumpyUnanswered == 0 then S.grumpyFear0 = fear end
             S.grumpyUnanswered += 1
-            if S.grumpyUnanswered >= CONFIG.GRUMPY_UNANSWERED then
-                S.grumpyState = "rejected"
-                log("grumpy_rejected", { why = "no_reply" })
+            if S.grumpyUnanswered > CONFIG.GRUMPY_UNANSWERED then
+                if fear <= (S.grumpyFear0 or 0) then
+                    S.grumpyState = "rejected"
+                    log("grumpy_rejected", { why = "no_fear_rise", fear = fear, sends = S.grumpyUnanswered - 1 })
+                end
+                S.grumpyUnanswered = 0
             end
         end
     else
@@ -787,10 +793,11 @@ local function scareStep(st, now)
     local r = getRoot()
     if S.natural then
         walkTo(scareGoal(st, pos), now)
-        if r and flatDist(r.Position, pos) <= CONFIG.SCARE_RADIUS then tryMoo(now) end
+        if r and flatDist(r.Position, pos) <= CONFIG.SCARE_RADIUS then tryMoo(now, st) end
     else
         standAt(pos, CONFIG.GUIDE_OFFSET)
-        tryMoo(now)
+        r = getRoot()
+        tryMoo(now, r and flatDist(r.Position, pos) <= CONFIG.SCARE_RADIUS and st or nil)
     end
     S.status = string.format("Scaring (%s%s) · fear %d/%d · %s",
         src, S.natural and ", walking" or "", math.floor(st.Fear or 0), st.Goal,
@@ -900,7 +907,7 @@ end
 -- UI
 ----------------------------------------------------------------------------------------------------
 
--- Own Rayfield instance: Destroy Script tears it down with Rayfield:Destroy() (as cowhub does);
+-- Own Rayfield instance: Destroy Script tears it down with Window:Unload() (gen2; Rayfield:Destroy() fallback);
 -- reusing _G.CowHubRayfield would close the hub's window too
 local Rayfield = nil
 do
@@ -944,7 +951,12 @@ local function destroy()
     for _, c in ipairs(S.conns) do pcall(function() c:Disconnect() end) end
     table.clear(S.conns)
     try("ui", function()
-        if S.rayfield and S.rayfield.Destroy then S.rayfield:Destroy() end
+        -- gen2 library has no Destroy; the window owns teardown via Unload (cowhub L13239 pattern)
+        if Window and Window.Unload then
+            Window:Unload()
+        elseif S.rayfield and S.rayfield.Destroy then
+            S.rayfield:Destroy()
+        end
     end)
     if _G.CowCaravanAutofarm == S then _G.CowCaravanAutofarm = nil end
 end

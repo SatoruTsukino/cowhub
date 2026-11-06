@@ -34,6 +34,11 @@ When a caravan spawns, the hub scares the guide until it stops, loots every crat
 - That made the Grumpy "no_reply" rejection a false positive. "No reply" now counts only once the listener has heard a caravan event.
 - Crates show "Hold Kick to open": a held kick (`"Hold"`, then `"Keep"` every 0.4 s, `CowKickHolding` must be set within 1 s, then `KickRequest(nil, "Release")`, grounded). Taps (no 2nd arg) never open them.
 
+### UAT run 2 findings (2026-11-06, caravan_20261106_000519)
+- Grumpy moo is **not credited**: 37 `MooRequest("Grumpy")` sends at about 3.5 studs, and Fear stayed 0 all caravan. Run 1 only scared because it fell back to a plain Moo. The fallback now uses the replicated `Fear` attribute: 5 in-range Grumpy sends with no rise → rejected → plain Moo.
+- Still zero `in` events, so U1 is open. Caravan feedback can't rely on events. Use the `Fear` attribute instead.
+- Destroy: the gen2 library has no `Destroy`. Use `Window:Unload()`.
+
 ### Unknowns (Plan 1.2 resolves; manual search list in SEARCH.md)
 - U1: Which remote delivers `HandleEvent` payloads (needed for `FrightMissed` / `Fright` feedback).
 - U2: ~~Stomp~~ → replaced by Grumpy Moo (user decision 2026-11-05): `MooRequest:FireServer("Grumpy")`. Confirmed from CowExpressions: `MooStyles.Grumpy` has no Earned/Hidden/Disabled gate, and `IsMooStyle("Grumpy")` is true. The server should credit it as Action `GrumpyMoo` (+7); the script still falls back to a plain Moo if it is credited as Moo.
