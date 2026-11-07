@@ -1,4 +1,4 @@
--- Cow Hub [dbe8741] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [6b22d25] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -54,7 +54,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [dbe8741]",
+    Name = "Cow Hub [6b22d25]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -5333,6 +5333,16 @@ function farm.findClearEscapeDirection(rootPos)
     return bestDir
 end
 
+-- Edible by the server's rule: Available == true (grass is edible again while still Growing).
+-- Falls back to GrowthState == "Mature" for nodes without the attribute.
+function farm.isEdible(node)
+    local avail = node:GetAttribute("Available")
+    if avail == nil and node:IsA("Model") and node.PrimaryPart then avail = node.PrimaryPart:GetAttribute("Available") end
+    if avail ~= nil then return avail == true end
+    local growth = node:GetAttribute("GrowthState") or node:GetAttribute("growthState") or node:GetAttribute("growth_state")
+    return growth ~= nil and string.lower(tostring(growth)) == "mature"
+end
+
 function farm.processMovement(dt, now, rootPos)
     farm.patternTimer = farm.patternTimer + (dt * farm.patternSpeed)
 
@@ -5407,8 +5417,7 @@ function farm.processMovement(dt, now, rootPos)
                     needNewNode = true
                 end
             elseif farm.onlyMatureGrass then
-                local currGrowth = farm.currentTargetNode:GetAttribute("GrowthState") or farm.currentTargetNode:GetAttribute("growthState") or farm.currentTargetNode:GetAttribute("growth_state")
-                if currGrowth and string.lower(tostring(currGrowth)) ~= "mature" then
+                if not farm.isEdible(farm.currentTargetNode) then
                     cache.nodeBlacklist[farm.currentTargetNode] = now + 5
                     farm.currentTargetNode = nil
                     farm.currentNodeStartTime = 0
@@ -5436,18 +5445,22 @@ function farm.processMovement(dt, now, rootPos)
             local fallbackNode = nil
             local fallbackDistSq = math.huge
             local grassNodes = cache.getGrassNodes()
+            local inRadius, edible, cooled, walled = 0, 0, 0, 0
 
             for _, node in ipairs(grassNodes) do
                 if node.Parent then
                     local nodePos = cache.getNodePosition(node)
                     if get2DDistanceSq(farm.anchorPos, nodePos) <= farm.radiusSq then
-                        local growth = node:GetAttribute("GrowthState") or node:GetAttribute("growthState") or node:GetAttribute("growth_state")
-                        if not farm.onlyMatureGrass or (growth and string.lower(tostring(growth)) == "mature") then
+                        inRadius += 1
+                        if not farm.onlyMatureGrass or farm.isEdible(node) then
+                            edible += 1
                             local nodeId = cache.getNodeID(node)
                             if nodeId then
                                 local distFromGhostSq = get2DDistanceSq(ghostPos, nodePos)
                                 local blacklistedAt = cache.nodeBlacklist[node]
-                                if not blacklistedAt or now - blacklistedAt > 10 then
+                                if blacklistedAt and now - blacklistedAt <= 10 then
+                                    cooled += 1
+                                else
                                     if distFromGhostSq < fallbackDistSq then
                                         fallbackDistSq = distFromGhostSq
                                         fallbackNode = node
@@ -5459,7 +5472,9 @@ function farm.processMovement(dt, now, rootPos)
                                             isBlocked = farm.hasWallBetween(rootPos, nodePos)
                                         end
 
-                                        if not isBlocked then
+                                        if isBlocked then
+                                            walled += 1
+                                        else
                                             nearestDistSq = distFromGhostSq
                                             nearestNode = node
                                         end
@@ -5472,6 +5487,12 @@ function farm.processMovement(dt, now, rootPos)
             end
 
             local chosenNode = nearestNode or (not farm.collisionDetection and fallbackNode)
+            if chomp.debug then
+                if now - (chomp.lastPickLog or 0) >= 1 then
+                    chomp.lastPickLog = now
+                    chomp.log("pick", { inRadius = inRadius, edible = edible, cooled = cooled, walled = walled, chosen = chosenNode and cache.getNodeID(chosenNode) or nil })
+                end
+            end
             if chosenNode then
                 farm.currentTargetNode = chosenNode
                 farm.currentNodeStartTime = now
@@ -6213,6 +6234,28 @@ MainTab:CreateToggle({
     end,
 })
 
+
+MainTab:CreateButton({
+    Name = "Teleport to Farming Area",
+    Callback = function()
+        if not root or not char then return end
+        local target = CFrame.new(6269, 706, -185)
+        char:PivotTo(target)
+        root.CFrame = target
+        stopCharacterVelocity()
+        for _, part in ipairs(charBaseParts) do
+            part.AssemblyLinearVelocity = Vector3.zero
+            part.AssemblyAngularVelocity = Vector3.zero
+        end
+        -- Re-home the autofarm so it doesn't walk back to the old anchor
+        if farm.on then
+            farm.anchorPos = target.Position
+            farm.currentTargetNode = nil
+            farm.currentNodeStartTime = 0
+            farm.nextRandomPos = nil
+        end
+    end,
+})
 
 MainTab:CreateSection({ Name = "Aura & Pattern Configuration" })
 
