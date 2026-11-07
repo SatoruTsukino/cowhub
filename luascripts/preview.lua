@@ -1,4 +1,4 @@
--- Cow Hub [4314dd7] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [9e46b39] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -58,7 +58,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [4314dd7]",
+    Name = "Cow Hub [9e46b39]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -13222,7 +13222,9 @@ do
         STAMINA_MIN_MAX = 4,     -- Config.Character.BaseSprintCapacity; upgrades raise it
         WATER_SAMPLE = 4,        -- studs between water checks on a straight walk
         INTERCEPT_SPEED = 18,
-        INTERCEPT_MAX = 250,
+        INTERCEPT_STEP = 20,     -- route samples ahead of the guide (studs)
+        INTERCEPT_DETOUR = 1.3,  -- path length vs straight line
+        INTERCEPT_MAX = 800,     -- furthest route point ahead to consider
         RETURN_TIMEOUT = 90,
         GRUMPY_MISSES = 3,
         GRUMPY_UNANSWERED = 5,   -- in-range Grumpy sends with no Fear rise -> plain Moo
@@ -13681,7 +13683,7 @@ do
         caravan.log("walk", {
             state = w.state, dist = d, sprint = caravan.sprinting, refilling = caravan.refilling,
             stamina = plr:GetAttribute("Stamina"), staminaMax = caravan.staminaMax,
-            sprintActive = plr:GetAttribute("SprintActive"), skipped = w.skipped,
+            sprintActive = plr:GetAttribute("SprintActive"), skipped = w.skipped, lead = caravan.interceptLead,
             wps = w.waypoints and #w.waypoints or 0, idx = w.idx,
             inWater = r and farm.isWaterAt(r.Position) or nil,
         })
@@ -13712,17 +13714,30 @@ do
         return r ~= nil and caravan.flatDist(r.Position, part.Position) <= CFG.ACT_REACH
     end
 
-    -- Natural mode, OnRoad: beside the guide, or an intercept point ahead on the route when far
+    -- Natural mode, OnRoad: beside the guide, or, when far, the nearest route point ahead that
+    -- the cow reaches before the caravan does (walk time <= caravan time). A fixed lead ahead
+    -- chased a point running away on routes that bend away from the cow.
     function caravan.scareGoal(st, gp)
         local r = caravan.root()
         local far = r and caravan.flatDist(r.Position, gp) or 0
-        local lead = 1
-        if far > CFG.PATH_DIRECT and st.Speed then
-            lead = math.min(CFG.INTERCEPT_MAX, st.Speed * far / CFG.INTERCEPT_SPEED)
+        if far > CFG.PATH_DIRECT and st.Speed and st.Speed > 0 then
+            local h = caravan.humanoid()
+            local cowSpeed = math.max(CFG.INTERCEPT_SPEED, h and h.WalkSpeed or 0)
+            for lead = CFG.INTERCEPT_STEP, CFG.INTERCEPT_MAX, CFG.INTERCEPT_STEP do
+                local cf = caravan.routePose(st, lead)
+                if not cf then break end
+                local walk = caravan.flatDist(r.Position, cf.Position) * CFG.INTERCEPT_DETOUR / cowSpeed
+                if walk <= lead / st.Speed then
+                    caravan.interceptLead = lead
+                    return cf.Position
+                end
+            end
+            caravan.interceptLead = 0 -- no point ahead in time: close in on the guide itself
+            return gp
         end
-        local cf = caravan.routePose(st, lead)
+        caravan.interceptLead = nil
+        local cf = caravan.routePose(st, 1)
         if not cf then return gp end
-        if lead > 1 then return cf.Position end
         return gp + cf.RightVector * CFG.GUIDE_OFFSET + cf.LookVector
     end
 
