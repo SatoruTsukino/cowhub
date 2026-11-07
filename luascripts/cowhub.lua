@@ -1,4 +1,4 @@
--- Cow Hub [7a6ede7] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [2f6caca] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -54,7 +54,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [7a6ede7]",
+    Name = "Cow Hub [2f6caca]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -417,6 +417,12 @@ local farm = {
     currentNodeStartTime = 0,
     lastNodeSearchTime = 0,
     onlyMatureGrass = true,
+    collectBait = false, -- walk over GrazingBaitFind drops while autofarming (Plan 1.8)
+    baits = {},
+    lastBaitScan = 0,
+    baitTarget = nil,
+    baitStart = 0,
+    baitSkip = setmetatable({}, { __mode = "k" }),
 }
 
 -- Grass chomp module state (functions defined after spiderLogger / remotes; see CHOMP MODULE)
@@ -5285,6 +5291,50 @@ function farm.pickWanderPos(rootPos)
     return farm.anchorPos
 end
 
+-- Grazing bait drops live in Workspace.GrazingBaitFind: a Folder of drops, or the drop itself.
+-- Position as in bait_drop_esp.lua: PrimaryPart, else the first BasePart.
+local function baitPosition(inst)
+    if inst:IsA("BasePart") then return inst.Position end
+    if inst:IsA("Model") then
+        local part = inst.PrimaryPart or inst:FindFirstChildWhichIsA("BasePart", true)
+        return part and part.Position or nil
+    end
+    return nil
+end
+
+-- Closest bait drop inside the farm radius, not over water and not skipped
+function farm.findBait(rootPos, now)
+    if now - farm.lastBaitScan >= 0.5 then
+        farm.lastBaitScan = now
+        table.clear(farm.baits)
+        for _, child in ipairs(workspace:GetChildren()) do
+            if child.Name == "GrazingBaitFind" then
+                if child:IsA("Folder") then
+                    for _, drop in ipairs(child:GetChildren()) do
+                        if drop.Name ~= "AnimalTamingMeal" then table.insert(farm.baits, drop) end
+                    end
+                else
+                    table.insert(farm.baits, child)
+                end
+            end
+        end
+    end
+    local best, bestPos, bestSq = nil, nil, math.huge
+    for _, drop in ipairs(farm.baits) do
+        local skipUntil = farm.baitSkip[drop]
+        if drop.Parent and not (skipUntil and now < skipUntil) then
+            local pos = baitPosition(drop)
+            if pos and get2DDistanceSq(farm.anchorPos, pos) <= farm.radiusSq and not farm.isWaterAt(pos) then
+                local dSq = get2DDistanceSq(rootPos, pos)
+                if dSq < bestSq then
+                    best, bestPos, bestSq = drop, pos, dSq
+                end
+            end
+        end
+    end
+    return best, bestPos
+end
+
 function farm.processMovement(dt, now, rootPos)
     farm.patternTimer = farm.patternTimer + (dt * farm.patternSpeed)
 
@@ -5334,10 +5384,28 @@ function farm.processMovement(dt, now, rootPos)
 
     local targetPos
 
+    -- Bait drop to collect (walked over), checked after unsticking and before the pattern
+    local bait, baitPos
+    if farm.collectBait then
+        bait, baitPos = farm.findBait(rootPos, now)
+        if bait ~= farm.baitTarget then
+            farm.baitTarget = bait
+            farm.baitStart = now
+        elseif bait and now - farm.baitStart > 8 then
+            farm.baitSkip[bait] = now + 30 -- not picked up in time; leave it for a while
+            bait, baitPos = nil, nil
+            farm.baitTarget = nil
+        end
+    end
+
     -- If actively escaping/unsticking, prioritize escape target
     if farm.collisionDetection and farm.isUnsticking and farm.unstickTargetPos then
         targetPos = farm.unstickTargetPos
         if humanoid then humanoid.Jump = true end
+    elseif baitPos then
+        targetPos = baitPos
+        farm.currentTargetNode = nil
+        farm.currentNodeStartTime = 0
     elseif farm.pattern == "Guided Zigzag (Nodes)" then
         local ghostX = math.sin(farm.patternTimer * 1.3) * farm.radius
         local ghostZ = math.cos(farm.patternTimer * 1.9) * farm.radius
@@ -6268,6 +6336,16 @@ MainTab:CreateToggle({
     Flag = "Toggle_OnlyMatureGrass",
     Callback = function(Value)
         farm.onlyMatureGrass = Value
+    end,
+})
+
+MainTab:CreateToggle({
+    Name = "Collect Grazing Bait Drops",
+    CurrentValue = false,
+    Flag = "Toggle_CollectBait",
+    Callback = function(Value)
+        farm.collectBait = Value
+        farm.baitTarget = nil
     end,
 })
 
