@@ -1,4 +1,4 @@
--- Cow Hub [d0bc5c0] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [02c1f06] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -58,7 +58,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [d0bc5c0]",
+    Name = "Cow Hub [02c1f06]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -422,6 +422,12 @@ local farm = {
     currentNodeStartTime = 0,
     lastNodeSearchTime = 0,
     onlyMatureGrass = true,
+    collectBait = false, -- walk over GrazingBaitFind drops while autofarming (Plan 1.8)
+    baits = {},
+    lastBaitScan = 0,
+    baitTarget = nil,
+    baitStart = 0,
+    baitSkip = setmetatable({}, { __mode = "k" }),
 }
 
 -- Grass chomp module state (functions defined after spiderLogger / remotes; see CHOMP MODULE)
@@ -500,7 +506,6 @@ local cache = {
     nodeCleanNames = {},
     nodeIDs = setmetatable({}, { __mode = "k" }),
     mobPayloads = {},
-    nodePosition = setmetatable({}, { __mode = "k" }),
     mobAttackOriginPart = setmetatable({}, { __mode = "kv" }),
     mobHumanoid = setmetatable({}, { __mode = "kv" }),
     mobWarning = setmetatable({}, { __mode = "kv" }),
@@ -2234,12 +2239,12 @@ local function getResourcesFolder()
     return rafting and rafting:FindFirstChild("Resources")
 end
 
+-- Read live: the grass renderer pools visuals and moves them to other nodes, so a cached position goes stale.
+-- RestCFrame is where the node sits (the game's targeting uses it); the part itself animates.
 function cache.getNodePosition(node)
-    local pos = cache.nodePosition[node]
-    if pos then return pos end
-    pos = node:IsA("Model") and node:GetPivot().Position or node.Position
-    cache.nodePosition[node] = pos
-    return pos
+    local rest = node:GetAttribute("RestCFrame")
+    if typeof(rest) == "CFrame" then return rest.Position end
+    return node:IsA("Model") and node:GetPivot().Position or node.Position
 end
 
 function cache.getGrassNodes()
@@ -2258,7 +2263,12 @@ function cache.getGrassNodes()
                 updateWallRaycastFilter()
             end
         end
-        cache.grassNodes = cache.grassFolder:GetChildren()
+        -- Only node visuals: the folder also holds non-node children (e.g. the CroppedGrass folder)
+        local nodes = {}
+        for _, child in ipairs(cache.grassFolder:GetChildren()) do
+            if child:IsA("BasePart") or child:IsA("Model") then table.insert(nodes, child) end
+        end
+        cache.grassNodes = nodes
     end
     return cache.grassNodes
 end
@@ -2338,13 +2348,15 @@ end
 
 function cache.getNodeID(node)
     if not node or not node.Parent then return nil end
+    -- Pooled visuals are renamed GrassVisual_<id> on reuse, so a cached ID is valid only while the name matches
+    local name = node.Name
     local cached = cache.nodeIDs[node]
-    if cached ~= nil then return cached or nil end
+    if cached ~= nil and cached.name == name then return cached.id or nil end
 
     -- Must be strictly in CowVirtualGrass
     local folder = cache.grassFolder or findGrassFolder()
     if folder and not node:IsDescendantOf(folder) then
-        cache.nodeIDs[node] = false
+        cache.nodeIDs[node] = { name = name, id = false }
         return nil
     end
 
@@ -2368,7 +2380,7 @@ function cache.getNodeID(node)
             cleanId = string.gsub(cleanId, "_+$", "")
         end
         if isValidGrassNodeID(cleanId) then
-            cache.nodeIDs[node] = cleanId
+            cache.nodeIDs[node] = { name = name, id = cleanId }
             return cleanId
         end
     end
@@ -2376,11 +2388,11 @@ function cache.getNodeID(node)
     -- Fallback: legacy name cleaning if attribute is absent
     local fallback = cache.getCleanGrassName(node.Name)
     if fallback and isValidGrassNodeID(fallback) then
-        cache.nodeIDs[node] = fallback
+        cache.nodeIDs[node] = { name = name, id = fallback }
         return fallback
     end
 
-    cache.nodeIDs[node] = false
+    cache.nodeIDs[node] = { name = name, id = false }
     return nil
 end
 
@@ -4371,19 +4383,11 @@ local function formatCompact(n)
     end
 end
 
--- Defined before checkLots: the restored scanner toggle runs checkLots during load
+-- ==========================
+-- LIVE AUCTION HOUSE DISPLAY
+-- ==========================
 function auction.getLocalDisplayName()
     return tostring(plr:GetAttribute("DisplayName") or plr.DisplayName or plr.Name)
-end
-
--- Counts down against server time, as the game's SkinAuctionController does
-function auction.formatRemainingTime(endsAt)
-    if not endsAt or type(endsAt) ~= "number" then return "N/A" end
-    local remaining = math.max(0, math.floor(endsAt - workspace:GetServerTimeNow()))
-    if remaining <= 0 then
-        return "Ended / Rotating"
-    end
-    return string.format("%dm %02ds", math.floor(remaining / 60), remaining % 60)
 end
 
 -- One lot read the way SkinAuctionController:_lots does; nil when missing or empty
@@ -4499,12 +4503,6 @@ end
 function cache.sanitizeMemory(now)
     if now - cache.lastSanitationTime > 15 then
         cache.lastSanitationTime = now
-
-        for node, _ in pairs(cache.nodePosition) do
-            if not node or not node.Parent then
-                cache.nodePosition[node] = nil
-            end
-        end
 
         for node, _ in pairs(cache.nodeIDs) do
             if not node or not node.Parent then
@@ -5239,6 +5237,9 @@ function farm.findClearEscapeDirection(rootPos)
         end
 
         local score = clearDist
+        if farm.isWaterAt(rootPos + dir * 8.0) then
+            score = score - 20.0
+        end
         if farm.anchorPos then
             local testPos = rootPos + (dir * 8.0)
             local distFromAnchorSq = get2DDistanceSq(farm.anchorPos, testPos)
@@ -5262,6 +5263,81 @@ function farm.findClearEscapeDirection(rootPos)
     end
 
     return bestDir
+end
+
+-- Edible by the server's rule: Available == true (grass is edible again while still Growing).
+-- Falls back to GrowthState == "Mature" for nodes without the attribute.
+function farm.isEdible(node)
+    local avail = node:GetAttribute("Available")
+    if avail == nil and node:IsA("Model") and node.PrimaryPart then avail = node.PrimaryPart:GetAttribute("Available") end
+    if avail ~= nil then return avail == true end
+    local growth = node:GetAttribute("GrowthState") or node:GetAttribute("growthState") or node:GetAttribute("growth_state")
+    return growth ~= nil and string.lower(tostring(growth)) == "mature"
+end
+
+-- True when the ground under pos is terrain water (the Fjord river)
+function farm.isWaterAt(pos)
+    local hit = workspace:Raycast(pos + Vector3.new(0, 25, 0), Vector3.new(0, -60, 0), wallRaycastParams)
+    return hit ~= nil and hit.Material == Enum.Material.Water
+end
+
+-- Random wander point inside the radius: not over water, not behind a wall. Falls back to the anchor.
+function farm.pickWanderPos(rootPos)
+    local maxDist = math.max(5, math.floor(farm.radius))
+    local minDist = math.min(5, maxDist)
+    for _ = 1, 8 do
+        local angle = math.random() * (math.pi * 2)
+        local dist = math.random(minDist, maxDist)
+        local pos = farm.anchorPos + Vector3.new(math.cos(angle) * dist, 0, math.sin(angle) * dist)
+        if not farm.isWaterAt(pos) and not (farm.collisionDetection and farm.hasWallBetween(rootPos, pos)) then
+            return pos
+        end
+    end
+    return farm.anchorPos
+end
+
+-- Grazing bait drops live in Workspace.GrazingBaitFind: a Folder of drops, or the drop itself.
+-- Position as in bait_drop_esp.lua: PrimaryPart, else the first BasePart.
+local function baitPosition(inst)
+    if inst:IsA("BasePart") then return inst.Position end
+    if inst:IsA("Model") then
+        local part = inst.PrimaryPart or inst:FindFirstChildWhichIsA("BasePart", true)
+        return part and part.Position or nil
+    end
+    return nil
+end
+
+-- Closest bait drop inside the farm radius, not over water and not skipped
+function farm.findBait(rootPos, now)
+    if now - farm.lastBaitScan >= 0.5 then
+        farm.lastBaitScan = now
+        table.clear(farm.baits)
+        for _, child in ipairs(workspace:GetChildren()) do
+            if child.Name == "GrazingBaitFind" then
+                if child:IsA("Folder") then
+                    for _, drop in ipairs(child:GetChildren()) do
+                        if drop.Name ~= "AnimalTamingMeal" then table.insert(farm.baits, drop) end
+                    end
+                else
+                    table.insert(farm.baits, child)
+                end
+            end
+        end
+    end
+    local best, bestPos, bestSq = nil, nil, math.huge
+    for _, drop in ipairs(farm.baits) do
+        local skipUntil = farm.baitSkip[drop]
+        if drop.Parent and not (skipUntil and now < skipUntil) then
+            local pos = baitPosition(drop)
+            if pos and get2DDistanceSq(farm.anchorPos, pos) <= farm.radiusSq and not farm.isWaterAt(pos) then
+                local dSq = get2DDistanceSq(rootPos, pos)
+                if dSq < bestSq then
+                    best, bestPos, bestSq = drop, pos, dSq
+                end
+            end
+        end
+    end
+    return best, bestPos
 end
 
 function farm.processMovement(dt, now, rootPos)
@@ -5313,10 +5389,28 @@ function farm.processMovement(dt, now, rootPos)
 
     local targetPos
 
+    -- Bait drop to collect (walked over), checked after unsticking and before the pattern
+    local bait, baitPos
+    if farm.collectBait then
+        bait, baitPos = farm.findBait(rootPos, now)
+        if bait ~= farm.baitTarget then
+            farm.baitTarget = bait
+            farm.baitStart = now
+        elseif bait and now - farm.baitStart > 8 then
+            farm.baitSkip[bait] = now + 30 -- not picked up in time; leave it for a while
+            bait, baitPos = nil, nil
+            farm.baitTarget = nil
+        end
+    end
+
     -- If actively escaping/unsticking, prioritize escape target
     if farm.collisionDetection and farm.isUnsticking and farm.unstickTargetPos then
         targetPos = farm.unstickTargetPos
         if humanoid then humanoid.Jump = true end
+    elseif baitPos then
+        targetPos = baitPos
+        farm.currentTargetNode = nil
+        farm.currentNodeStartTime = 0
     elseif farm.pattern == "Guided Zigzag (Nodes)" then
         local ghostX = math.sin(farm.patternTimer * 1.3) * farm.radius
         local ghostZ = math.cos(farm.patternTimer * 1.9) * farm.radius
@@ -5338,8 +5432,7 @@ function farm.processMovement(dt, now, rootPos)
                     needNewNode = true
                 end
             elseif farm.onlyMatureGrass then
-                local currGrowth = farm.currentTargetNode:GetAttribute("GrowthState") or farm.currentTargetNode:GetAttribute("growthState") or farm.currentTargetNode:GetAttribute("growth_state")
-                if currGrowth and string.lower(tostring(currGrowth)) ~= "mature" then
+                if not farm.isEdible(farm.currentTargetNode) then
                     cache.nodeBlacklist[farm.currentTargetNode] = now + 5
                     farm.currentTargetNode = nil
                     farm.currentNodeStartTime = 0
@@ -5367,18 +5460,22 @@ function farm.processMovement(dt, now, rootPos)
             local fallbackNode = nil
             local fallbackDistSq = math.huge
             local grassNodes = cache.getGrassNodes()
+            local inRadius, edible, cooled, walled = 0, 0, 0, 0
 
             for _, node in ipairs(grassNodes) do
                 if node.Parent then
                     local nodePos = cache.getNodePosition(node)
                     if get2DDistanceSq(farm.anchorPos, nodePos) <= farm.radiusSq then
-                        local growth = node:GetAttribute("GrowthState") or node:GetAttribute("growthState") or node:GetAttribute("growth_state")
-                        if not farm.onlyMatureGrass or (growth and string.lower(tostring(growth)) == "mature") then
+                        inRadius += 1
+                        if not farm.onlyMatureGrass or farm.isEdible(node) then
+                            edible += 1
                             local nodeId = cache.getNodeID(node)
                             if nodeId then
                                 local distFromGhostSq = get2DDistanceSq(ghostPos, nodePos)
                                 local blacklistedAt = cache.nodeBlacklist[node]
-                                if not blacklistedAt or now - blacklistedAt > 10 then
+                                if blacklistedAt and now - blacklistedAt <= 10 then
+                                    cooled += 1
+                                else
                                     if distFromGhostSq < fallbackDistSq then
                                         fallbackDistSq = distFromGhostSq
                                         fallbackNode = node
@@ -5390,7 +5487,9 @@ function farm.processMovement(dt, now, rootPos)
                                             isBlocked = farm.hasWallBetween(rootPos, nodePos)
                                         end
 
-                                        if not isBlocked then
+                                        if isBlocked then
+                                            walled += 1
+                                        else
                                             nearestDistSq = distFromGhostSq
                                             nearestNode = node
                                         end
@@ -5412,25 +5511,7 @@ function farm.processMovement(dt, now, rootPos)
                 farm.currentTargetNode = nil
                 farm.currentNodeStartTime = 0
                 if not farm.nextRandomPos or get2DDistanceSq(rootPos, farm.nextRandomPos) < 25 then
-                    local foundSafe = false
-                    if farm.collisionDetection then
-                        local maxDist = math.max(5, math.floor(farm.radius))
-                        local minDist = math.min(5, maxDist)
-                        for _ = 1, 6 do
-                            local angle = math.random() * (math.pi * 2)
-                            local dist = math.random(minDist, maxDist)
-                            local candidatePos = farm.anchorPos + Vector3.new(math.cos(angle) * dist, 0, math.sin(angle) * dist)
-                            if not farm.hasWallBetween(rootPos, candidatePos) then
-                                farm.nextRandomPos = candidatePos
-                                foundSafe = true
-                                break
-                            end
-                        end
-                    end
-                    if not foundSafe then
-                        local angle = math.random() * (math.pi * 2)
-                        farm.nextRandomPos = farm.anchorPos + Vector3.new(math.cos(angle) * farm.radius, 0, math.sin(angle) * farm.radius)
-                    end
+                    farm.nextRandomPos = farm.pickWanderPos(rootPos)
                 end
             end
         end
@@ -5454,25 +5535,7 @@ function farm.processMovement(dt, now, rootPos)
 
     elseif farm.pattern == "Random" then
         if not farm.nextRandomPos or get2DDistanceSq(rootPos, farm.nextRandomPos) < 25 then
-            local foundSafe = false
-            if farm.collisionDetection then
-                local maxDist = math.max(5, math.floor(farm.radius))
-                local minDist = math.min(5, maxDist)
-                for _ = 1, 6 do
-                    local angle = math.random() * (math.pi * 2)
-                    local dist = math.random(minDist, maxDist)
-                    local candidatePos = farm.anchorPos + Vector3.new(math.cos(angle) * dist, 0, math.sin(angle) * dist)
-                    if not farm.hasWallBetween(rootPos, candidatePos) then
-                        farm.nextRandomPos = candidatePos
-                        foundSafe = true
-                        break
-                    end
-                end
-            end
-            if not foundSafe then
-                local angle = math.random() * (math.pi * 2)
-                farm.nextRandomPos = farm.anchorPos + Vector3.new(math.cos(angle) * farm.radius, 0, math.sin(angle) * farm.radius)
-            end
+            farm.nextRandomPos = farm.pickWanderPos(rootPos)
         end
         targetPos = farm.nextRandomPos
     end
@@ -5918,6 +5981,7 @@ function updateHeartbeatConnection()
                     dodge.cleanup()
                 end
 
+
                 -- 1. Movement Logic
                 if farm.on and not (manatite and manatite.auto) and not (mithril and mithril.auto) and farm.anchorPos and not dodge.isDodging and not dodge.isUnderground then
                     farm.processMovement(dt, now, rootPos)
@@ -6277,6 +6341,16 @@ MainTab:CreateToggle({
     Flag = "Toggle_OnlyMatureGrass",
     Callback = function(Value)
         farm.onlyMatureGrass = Value
+    end,
+})
+
+MainTab:CreateToggle({
+    Name = "Collect Grazing Bait Drops",
+    CurrentValue = false,
+    Flag = "Toggle_CollectBait",
+    Callback = function(Value)
+        farm.collectBait = Value
+        farm.baitTarget = nil
     end,
 })
 
@@ -6764,9 +6838,18 @@ ScannerTab:CreateToggle({
     end,
 })
 
--- ==========================
--- LIVE AUCTION HOUSE DISPLAY
--- ==========================
+
+-- Counts down against server time, as the game's SkinAuctionController does
+function auction.formatRemainingTime(endsAt)
+    if not endsAt or type(endsAt) ~= "number" then return "N/A" end
+    local remaining = math.max(0, math.floor(endsAt - workspace:GetServerTimeNow()))
+    if remaining <= 0 then
+        return "Ended / Rotating"
+    end
+    return string.format("%dm %02ds", math.floor(remaining / 60), remaining % 60)
+end
+
+
 local function ownedMark(owned)
     if owned == true then return "✅" elseif owned == false then return "❌" end
     return "?"
