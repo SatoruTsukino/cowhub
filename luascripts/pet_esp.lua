@@ -1,14 +1,20 @@
 -- Pet ESP (Dogs / Barn Cats) with temperament readout
 -- Highlights every pet model in workspace.LocalDogs / workspace.LocalBarnCats and
--- labels it with Disposition + AnimalTemperament trait vector.
+-- labels it with Disposition + full personality vector.
 --
 -- Pet models carry no attributes; the Model -> Record mapping lives only in the
 -- DogController / BarnCatController tables ({ Folder, Actors = { {Model, Record} } }),
--- so traits are pulled via getgc. Missing personality fields are recomputed from the
--- record Seed with the game's own Sample PRNG (AnimalTemperament.Sample).
+-- so records are pulled via getgc. Any personality field the record lacks is rebuilt
+-- from its Seed with the game's own generators:
+--   AnimalIntent.Init        12 base traits (sequential LCG x breed multiplier)
+--   AnimalTemperament.Init   salted Sample() traits + Disposition
+--   AnimalRelationships      Generosity / FoodTaking;  AnimalBaitBehavior  Chattiness
 --
--- The block between BEGIN/END petESP core is pasted verbatim into preview.lua.
--- API: set petESP.show.Dog / petESP.show.Cat / petESP.leaderOnly, then call petESP.update().
+-- Toggles (set, then call petESP.update()):
+--   petESP.show.Dog / petESP.show.Cat         species on/off
+--   petESP.leader.score / .strict / .best     stand-ground leader filters (any on = filter;
+--                                             a pet shows if any enabled filter picks it)
+-- Thresholds live in petESP.leaderRules.
 
 if not game:IsLoaded() then
     game.Loaded:Wait()
@@ -30,7 +36,13 @@ end
 -- BEGIN petESP core
 local petESP = {
     show = { Dog = false, Cat = false },
-    leaderOnly = false, -- true: show only stand-ground leaders (Defiance > 0.86, Timidity < 0.72)
+    -- Every leader filter requires the CanStand gate: Defiance > 0.86 (Headstrong) and Timidity < 0.72.
+    leader = {
+        score = false, -- gate + leader score >= minScore
+        strict = false, -- gate + Ini, Ldr, Dom >= minTrait and Boldness >= minBold
+        best = false, -- gate + highest leader score among pets in range
+    },
+    leaderRules = { minScore = 0.70, minTrait = 0.70, minBold = 1.0 },
     visuals = {}, -- [Model] = { highlight, billboard, label, targetPart, folderName, lastText }
     controllers = {}, -- [folderName] = DogController / BarnCatController table
     modelRecords = {}, -- [Model] = record
@@ -54,11 +66,34 @@ do
     local UNKNOWN_COLOR = Color3.fromRGB(0, 220, 255)
     local LEADER_COLOR = Color3.fromRGB(255, 215, 0)
 
-    -- Trait rows shown on the label: { key, short label, salt }
+    -- AnimalIntent.Init: generation order matters (one LCG step per trait).
+    local BASE_TRAITS = {
+        "Curiosity", "Boldness", "Social", "Play", "Comfort", "Perch",
+        "Companion", "Alertness", "Sniff", "Persistence", "Rest", "Energy",
+    }
+    local BREEDS = {
+        GoldenRetriever = { Social = 1.35, Companion = 1.35, Play = 1.15 },
+        BorderCollie = { Curiosity = 1.15, Play = 1.35, Companion = 1.2, Energy = 1.2 },
+        GermanShepherd = { Boldness = 1.3, Alertness = 1.4, Companion = 1.15 },
+        Beagle = { Curiosity = 1.4, Sniff = 1.6, Persistence = 1.25 },
+        Corgi = { Social = 1.2, Play = 1.4, Energy = 0.95 },
+        Dachshund = { Curiosity = 1.2, Persistence = 1.4, Rest = 1.25 },
+    }
+
+    -- Salted AnimalTemperament.Sample traits
+    local SALTS = {
+        Initiative = 281, Affection = 283, Patience = 293, Defiance = 307,
+        HighPlaces = 359, ThreatWatch = 367, Wanderlust = 373,
+        Dominance = 401, Timidity = 409, Trouble = 413, Leadership = 417, Neuroticism = 419,
+        Generosity = 541, FoodTaking = 547, Chattiness = 193,
+    }
+
+    -- Label rows: { key, short label }
     local TRAIT_ROWS = {
-        { { "Initiative", "Ini", 281 }, { "Affection", "Aff", 283 }, { "Patience", "Pat", 293 }, { "Defiance", "Def", 307 } },
-        { { "Dominance", "Dom", 401 }, { "Timidity", "Tim", 409 }, { "Leadership", "Ldr", 417 }, { "Neuroticism", "Neu", 419 } },
-        { { "Trouble", "Trb", 413 }, { "Wanderlust", "Wan", 373 }, { "ThreatWatch", "Thr", 367 }, { "HighPlaces", "Hi", 359 } },
+        { { "Initiative", "Ini" }, { "Affection", "Aff" }, { "Patience", "Pat" }, { "Defiance", "Def" } },
+        { { "Dominance", "Dom" }, { "Timidity", "Tim" }, { "Leadership", "Ldr" }, { "Neuroticism", "Neu" } },
+        { { "Trouble", "Trb" }, { "Wanderlust", "Wan" }, { "ThreatWatch", "Thr" }, { "HighPlaces", "Hi" } },
+        { { "Play", "Play" }, { "Curiosity", "Curi" }, { "Boldness", "Bold" }, { "SocialTempo", "Tempo" } },
     }
 
     local function folderOn(name)
@@ -66,91 +101,109 @@ do
         return info ~= nil and petESP.show[info.species] == true
     end
 
-    -- Temperament (ported verbatim from AnimalTemperament)
+    -- AnimalTemperament.Sample (verbatim port)
     local function sample(seed, salt)
         local a = ((math.floor(math.abs(seed or 1)) + salt * 7919) % 2147483646 + 1) * 48271 % 2147483647
         local b = bit32.bxor(a, bit32.lrotate(a, 13), salt * 104729) * 48271 % 2147483647
         return bit32.bxor(b, bit32.rshift(b, 11)) * 48271 % 2147483647 / 2147483647
     end
 
-    local function traitValue(personality, seed, key, salt)
-        local v = personality and tonumber(personality[key])
-        if v then return v end
-        if seed then return sample(seed, salt) end
-        return nil
-    end
-
-    local function computeDisposition(personality, seed)
-        if personality and type(personality.Disposition) == "string" then
-            return personality.Disposition
+    -- AnimalIntent.Init base traits (verbatim port)
+    local function baseTraits(seed, variant)
+        local out = {}
+        local mult = BREEDS[variant] or {}
+        local v = (seed or 1) % 2147483646 + 1
+        for _, key in ipairs(BASE_TRAITS) do
+            v = v * 48271 % 2147483647
+            out[key] = (0.8 + 0.4 * v / 2147483647) * (mult[key] or 1)
         end
-        local defiance = traitValue(personality, seed, "Defiance", 307)
-        local initiative = traitValue(personality, seed, "Initiative", 281)
-        local affection = traitValue(personality, seed, "Affection", 283)
-        local patience = traitValue(personality, seed, "Patience", 293)
-        if not (defiance and initiative and affection and patience) then return nil end
-        local play = personality and tonumber(personality.Play) or 1
-        if defiance > 0.86 then return "Headstrong" end
-        if initiative > 0.7 and play > 1 then return "Rascal" end
-        if affection > 0.68 then return "Companion" end
-        if patience > 0.7 then return "Observer" end
-        if initiative < 0.3 then return "Independent" end
-        return "Sociable"
+        return out
     end
 
-    local function descriptor(personality)
-        if not personality then return nil end
-        if (tonumber(personality.Play) or 0) > 1.1 then return "playful" end
-        if (tonumber(personality.Curiosity) or 0) > 1.1 then return "curious" end
+    -- Full personality vector + disposition. Record values win; missing ones are regenerated.
+    local function readTraits(record)
+        local personality = type(record.Personality) == "table" and record.Personality or nil
+        local seed = tonumber(record.Seed)
+        if not personality and not seed then return nil end
+
+        local base = seed and baseTraits(seed, record.Variant) or {}
+        local t = {}
+        for _, key in ipairs(BASE_TRAITS) do
+            t[key] = personality and tonumber(personality[key]) or base[key]
+        end
+        for key, salt in pairs(SALTS) do
+            t[key] = personality and tonumber(personality[key]) or (seed and sample(seed, salt))
+        end
+        t.SocialTempo = personality and tonumber(personality.SocialTempo) or (seed and 0.78 + sample(seed, 311) * 0.58)
+
+        local disposition = personality and type(personality.Disposition) == "string" and personality.Disposition
+        if not disposition and t.Defiance and t.Initiative and t.Affection and t.Patience then
+            local play = t.Play or 1
+            disposition = t.Defiance > 0.86 and "Headstrong"
+                or (t.Initiative > 0.7 and play > 1) and "Rascal"
+                or t.Affection > 0.68 and "Companion"
+                or t.Patience > 0.7 and "Observer"
+                or t.Initiative < 0.3 and "Independent"
+                or "Sociable"
+        end
+        return t, disposition or nil
+    end
+
+    -- Stand-ground leader rating (gates from AnimalTemperament.CanStand).
+    local function rateLeader(t)
+        local def, tim = t.Defiance or 0, t.Timidity or 1
+        local gate = def > 0.86 and tim < 0.72
+        local ini, ldr, dom = t.Initiative or 0, t.Leadership or 0, t.Dominance or 0
+        local bold = t.Boldness or 1
+        local boldNorm = math.clamp((bold - 0.8) / 0.4, 0, 1)
+        local score = (ini + ldr + dom + (1 - tim) + (1 - (t.Neuroticism or 1)) + boldNorm) / 6
+        local r = petESP.leaderRules
+        local strict = gate and ini >= r.minTrait and ldr >= r.minTrait and dom >= r.minTrait and bold >= r.minBold
+        return gate, score, strict
+    end
+
+    local function describe(record)
+        local t, disposition = readTraits(record)
+        if not t then return nil end
+        local gate, score, strict = rateLeader(t)
+        return {
+            traits = t,
+            disposition = disposition,
+            gate = gate,
+            score = score,
+            strict = strict,
+            byScore = gate and score >= petESP.leaderRules.minScore,
+        }
+    end
+    petESP.describe = describe
+
+    local function descriptor(t)
+        if (t.Play or 0) > 1.1 then return "playful" end
+        if (t.Curiosity or 0) > 1.1 then return "curious" end
         return "easygoing"
     end
 
-    local function buildTraitText(record)
-        local personality = type(record.Personality) == "table" and record.Personality or nil
-        local seed = tonumber(record.Seed)
-        if not personality and not seed then
-            return nil, nil
+    local function traitText(info, isBest)
+        local t = info.traits
+        local head = (info.disposition or "?") .. " · " .. descriptor(t)
+        if info.gate then
+            local tags = {}
+            if isBest then tags[#tags + 1] = "BEST" end
+            if info.strict then tags[#tags + 1] = "STRICT" end
+            local tagText = #tags > 0 and (" [" .. table.concat(tags, "/") .. "]") or ""
+            head = "★ LEADER " .. string.format("%.2f", info.score) .. tagText .. " · " .. head
         end
-
-        local disposition = computeDisposition(personality, seed)
-        local head = disposition or "?"
-        local desc = descriptor(personality)
-        if desc then head = head .. " · " .. desc end
         local lines = { head }
-
-        -- Stand-ground leader: hard gates from AnimalTemperament.CanStand
-        -- (Defiance must beat the 0.86–0.91 threshold; Timidity < 0.72 unlocks taunt resistance).
-        local function t(key, salt) return traitValue(personality, seed, key, salt) or 0 end
-        local leader = t("Defiance", 307) > 0.86 and t("Timidity", 409) < 0.72
-        if leader then
-            local score = (t("Initiative", 281) + t("Leadership", 417) + t("Dominance", 401)
-                + (1 - t("Timidity", 409)) + (1 - t("Neuroticism", 419))) / 5
-            lines[1] = "★ LEADER " .. string.format("%.2f", score) .. " · " .. head
-        end
-
         for _, row in ipairs(TRAIT_ROWS) do
             local parts = {}
-            for _, t in ipairs(row) do
-                local v = traitValue(personality, seed, t[1], t[3])
-                parts[#parts + 1] = t[2] .. " " .. (v and string.format("%.2f", v) or "--")
+            for _, cell in ipairs(row) do
+                local v = t[cell[1]]
+                parts[#parts + 1] = cell[2] .. " " .. (v and string.format("%.2f", v) or "--")
             end
             lines[#lines + 1] = table.concat(parts, "  ")
         end
-
-        if personality then
-            local extras = {}
-            for _, key in ipairs({ "Play", "Curiosity", "Boldness" }) do
-                local v = tonumber(personality[key])
-                if v then extras[#extras + 1] = string.sub(key, 1, 4) .. " " .. string.format("%.2f", v) end
-            end
-            local tempo = tonumber(personality.SocialTempo) or (seed and 0.78 + sample(seed, 311) * 0.58)
-            if tempo then extras[#extras + 1] = "Tempo " .. string.format("%.2f", tempo) end
-            if #extras > 0 then lines[#lines + 1] = table.concat(extras, "  ") end
-        end
-
-        return table.concat(lines, "\n"), disposition, leader
+        return table.concat(lines, "\n")
     end
-    petESP.buildTraitText = buildTraitText
 
     -- Controller discovery (getgc) and Model -> Record map
     local function findControllers()
@@ -227,7 +280,7 @@ do
         local billboard = Instance.new("BillboardGui")
         billboard.Name = "PetESPText"
         billboard.Adornee = targetPart
-        billboard.Size = UDim2.new(0, 260, 0, 96)
+        billboard.Size = UDim2.new(0, 280, 0, 110)
         billboard.StudsOffset = Vector3.new(0, 3.5, 0)
         billboard.AlwaysOnTop = true
         billboard.MaxDistance = 400
@@ -265,42 +318,38 @@ do
         end
     end
 
-    local function updateVisual(model, visual, rPos)
-        local info = FOLDERS[visual.folderName]
-        local record = petESP.modelRecords[model]
-        local title = info.icon .. " " .. info.species
-        local body, disposition, leader
-
-        if record then
-            local variant = record.Variant or record.Coat
-            if type(record.Name) == "string" and record.Name ~= "" then
-                title = info.icon .. " " .. record.Name
-            end
-            if type(variant) == "string" then title = title .. " (" .. variant .. ")" end
-            if record.AgeStage == "Young" or record.Puppy == true or record.Kitten == true then
-                title = title .. " [young]"
-            end
-            body, disposition, leader = buildTraitText(record)
-        end
-
-        local visible = leader or not petESP.leaderOnly
+    local function setVisible(visual, visible)
         if visual.highlight.Enabled ~= visible then
             visual.highlight.Enabled = visible
             visual.billboard.Enabled = visible
         end
-        if not visible then return end
-        body = body or (petESP.controllers[visual.folderName] and "traits: no record" or "traits unavailable (no getgc)")
+    end
 
-        local dist = ""
-        if rPos then
-            dist = "\n[" .. math.floor((rPos - visual.targetPart.Position).Magnitude) .. " studs]"
+    local function drawVisual(visual, record, info, isBest, rPos)
+        local folder = FOLDERS[visual.folderName]
+        local title = folder.icon .. " " .. folder.species
+        if record then
+            if type(record.Name) == "string" and record.Name ~= "" then
+                title = folder.icon .. " " .. record.Name
+            end
+            local variant = record.Variant or record.Coat
+            if type(variant) == "string" then title = title .. " (" .. variant .. ")" end
+            if record.AgeStage == "Young" or record.Puppy == true or record.Kitten == true then
+                title = title .. " [young]"
+            end
         end
+
+        local body = info and traitText(info, isBest)
+            or (petESP.controllers[visual.folderName] and "traits: no record" or "traits unavailable (no getgc)")
+        local dist = rPos and ("\n[" .. math.floor((rPos - visual.targetPart.Position).Magnitude) .. " studs]") or ""
 
         local text = title .. "\n" .. body .. dist
         if text ~= visual.lastText then
             visual.lastText = text
             visual.label.Text = text
-            local color = leader and LEADER_COLOR or disposition and DISPOSITION_COLORS[disposition] or UNKNOWN_COLOR
+            local color = info and info.gate and LEADER_COLOR
+                or info and info.disposition and DISPOSITION_COLORS[info.disposition]
+                or UNKNOWN_COLOR
             visual.highlight.FillColor = color
             visual.label.TextColor3 = color
         end
@@ -323,16 +372,39 @@ do
         if now - clock.draw < 0.15 then return end
         clock.draw = now
 
-        local char = plr.Character
-        local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
-        local rPos = root and root.Position or nil
+        -- Pass 1: drop dead visuals, describe live ones, find best leader.
+        local infos = {}
+        local bestModel, bestScore = nil, -1
         for model, visual in pairs(petESP.visuals) do
             local folder = model.Parent
             if not folder or folder.Parent ~= workspace or not folderOn(folder.Name) or not visual.targetPart.Parent then
                 -- Pooled models are reparented to nil when released
                 removeVisual(model)
             else
-                updateVisual(model, visual, rPos)
+                local record = petESP.modelRecords[model]
+                local info = record and describe(record)
+                infos[model] = info or false
+                if info and info.gate and info.score > bestScore then
+                    bestModel, bestScore = model, info.score
+                end
+            end
+        end
+
+        -- Pass 2: filter + draw.
+        local L = petESP.leader
+        local filtering = L.score or L.strict or L.best
+        local char = plr.Character
+        local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
+        local rPos = root and root.Position or nil
+        for model, info in pairs(infos) do
+            local visual = petESP.visuals[model]
+            local isBest = model == bestModel
+            local visible = not filtering
+                or (info and ((L.score and info.byScore) or (L.strict and info.strict) or (L.best and isBest)))
+                or false
+            setVisible(visual, visible)
+            if visible then
+                drawVisual(visual, petESP.modelRecords[model], info or nil, isBest, rPos)
             end
         end
     end
@@ -374,7 +446,7 @@ function petESP.destroy()
     end
 end
 
--- Standalone run: both species on.
+-- Standalone run: both species on, leader filters off.
 petESP.show.Dog = true
 petESP.show.Cat = true
 petESP.update()

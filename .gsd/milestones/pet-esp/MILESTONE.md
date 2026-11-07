@@ -21,6 +21,8 @@ See every dog and barn cat. Highlight each one. Label shows overall trait (Dispo
 | AnimalTemperament.Init | Disposition chain: Defiance>0.86 Headstrong → Initiative>0.7 & Play>1 Rascal → Affection>0.68 Companion → Patience>0.7 Observer → Initiative<0.3 Independent → Sociable. |
 | rbxlx DogController.new / BarnCatController.new | Make `workspace.LocalDogs` / `workspace.LocalBarnCats`. Controller table `{ Folder, Actors = { [key] = { Model, Record, RenderRecord } }, Pool }`. Models pooled, released → `Parent = nil`. |
 | rbxlx (no SetAttribute) | Pet models carry no attributes. Model→Record only in controller Lua state → need `getgc`. |
+| rbxlx AnimalIntent.Init (Nov 1; not in Nov 7 Shared dump) | 12 base traits Curiosity, Boldness, Social, Play, Comfort, Perch, Companion, Alertness, Sniff, Persistence, Rest, Energy = (0.8 + 0.4·LCG) × breed mult (dogs by `Variant`; cats none). Runs before AnimalTemperament.Init. |
+| rbxlx trait usage | `Leadership` and `Trouble`: 0 reads in game code. `Dominance`: only CanStand taunt branch. `Initiative`: social initiate timing + play drive. `Neuroticism`: panic/swim. |
 | AnimalLife | Young = `AgeStage == "Young"` or `Puppy`/`Kitten`. Dog look = `Variant`, cat look = `Coat`. |
 
 ## Requirements
@@ -33,7 +35,8 @@ See every dog and barn cat. Highlight each one. Label shows overall trait (Dispo
 | PE-04 | No `getgc` → highlight still works, label say "traits unavailable" | Must |
 | PE-05 | `_G.PetESP` re-exec guard + `destroy()` | Must |
 | PE-06 | Separate Dog / Cat toggles: `petESP.show.Dog` / `petESP.show.Cat` + `petESP.update()`; standalone run turns both on | Must |
-| PE-07 | Leader-only filter `petESP.leaderOnly` (dog + cat): show only pets passing `CanStand` gates Defiance > 0.86 and Timidity < 0.72; gold highlight + `★ LEADER <score>` (avg Ini, Ldr, Dom, 1−Tim, 1−Neu). ~10% of seeds match | Must |
+| PE-07 | Three leader toggles `petESP.leader.score / .strict / .best` (dog + cat, union when several on). All need `CanStand` gate Defiance > 0.86 + Timidity < 0.72. score: avg(Ini, Ldr, Dom, 1−Tim, 1−Neu, Bold norm) ≥ 0.70. strict: Ini, Ldr, Dom ≥ 0.70 + Boldness ≥ 1.0. best: top score in range. Per 20000 seeds: gate 1994, score 144, strict 31 | Must |
+| PE-08 | Full vector from Seed: AnimalIntent 12 base traits (LCG × breed), Temperament salts, Generosity 541 / FoodTaking 547 / Chattiness 193. Fixes Rascal (needs real Play) | Must |
 
 ## Non-goals
 - No hub integration; standalone script only.
