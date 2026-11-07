@@ -1,4 +1,4 @@
--- Cow Hub [60da46f] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [3664349] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -58,7 +58,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [60da46f]",
+    Name = "Cow Hub [3664349]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -6120,6 +6120,28 @@ MainTab:CreateToggle({
     end,
 })
 
+
+MainTab:CreateButton({
+    Name = "Teleport to Farming Area",
+    Callback = function()
+        if not root or not char then return end
+        local target = CFrame.new(6269, 706, -185)
+        char:PivotTo(target)
+        root.CFrame = target
+        stopCharacterVelocity()
+        for _, part in ipairs(charBaseParts) do
+            part.AssemblyLinearVelocity = Vector3.zero
+            part.AssemblyAngularVelocity = Vector3.zero
+        end
+        -- Re-home the autofarm so it doesn't walk back to the old anchor
+        if farm.on then
+            farm.anchorPos = target.Position
+            farm.currentTargetNode = nil
+            farm.currentNodeStartTime = 0
+            farm.nextRandomPos = nil
+        end
+    end,
+})
 
 MainTab:CreateSection({ Name = "Aura & Pattern Configuration" })
 
