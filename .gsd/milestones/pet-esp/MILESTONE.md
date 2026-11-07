@@ -53,3 +53,6 @@ See every dog and barn cat. Highlight each one. Label shows overall trait (Dispo
 - [x] Plan 1.1: `luascripts/pet_esp.lua` — compile ok, 23 regs, 0/5000 Sample+Disposition mismatch vs decompiled module
 - [ ] Plan 1.2: In-game UAT (checkpoint) — test toggles: `_G.PetESP.show.Cat = false; _G.PetESP.update()` drops cats only, dogs stay
 - Hub integration: not planned. Script stays standalone in `luascripts/` (user decision 2026-11-06).
+
+### Phase 2: Bait Drop ESP
+- [x] Plan 2.1: `luascripts/bait_drop_esp.lua` — ChickenDrop (Dog Bone) + CatfishDrop; compile ok, 14 regs, stub test pass. In-game check pending.
