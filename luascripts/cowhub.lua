@@ -1,4 +1,4 @@
--- Cow Hub [f6c95c2] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [0b75535] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -54,7 +54,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [f6c95c2]",
+    Name = "Cow Hub [0b75535]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -4372,6 +4372,49 @@ local function formatCompact(n)
     end
 end
 
+-- ==========================
+-- LIVE AUCTION HOUSE DISPLAY
+-- ==========================
+function auction.getLocalDisplayName()
+    return tostring(plr:GetAttribute("DisplayName") or plr.DisplayName or plr.Name)
+end
+
+-- One lot read the way SkinAuctionController:_lots does; nil when missing or empty
+function auction.readLot(lotName)
+    local lot = skinAuction:FindFirstChild(lotName)
+    if not lot then return nil, "missing" end
+    local skinId = lot:GetAttribute("SkinId")
+    if type(skinId) ~= "string" or skinId == "" or skinId == "None" then return nil, "empty" end
+
+    local def
+    local config = cosmetics.getConfig()
+    if config then
+        local ok, d = pcall(config.Get, skinId)
+        def = ok and d or nil
+    end
+    local bid = tonumber(lot:GetAttribute("Bid")) or 0
+    local leaderId = lot:GetAttribute("LeaderId")
+    local leaderName = lot:GetAttribute("LeaderName")
+    local leading
+    if leaderId ~= nil then
+        leading = bid > 0 and leaderId == plr.UserId
+    else
+        leading = leaderName ~= nil and (leaderName == auction.getLocalDisplayName() or leaderName == plr.Name)
+    end
+    return {
+        SkinId = skinId,
+        SkinName = lot:GetAttribute("SkinName") or (def and def.DisplayName) or skinId,
+        Rarity = (def and def.Rarity) or "Common",
+        Bid = bid,
+        MinimumBid = lot:GetAttribute("MinimumBid") or lot:GetAttribute("StartingBid"),
+        Round = lot:GetAttribute("Round"),
+        EndsAt = lot:GetAttribute("EndsAt"),
+        LeaderName = (leaderName ~= "" and leaderName ~= "None") and leaderName or nil,
+        Leading = leading,
+        Owned = cosmetics.isOwned(skinId),
+    }
+end
+
 function auction.checkLots()
     if not httpRequest or WEBHOOK_URL == "" then return end
 
@@ -6696,12 +6739,6 @@ ScannerTab:CreateToggle({
     end,
 })
 
--- ==========================
--- LIVE AUCTION HOUSE DISPLAY
--- ==========================
-function auction.getLocalDisplayName()
-    return tostring(plr:GetAttribute("DisplayName") or plr.DisplayName or plr.Name)
-end
 
 -- Counts down against server time, as the game's SkinAuctionController does
 function auction.formatRemainingTime(endsAt)
@@ -6713,41 +6750,6 @@ function auction.formatRemainingTime(endsAt)
     return string.format("%dm %02ds", math.floor(remaining / 60), remaining % 60)
 end
 
--- One lot read the way SkinAuctionController:_lots does; nil when missing or empty
-function auction.readLot(lotName)
-    local lot = skinAuction:FindFirstChild(lotName)
-    if not lot then return nil, "missing" end
-    local skinId = lot:GetAttribute("SkinId")
-    if type(skinId) ~= "string" or skinId == "" or skinId == "None" then return nil, "empty" end
-
-    local def
-    local config = cosmetics.getConfig()
-    if config then
-        local ok, d = pcall(config.Get, skinId)
-        def = ok and d or nil
-    end
-    local bid = tonumber(lot:GetAttribute("Bid")) or 0
-    local leaderId = lot:GetAttribute("LeaderId")
-    local leaderName = lot:GetAttribute("LeaderName")
-    local leading
-    if leaderId ~= nil then
-        leading = bid > 0 and leaderId == plr.UserId
-    else
-        leading = leaderName ~= nil and (leaderName == auction.getLocalDisplayName() or leaderName == plr.Name)
-    end
-    return {
-        SkinId = skinId,
-        SkinName = lot:GetAttribute("SkinName") or (def and def.DisplayName) or skinId,
-        Rarity = (def and def.Rarity) or "Common",
-        Bid = bid,
-        MinimumBid = lot:GetAttribute("MinimumBid") or lot:GetAttribute("StartingBid"),
-        Round = lot:GetAttribute("Round"),
-        EndsAt = lot:GetAttribute("EndsAt"),
-        LeaderName = (leaderName ~= "" and leaderName ~= "None") and leaderName or nil,
-        Leading = leading,
-        Owned = cosmetics.isOwned(skinId),
-    }
-end
 
 local function ownedMark(owned)
     if owned == true then return "✅" elseif owned == false then return "❌" end
