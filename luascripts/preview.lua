@@ -1,4 +1,4 @@
--- Cow Hub [24a6c3a] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [f1a1eda] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -58,7 +58,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [24a6c3a]",
+    Name = "Cow Hub [f1a1eda]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -13217,6 +13217,10 @@ do
         PATH_GOAL_SHIFT = 12,
         WAYPOINT_REACH = 3,
         SPRINT_FAR = 14,
+        SPRINT_RESUME = 0.9,     -- start sprinting at >= 90% stamina
+        SPRINT_STOP = 0.15,      -- stop at <= 15%, walk to refill
+        STAMINA_MIN_MAX = 4,     -- Config.Character.BaseSprintCapacity; upgrades raise it
+        WATER_SAMPLE = 4,        -- studs between water checks on a straight walk
         INTERCEPT_SPEED = 18,
         INTERCEPT_MAX = 250,
         RETURN_TIMEOUT = 90,
@@ -13543,7 +13547,32 @@ do
     function caravan.setSprint(on)
         if caravan.sprinting == on then return end
         caravan.sprinting = on
+        caravan.lastSprintSend = os.clock()
         caravan.fire("SprintRequest", on)
+    end
+
+    -- Sprint while far, but walk to refill stamina between bursts: start at >= 90% of the
+    -- observed max, stop at <= 15%. Never asks at Stamina <= 0 (the game refuses it too).
+    function caravan.updateSprint(far)
+        local stamina = tonumber(plr:GetAttribute("Stamina"))
+        if not stamina then
+            caravan.setSprint(far)
+            return
+        end
+        caravan.staminaMax = math.max(caravan.staminaMax or CFG.STAMINA_MIN_MAX, stamina)
+        local frac = stamina / caravan.staminaMax
+        if caravan.sprinting and (stamina <= 0 or frac <= CFG.SPRINT_STOP) then
+            caravan.refilling = true
+        elseif frac >= CFG.SPRINT_RESUME then
+            caravan.refilling = false
+        end
+        local want = far and not caravan.refilling and stamina > 0
+        caravan.setSprint(want)
+        -- Server dropped our sprint (SprintActive false): re-send like InputController does
+        if want and plr:GetAttribute("SprintActive") == false and os.clock() - (caravan.lastSprintSend or 0) >= 0.4 then
+            caravan.lastSprintSend = os.clock()
+            caravan.fire("SprintRequest", true)
+        end
     end
 
     function caravan.stopWalk()
@@ -13553,37 +13582,57 @@ do
         caravan.setSprint(false)
     end
 
-    -- Walk toward goal; returns flat distance to it
+    -- True when walking straight from a to b crosses terrain water (sampled every few studs)
+    function caravan.lineWet(a, b)
+        local flat = Vector3.new(b.X - a.X, 0, b.Z - a.Z)
+        local n = math.max(1, math.ceil(flat.Magnitude / CFG.WATER_SAMPLE))
+        for i = 1, n do
+            local t = i / n
+            if farm.isWaterAt(a:Lerp(b, t)) then return true end
+        end
+        return false
+    end
+
+    -- Walk toward goal, never into water; returns flat distance to it
     function caravan.walkTo(goal, now)
         local h, r = caravan.humanoid(), caravan.root()
         if not (h and r) then return math.huge end
         local w = caravan.walk
         local d = caravan.flatDist(r.Position, goal)
-        caravan.setSprint(d > CFG.SPRINT_FAR)
+        caravan.updateSprint(d > CFG.SPRINT_FAR)
+        -- Straight line only when it stays dry (checked once per goal change / second)
         if d <= CFG.PATH_DIRECT then
-            w.waypoints = nil
             if not w.lastGoal or (w.lastGoal - goal).Magnitude > 0.5 or now - w.lastMoveAt > 1 then
                 w.lastGoal, w.lastMoveAt = goal, now
-                h:MoveTo(goal)
+                w.directWet = caravan.lineWet(r.Position, goal)
+                if not w.directWet then
+                    w.waypoints = nil
+                    h:MoveTo(goal)
+                end
             end
-            return d
+            if not w.directWet then return d end
         end
         if not w.waypoints or now - w.computedAt > CFG.PATH_RECOMPUTE
             or (w.goal and (w.goal - goal).Magnitude > CFG.PATH_GOAL_SHIFT) then
             w.computedAt, w.goal = now, goal
-            local path = PathfindingService:CreatePath({ AgentRadius = 2.5, AgentHeight = 5, AgentCanJump = true, WaypointSpacing = 6 })
+            local path = PathfindingService:CreatePath({
+                AgentRadius = 2.5, AgentHeight = 5, AgentCanJump = true, WaypointSpacing = 6,
+                Costs = { Water = math.huge }, -- never route through terrain water
+            })
             local ok = pcall(function() path:ComputeAsync(r.Position, goal) end)
             if not caravan.enabled then return math.huge end -- toggled off while ComputeAsync yielded
             if ok and path.Status == Enum.PathStatus.Success then
                 w.waypoints, w.idx = path:GetWaypoints(), 2
             else
                 w.waypoints = nil
-                caravan.log("path_fail", { to = goal, status = ok and path.Status or "error" })
+                w.noPathWet = caravan.lineWet(r.Position, goal) -- checked once per recompute
+                caravan.log("path_fail", { to = goal, status = ok and path.Status or "error", wet = w.noPathWet })
             end
         end
         local wps = w.waypoints
         if not wps then
-            h:MoveTo(goal)
+            -- No path: walk straight only if that stays dry, otherwise wait for the next recompute
+            if not w.noPathWet then h:MoveTo(goal) else h:MoveTo(r.Position) end
             return d
         end
         local wp = wps[w.idx]
@@ -13592,10 +13641,22 @@ do
             wp = wps[w.idx]
         end
         if wp then
+            if farm.isWaterAt(wp.Position) then
+                w.waypoints = nil -- path dipped into water: hold and recompute
+                h:MoveTo(r.Position)
+                return d
+            end
             if wp.Action == Enum.PathWaypointAction.Jump then h.Jump = true end
             h:MoveTo(wp.Position)
         end
         return d
+    end
+
+    -- Natural-mode goal fix-up: a goal on water falls back to `alt` (or nil when both are wet)
+    function caravan.dryGoal(goal, alt)
+        if goal and not farm.isWaterAt(goal) then return goal end
+        if alt and not farm.isWaterAt(alt) then return alt end
+        return nil
     end
 
     -- Get within reach of a part: teleport mode stands there facing it, natural mode walks there
@@ -13609,7 +13670,7 @@ do
             end
             return true
         end
-        local goal = caravan.standPoint(part.Position, CFG.TARGET_OFFSET)
+        local goal = caravan.dryGoal(caravan.standPoint(part.Position, CFG.TARGET_OFFSET), part.Position)
         if not goal then return false end
         caravan.walkTo(goal, now)
         local r = caravan.root()
@@ -13759,7 +13820,8 @@ do
         end
         local r = caravan.root()
         if caravan.natural then
-            caravan.walkTo(caravan.scareGoal(st, pos), now)
+            local goal = caravan.dryGoal(caravan.scareGoal(st, pos), pos)
+            if goal then caravan.walkTo(goal, now) else caravan.stopWalk() end
             if r and caravan.flatDist(r.Position, pos) <= CFG.SCARE_RADIUS then caravan.tryMoo(now, st) end
         else
             caravan.standAt(pos, CFG.GUIDE_OFFSET)
