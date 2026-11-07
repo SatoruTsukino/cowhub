@@ -2,16 +2,18 @@
 local SETTINGS = {
     DESTROY = false, -- true: remove the running Bait Drop ESP and stop (nothing new starts)
 
-    DOG_BONE = true, -- highlight dropped Dog Bones   (item id "Chicken" -> model "ChickenDrop")
-    CATFISH = true, -- highlight dropped Catfish      (item id "Catfish" -> model "CatfishDrop")
+    DOG_BONE = true, -- highlight every Dog Bone model   (item id "Chicken")
+    CATFISH = true, -- highlight every Catfish model    (item id "Catfish")
+    LOG = true, -- print each found bait model to the console
 }
 -- ==========================================================================
 
 -- Bait Drop ESP
--- Highlights companion bait dropped on the ground anywhere in workspace.
--- ItemModels.Create names a world drop "<ItemId>Drop" and sets attribute ItemId.
--- "Dog Bone" is the display name of item "Chicken" (ItemAppearance), so ChickenDrop is the bone.
--- Exact-name match skips AnimalTamingMeal (same item model, renamed, inside a pet being fed).
+-- Highlights every companion bait model anywhere in workspace: dropped on the ground,
+-- being eaten by a pet (AnimalTamingMeal), or anywhere else.
+-- ItemModels.Create / DropGeometry.CreateItem stamp attribute ItemId on every item model,
+-- so the match is ItemId (any model name). "<ItemId>Drop" name is a fallback for models
+-- without the attribute. "Dog Bone" is the display name of item "Chicken" (ItemAppearance).
 
 if not game:IsLoaded() then
     game.Loaded:Wait()
@@ -35,9 +37,10 @@ while not plr do
 end
 
 local KINDS = {
-    ChickenDrop = { itemId = "Chicken", label = "🦴 Dog Bone", color = Color3.fromRGB(255, 225, 160), on = SETTINGS.DOG_BONE == true },
-    CatfishDrop = { itemId = "Catfish", label = "🐟 Catfish", color = Color3.fromRGB(80, 200, 255), on = SETTINGS.CATFISH == true },
+    Chicken = { label = "🦴 Dog Bone", color = Color3.fromRGB(255, 225, 160), on = SETTINGS.DOG_BONE == true },
+    Catfish = { label = "🐟 Catfish", color = Color3.fromRGB(80, 200, 255), on = SETTINGS.CATFISH == true },
 }
+local DROP_NAMES = { ChickenDrop = "Chicken", CatfishDrop = "Catfish" }
 
 local baitESP = {
     visuals = {}, -- [Model] = { highlight, billboard, label, targetPart, kind, lastDist }
@@ -45,11 +48,9 @@ local baitESP = {
 }
 
 local function kindOf(inst)
-    local kind = KINDS[inst.Name]
-    if kind and kind.on and inst:IsA("Model") and inst:GetAttribute("ItemId") == kind.itemId then
-        return kind
-    end
-    return nil
+    if not inst:IsA("Model") then return nil end
+    local kind = KINDS[inst:GetAttribute("ItemId") or DROP_NAMES[inst.Name]]
+    return kind and kind.on and kind or nil
 end
 
 local function removeVisual(model)
@@ -92,23 +93,28 @@ local function attach(model)
     label.TextStrokeTransparency = 0
     label.TextSize = 14
     label.Font = Enum.Font.GothamBold
-    label.Text = kind.label
+    local text = kind.label .. (model.Name == "AnimalTamingMeal" and " (eating)" or "")
+    label.Text = text
     label.Parent = billboard
     billboard.Parent = model
+
+    if SETTINGS.LOG then
+        print("[BaitDropESP] found " .. text .. " -> " .. model:GetFullName())
+    end
 
     baitESP.visuals[model] = {
         highlight = highlight,
         billboard = billboard,
         label = label,
         targetPart = targetPart,
-        kind = kind,
+        text = text,
         lastDist = -1,
     }
 end
 
--- Drop models get their parts before parenting, but retry once in case they stream in late.
+-- Item models get parts + ItemId before parenting; retry once in case parts stream in late.
 local function onAdded(inst)
-    if not KINDS[inst.Name] then return end
+    if not kindOf(inst) then return end
     attach(inst)
     if not baitESP.visuals[inst] then
         task.delay(0.2, function()
@@ -130,7 +136,7 @@ function baitESP.destroy()
     end
 end
 
-if not (KINDS.ChickenDrop.on or KINDS.CatfishDrop.on) then
+if not (KINDS.Chicken.on or KINDS.Catfish.on) then
     return nil
 end
 
@@ -161,11 +167,17 @@ baitESP.conns[#baitESP.conns + 1] = RunService.Heartbeat:Connect(function()
             local dist = math.floor((rPos - visual.targetPart.Position).Magnitude)
             if dist ~= visual.lastDist then
                 visual.lastDist = dist
-                visual.label.Text = visual.kind.label .. "\n[" .. dist .. " studs]"
+                visual.label.Text = visual.text .. "\n[" .. dist .. " studs]"
             end
         end
     end
 end)
+
+if SETTINGS.LOG then
+    local n = 0
+    for _ in pairs(baitESP.visuals) do n += 1 end
+    print("[BaitDropESP] running; " .. n .. " bait model(s) in workspace now")
+end
 
 _G.BaitDropESP = baitESP
 return baitESP
