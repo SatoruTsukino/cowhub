@@ -45,6 +45,11 @@ When a caravan spawns, the hub scares the guide until it stops, loots every crat
 - Pace: about 9 fear/s solo (15 per ~1.65 s). The script joined 61 s into the road phase, plus a 22 s walk-in, and reached 662/1000 → Escaped. A full 180 s at ~160 s in range ≈ 1450, so **solo reaches the goal if running from `Started`**.
 - 5× `FrightMissed` (server Distance 16–18) while the client measured ~3.7 to the guide model. The server measures against something else. `miss_probe` now logs model vs route-pose distances.
 
+### UAT run 4 findings (2026-11-06, caravan_20261106_181609, full AFK caravan)
+- **Scare solved solo:** 1004/1000 → Stopped (14–16 per Grumpy moo, Herd 2). 1 FrightMissed. `miss_probe`: server 20.0, model 3.7, route pose 6.9, so the server's guide reference is neither.
+- **Crates solved:** 3/3 `CrateOpened` (held kick, Target = crate model, Ok:true). One `KickCooldown` retry. Reveal closed via `KeepRaiding`.
+- **Barrels weak:** 232 bites rotated across 4 barrels (1 s `CowBiteCooldown` each) but only 16 `Loot` events. User: grazing is continuous on one selected hitbox, with no need to move between bites. The farm now locks one barrel until it empties, then the nearest. `in_other` logs unknown replies while grazing to find the chomp result.
+
 ### Unknowns (Plan 1.2 resolves; manual search list in SEARCH.md)
 - U1: ~~Which remote delivers `HandleEvent` payloads~~ → `Remotes.ClientEvent("Caravan", payload)` (run 3).
 - U2: ~~Stomp~~ → replaced by Grumpy Moo (user decision 2026-11-05): `MooRequest:FireServer("Grumpy")`. Confirmed from CowExpressions: `MooStyles.Grumpy` has no Earned/Hidden/Disabled gate, and `IsMooStyle("Grumpy")` is true. The server should credit it as Action `GrumpyMoo` (+7); the script still falls back to a plain Moo if it is credited as Moo.

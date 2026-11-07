@@ -412,6 +412,9 @@ local function watchIncoming(rem)
             if kr and kr.RequestId >= 100000 then
                 if kr.Ok == true then S.stats.kickOk += 1 else S.stats.kickBad += 1 end
                 log("kick_result", { remote = rem:GetFullName(), args = { ... } })
+            elseif S.debug and S.lastPhase == "Stopped" and S.barrelLock then
+                -- Unknown reply while grazing: look for the ChompRequest result shape
+                log("in_other", { remote = rem:GetFullName(), args = { ... } })
             end
             return
         end
@@ -786,6 +789,7 @@ local function onPhase(st, prev)
     if st and st.Phase == "OnRoad" and prev ~= "OnRoad" then
         S.stats.caravans += 1
         table.clear(S.barrelNext)
+        S.barrelLock = nil
     end
     if st and st.Phase == "Stopped" then S.stats.stopped += 1 end
     if S.debug and st and (st.Phase == "OnRoad" or st.Phase == "Stopped") then
@@ -834,23 +838,27 @@ local function lootStep(st, now)
         end
     end
     releaseKick("no_crate")
-    local best, bestId
-    local soonest, soonPart = math.huge, nil
-    for _, b in ipairs(S.barrels) do
-        if b.Parent then
-            local id = biteReady(b, now)
-            if id then best, bestId = b, id; break end
-            local nodeId = b:GetAttribute("CowBiteTargetId")
-            local t = S.barrelNext[nodeId] or 0
-            if t < soonest then soonest, soonPart = t, b end
+    -- Graze one barrel continuously (as a held graze does) instead of rotating: stay on the
+    -- locked barrel until it empties or disappears, then lock the nearest remaining one
+    local lock = S.barrelLock
+    if not (lock and lock.Parent and table.find(S.barrels, lock)) then
+        lock = nil
+        local r = getRoot()
+        local bestD = math.huge
+        for _, b in ipairs(S.barrels) do
+            if b.Parent then
+                local d = r and flatDist(r.Position, b.Position) or 0
+                if d < bestD then lock, bestD = b, d end
+            end
         end
+        S.barrelLock = lock
     end
-    local target = best or soonPart
-    if not target then
+    if not lock then
         S.status = "Looted · waiting for caravan to leave"
         return
     end
-    if approach(target, now) and best then tryBite(best, bestId, now) end
+    local id = biteReady(lock, now)
+    if approach(lock, now) and id then tryBite(lock, id, now) end
     local left = math.max(0, math.floor((st.LootEndsAt or 0) - serverNow()))
     S.status = string.format("Grazing barrels · %d left · %ds", #S.barrels, left)
 end
