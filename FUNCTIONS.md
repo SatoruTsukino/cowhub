@@ -169,6 +169,7 @@ Primary CowHub script containing autofarm engines, mining, dodging, auction scan
 | [5122](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5122) | `farm.hasWallBetween(startPos, endPos)` | Raycasts between character and target to detect walls. |
 | [5161](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5161) | `farm.checkForwardWall(rootPos, moveDir, checkDist)` | Subsystem helper / execution logic. |
 | [5227](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5227) | `farm.findClearEscapeDirection(rootPos)` | Subsystem helper / execution logic. |
+| [preview 5394](file:///Users/jsph/cowhub/luascripts/preview.lua#L5394) | `farm.isEdible(node)` | Grass node edible by the server's rule (`Available == true`); staging only (Plan 1.7). |
 | [5267](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5267) | `farm.processMovement(dt, now, rootPos)` | Controls character movement along farming patrol path. |
 | [5510](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5510) | `farm.processMobAura(now, rootPos)` | Dispatches auto-attacks against hostile mobs in aura range. |
 | [5618](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5618) | `farm.processGrassChomp(now, rootPos)` | Directs raycast grass harvesting toward nearest target. |
