@@ -1,4 +1,4 @@
--- Cow Hub [9e46b39] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [ec6e281] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -58,7 +58,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [9e46b39]",
+    Name = "Cow Hub [ec6e281]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -13584,13 +13584,45 @@ do
         caravan.setSprint(false)
     end
 
+    -- Water under pos: terrain voxels around foot height (a downward ray alone missed the river
+    -- when trees / bridges / invisible parts sat above it), or a ray hit on Water material
+    local waterRay = RaycastParams.new()
+    waterRay.FilterType = Enum.RaycastFilterType.Exclude
+    function caravan.wetAt(pos)
+        local ok, wet = pcall(function()
+            local lo = Vector3.new(pos.X - 2, pos.Y - 6, pos.Z - 2)
+            local hi = Vector3.new(pos.X + 2, pos.Y + 2, pos.Z + 2)
+            local region = Region3.new(lo, hi):ExpandToGrid(4)
+            local mats, occ = workspace.Terrain:ReadVoxels(region, 4)
+            local size = mats.Size
+            for x = 1, size.X do
+                for y = 1, size.Y do
+                    for z = 1, size.Z do
+                        if mats[x][y][z] == Enum.Material.Water and occ[x][y][z] > 0.3 then return true end
+                    end
+                end
+            end
+            return false
+        end)
+        if ok and wet then return true end
+        local c = resolveCharacter()
+        waterRay.FilterDescendantsInstances = c and { c } or {}
+        local hit = workspace:Raycast(pos + Vector3.new(0, 4, 0), Vector3.new(0, -12, 0), waterRay)
+        return hit ~= nil and hit.Material == Enum.Material.Water
+    end
+
+    function caravan.swimming()
+        local h = caravan.humanoid()
+        return h ~= nil and h:GetState() == Enum.HumanoidStateType.Swimming
+    end
+
     -- True when walking straight from a to b crosses terrain water (sampled every few studs)
     function caravan.lineWet(a, b)
         local flat = Vector3.new(b.X - a.X, 0, b.Z - a.Z)
         local n = math.max(1, math.ceil(flat.Magnitude / CFG.WATER_SAMPLE))
         for i = 1, n do
             local t = i / n
-            if farm.isWaterAt(a:Lerp(b, t)) then return true end
+            if caravan.wetAt(a:Lerp(b, t)) then return true end
         end
         return false
     end
@@ -13601,6 +13633,32 @@ do
         if not (h and r) then return math.huge end
         local w = caravan.walk
         local d = caravan.flatDist(r.Position, goal)
+        -- In the water: swim back to the last dry spot, then re-path from there
+        if caravan.swimming() then
+            if not w.swimSince then
+                w.swimSince = now
+                w.swims = (w.swims or 0) + 1
+                local hit = workspace:Raycast(r.Position + Vector3.new(0, 25, 0), Vector3.new(0, -60, 0), wallRaycastParams)
+                caravan.log("swim", {
+                    at = r.Position, lastDry = caravan.lastDry, state = w.state,
+                    floor = h.FloorMaterial.Name, voxelWet = caravan.wetAt(r.Position),
+                    rayHit = hit and hit.Instance or nil, rayMat = hit and hit.Material.Name or nil,
+                })
+            end
+            w.waypoints, w.lastGoal = nil, nil
+            caravan.setSprint(false)
+            h:MoveTo(caravan.lastDry or goal)
+            w.state = "swim_out"
+            caravan.logWalk(now, d)
+            return d
+        end
+        if w.swimSince then
+            w.swimSince = nil
+            w.computedAt = 0 -- fresh path from the bank
+        end
+        if h.FloorMaterial ~= Enum.Material.Air and h.FloorMaterial ~= Enum.Material.Water then
+            caravan.lastDry = r.Position
+        end
         caravan.updateSprint(d > CFG.SPRINT_FAR)
         -- Straight line only when it stays dry (checked once per goal change / second)
         if d <= CFG.PATH_DIRECT then
@@ -13652,7 +13710,7 @@ do
         -- waypoint; if the rest is wet, hold until the regular recompute instead of every step.
         if wp and w.checkedIdx ~= w.idx then
             local i = w.idx
-            while wps[i] and farm.isWaterAt(wps[i].Position) do i += 1 end
+            while wps[i] and caravan.wetAt(wps[i].Position) do i += 1 end
             if wps[i] then
                 if i ~= w.idx then w.skipped += i - w.idx end
                 w.idx = i
@@ -13683,16 +13741,16 @@ do
         caravan.log("walk", {
             state = w.state, dist = d, sprint = caravan.sprinting, refilling = caravan.refilling,
             stamina = plr:GetAttribute("Stamina"), staminaMax = caravan.staminaMax,
-            sprintActive = plr:GetAttribute("SprintActive"), skipped = w.skipped, lead = caravan.interceptLead,
+            sprintActive = plr:GetAttribute("SprintActive"), skipped = w.skipped, lead = caravan.interceptLead, swims = w.swims,
             wps = w.waypoints and #w.waypoints or 0, idx = w.idx,
-            inWater = r and farm.isWaterAt(r.Position) or nil,
+            inWater = r and caravan.wetAt(r.Position) or nil,
         })
     end
 
     -- Natural-mode goal fix-up: a goal on water falls back to `alt` (or nil when both are wet)
     function caravan.dryGoal(goal, alt)
-        if goal and not farm.isWaterAt(goal) then return goal end
-        if alt and not farm.isWaterAt(alt) then return alt end
+        if goal and not caravan.wetAt(goal) then return goal end
+        if alt and not caravan.wetAt(alt) then return alt end
         return nil
     end
 
@@ -13723,12 +13781,23 @@ do
         if far > CFG.PATH_DIRECT and st.Speed and st.Speed > 0 then
             local h = caravan.humanoid()
             local cowSpeed = math.max(CFG.INTERCEPT_SPEED, h and h.WalkSpeed or 0)
+            -- Keep the previous target while it is still reachable: a flipping target re-paths
+            -- across rivers
+            -- The same route point: its lead shrinks as the caravan drives toward it
+            local prev = caravan.interceptLead
+            if prev and prev > 0 and caravan.interceptAt then
+                local lead = prev - st.Speed * (os.clock() - caravan.interceptAt)
+                local cf = lead > 0 and caravan.routePose(st, lead)
+                if cf and caravan.flatDist(r.Position, cf.Position) * CFG.INTERCEPT_DETOUR / cowSpeed <= lead / st.Speed then
+                    return cf.Position
+                end
+            end
             for lead = CFG.INTERCEPT_STEP, CFG.INTERCEPT_MAX, CFG.INTERCEPT_STEP do
                 local cf = caravan.routePose(st, lead)
                 if not cf then break end
                 local walk = caravan.flatDist(r.Position, cf.Position) * CFG.INTERCEPT_DETOUR / cowSpeed
                 if walk <= lead / st.Speed then
-                    caravan.interceptLead = lead
+                    caravan.interceptLead, caravan.interceptAt = lead, os.clock()
                     return cf.Position
                 end
             end
