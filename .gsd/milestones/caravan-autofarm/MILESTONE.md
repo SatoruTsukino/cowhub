@@ -1,13 +1,13 @@
 ---
 name: caravan-autofarm
 version: v0.1
-status: planning
+status: complete
 created: 2026-11-05T00:00:00Z
 ---
 
 # Milestone: Caravan Autofarm
 
-> **Status:** 🧪 Plan 1.3 built in preview.lua (staging); hub UAT (Plan 1.4) pending.
+> **Status:** ✅ Shipped: caravan raid in cowhub.lua (production) and preview.lua (staging).
 > Prototype in `luascripts/caravan_autofarm.lua` first, then port into `preview.lua` (theme `frost`), then promote to cowhub via `scripts/promote-preview.py`.
 
 ## Vision
@@ -90,4 +90,4 @@ When a caravan spawns, the hub scares the guide until it stops, loots every crat
 - [x] Plan 1.1: Standalone `luascripts/caravan_autofarm.lua` (watcher + probe + experimental farm)
 - [x] Plan 1.2: Standalone UAT (resolves U1–U5, proves farm) — passed run 5
 - [x] Plan 1.3: Integrate into preview.lua (built 10ea309; hub UAT pending)
-- [ ] Plan 1.4: Hub UAT + promote to cowhub
+- [x] Plan 1.4: Hub UAT + promote to cowhub (hub UAT run 1 passed; promoted 2026-11-07)
