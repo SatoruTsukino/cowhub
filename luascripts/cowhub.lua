@@ -1,4 +1,4 @@
--- Cow Hub [24a6c3a] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [d9a2c91] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -58,7 +58,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [24a6c3a]",
+    Name = "Cow Hub [d9a2c91]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -13033,9 +13033,20 @@ do
         PATH_GOAL_SHIFT = 12,
         WAYPOINT_REACH = 3,
         SPRINT_FAR = 14,
+        SPRINT_RESUME = 0.9,     -- start sprinting at >= 90% stamina
+        SPRINT_STOP = 0.15,      -- stop at <= 15%, walk to refill
+        STAMINA_MIN_MAX = 4,     -- Config.Character.BaseSprintCapacity; upgrades raise it
+        WATER_SAMPLE = 4,        -- studs between water checks on a straight walk
         INTERCEPT_SPEED = 18,
-        INTERCEPT_MAX = 250,
+        INTERCEPT_STEP = 20,     -- route samples ahead of the guide (studs)
+        INTERCEPT_DETOUR = 1.3,  -- path length vs straight line
+        INTERCEPT_MAX = 800,     -- furthest route point ahead to consider
         RETURN_TIMEOUT = 90,
+        STUCK_TIME = 1.5,        -- seconds with < STUCK_MOVE studs of progress while walking
+        STUCK_MOVE = 2,
+        STUCK_SIDESTEP = 6,      -- jump and step this far sideways, then re-path
+        STUCK_DODGE = 0.8,
+        BARN_POS = Vector3.new(-528, 705, 564), -- natural mode starts and ends here: dry land, away from the river
         GRUMPY_MISSES = 3,
         GRUMPY_UNANSWERED = 5,   -- in-range Grumpy sends with no Fear rise -> plain Moo
         FEAR_LOG_INTERVAL = 5,
@@ -13064,7 +13075,7 @@ do
     caravan.hold = nil              -- { part, since, lastKeep } during a held kick
     caravan.kickBackoff = 0
     caravan.kickId = 100000         -- above the game's own RequestId counter
-    caravan.walk = { waypoints = nil, idx = 0, goal = nil, computedAt = 0, lastGoal = nil, lastMoveAt = 0 }
+    caravan.walk = { waypoints = nil, idx = 0, goal = nil, computedAt = 0, lastGoal = nil, lastMoveAt = 0, skipped = 0, state = "idle" }
     caravan.sprinting = false
     caravan.returningSince = nil
     caravan.savedCF = nil
@@ -13115,6 +13126,10 @@ do
             r.AssemblyLinearVelocity = Vector3.zero
             r.AssemblyAngularVelocity = Vector3.zero
         end)
+    end
+
+    function caravan.teleportBarn()
+        caravan.teleport(CFrame.new(CFG.BARN_POS))
     end
 
     function caravan.standAt(pos, offset)
@@ -13359,47 +13374,161 @@ do
     function caravan.setSprint(on)
         if caravan.sprinting == on then return end
         caravan.sprinting = on
+        caravan.lastSprintSend = os.clock()
         caravan.fire("SprintRequest", on)
+    end
+
+    -- Sprint while far, but walk to refill stamina between bursts: start at >= 90% of the
+    -- observed max, stop at <= 15%. Never asks at Stamina <= 0 (the game refuses it too).
+    function caravan.updateSprint(far)
+        local stamina = tonumber(plr:GetAttribute("Stamina"))
+        if not stamina then
+            caravan.setSprint(far)
+            return
+        end
+        caravan.staminaMax = math.max(caravan.staminaMax or CFG.STAMINA_MIN_MAX, stamina)
+        local frac = stamina / caravan.staminaMax
+        if caravan.sprinting and (stamina <= 0 or frac <= CFG.SPRINT_STOP) then
+            caravan.refilling = true
+        elseif frac >= CFG.SPRINT_RESUME then
+            caravan.refilling = false
+        end
+        local want = far and not caravan.refilling and stamina > 0
+        caravan.setSprint(want)
+        -- Server dropped our sprint (SprintActive false): re-send like InputController does
+        if want and plr:GetAttribute("SprintActive") == false and os.clock() - (caravan.lastSprintSend or 0) >= 0.4 then
+            caravan.lastSprintSend = os.clock()
+            caravan.fire("SprintRequest", true)
+        end
     end
 
     function caravan.stopWalk()
         local h, r = caravan.humanoid(), caravan.root()
         if h and r then pcall(function() h:MoveTo(r.Position) end) end
         caravan.walk.waypoints, caravan.walk.lastGoal = nil, nil
+        caravan.walk.stuckPos, caravan.walk.dodgeUntil = nil, nil
         caravan.setSprint(false)
     end
 
-    -- Walk toward goal; returns flat distance to it
+    -- Water under pos: terrain voxels around foot height (a downward ray alone missed the river
+    -- when trees / bridges / invisible parts sat above it), or a ray hit on Water material
+    local waterRay = RaycastParams.new()
+    waterRay.FilterType = Enum.RaycastFilterType.Exclude
+    function caravan.wetAt(pos)
+        local ok, wet = pcall(function()
+            local lo = Vector3.new(pos.X - 2, pos.Y - 6, pos.Z - 2)
+            local hi = Vector3.new(pos.X + 2, pos.Y + 2, pos.Z + 2)
+            local region = Region3.new(lo, hi):ExpandToGrid(4)
+            local mats, occ = workspace.Terrain:ReadVoxels(region, 4)
+            local size = mats.Size
+            for x = 1, size.X do
+                for y = 1, size.Y do
+                    for z = 1, size.Z do
+                        if mats[x][y][z] == Enum.Material.Water and occ[x][y][z] > 0.3 then return true end
+                    end
+                end
+            end
+            return false
+        end)
+        if ok and wet then return true end
+        local c = resolveCharacter()
+        waterRay.FilterDescendantsInstances = c and { c } or {}
+        local hit = workspace:Raycast(pos + Vector3.new(0, 4, 0), Vector3.new(0, -12, 0), waterRay)
+        return hit ~= nil and hit.Material == Enum.Material.Water
+    end
+
+    function caravan.swimming()
+        local h = caravan.humanoid()
+        return h ~= nil and h:GetState() == Enum.HumanoidStateType.Swimming
+    end
+
+    -- True when walking straight from a to b crosses terrain water (sampled every few studs)
+    function caravan.lineWet(a, b)
+        local flat = Vector3.new(b.X - a.X, 0, b.Z - a.Z)
+        local n = math.max(1, math.ceil(flat.Magnitude / CFG.WATER_SAMPLE))
+        for i = 1, n do
+            local t = i / n
+            if caravan.wetAt(a:Lerp(b, t)) then return true end
+        end
+        return false
+    end
+
+    -- Walk toward goal, never into water; returns flat distance to it
     function caravan.walkTo(goal, now)
         local h, r = caravan.humanoid(), caravan.root()
         if not (h and r) then return math.huge end
         local w = caravan.walk
         local d = caravan.flatDist(r.Position, goal)
-        caravan.setSprint(d > CFG.SPRINT_FAR)
+        -- In the water: swim back to the last dry spot, then re-path from there
+        if caravan.swimming() then
+            if not w.swimSince then
+                w.swimSince = now
+                w.swims = (w.swims or 0) + 1
+                local hit = workspace:Raycast(r.Position + Vector3.new(0, 25, 0), Vector3.new(0, -60, 0), wallRaycastParams)
+                caravan.log("swim", {
+                    at = r.Position, lastDry = caravan.lastDry, state = w.state,
+                    floor = h.FloorMaterial.Name, voxelWet = caravan.wetAt(r.Position),
+                    rayHit = hit and hit.Instance or nil, rayMat = hit and hit.Material.Name or nil,
+                })
+            end
+            w.waypoints, w.lastGoal = nil, nil
+            caravan.setSprint(false)
+            h:MoveTo(caravan.lastDry or goal)
+            w.state = "swim_out"
+            caravan.logWalk(now, d)
+            return d
+        end
+        if w.swimSince then
+            w.swimSince = nil
+            w.computedAt = 0 -- fresh path from the bank
+        end
+        if h.FloorMaterial ~= Enum.Material.Air and h.FloorMaterial ~= Enum.Material.Water then
+            caravan.lastDry = r.Position
+        end
+        if caravan.unstuck(h, r, goal, d, now) then
+            caravan.logWalk(now, d)
+            return d
+        end
+        caravan.updateSprint(d > CFG.SPRINT_FAR)
+        -- Straight line only when it stays dry (checked once per goal change / second)
         if d <= CFG.PATH_DIRECT then
-            w.waypoints = nil
             if not w.lastGoal or (w.lastGoal - goal).Magnitude > 0.5 or now - w.lastMoveAt > 1 then
                 w.lastGoal, w.lastMoveAt = goal, now
-                h:MoveTo(goal)
+                w.directWet = caravan.lineWet(r.Position, goal)
+                if not w.directWet then
+                    w.waypoints = nil
+                    h:MoveTo(goal)
+                end
             end
-            return d
+            if not w.directWet then
+                w.state = "direct"
+                caravan.logWalk(now, d)
+                return d
+            end
         end
         if not w.waypoints or now - w.computedAt > CFG.PATH_RECOMPUTE
             or (w.goal and (w.goal - goal).Magnitude > CFG.PATH_GOAL_SHIFT) then
             w.computedAt, w.goal = now, goal
-            local path = PathfindingService:CreatePath({ AgentRadius = 2.5, AgentHeight = 5, AgentCanJump = true, WaypointSpacing = 6 })
+            local path = PathfindingService:CreatePath({
+                AgentRadius = 2.5, AgentHeight = 5, AgentCanJump = true, WaypointSpacing = 6,
+                Costs = { Water = math.huge }, -- never route through terrain water
+            })
             local ok = pcall(function() path:ComputeAsync(r.Position, goal) end)
             if not caravan.enabled then return math.huge end -- toggled off while ComputeAsync yielded
             if ok and path.Status == Enum.PathStatus.Success then
-                w.waypoints, w.idx = path:GetWaypoints(), 2
+                w.waypoints, w.idx, w.checkedIdx = path:GetWaypoints(), 2, nil
             else
                 w.waypoints = nil
-                caravan.log("path_fail", { to = goal, status = ok and path.Status or "error" })
+                w.noPathWet = caravan.lineWet(r.Position, goal) -- checked once per recompute
+                caravan.log("path_fail", { to = goal, status = ok and path.Status or "error", wet = w.noPathWet })
             end
         end
         local wps = w.waypoints
         if not wps then
-            h:MoveTo(goal)
+            -- No path: walk straight only if that stays dry, otherwise wait for the next recompute
+            if not w.noPathWet then h:MoveTo(goal) else h:MoveTo(r.Position) end
+            w.state = w.noPathWet and "hold_nopath" or "nopath_direct"
+            caravan.logWalk(now, d)
             return d
         end
         local wp = wps[w.idx]
@@ -13407,11 +13536,86 @@ do
             w.idx += 1
             wp = wps[w.idx]
         end
+        -- A waypoint over water (shore edge): skip ahead to the next dry one. Checked once per
+        -- waypoint; if the rest is wet, hold until the regular recompute instead of every step.
+        if wp and w.checkedIdx ~= w.idx then
+            local i = w.idx
+            while wps[i] and caravan.wetAt(wps[i].Position) do i += 1 end
+            if wps[i] then
+                if i ~= w.idx then w.skipped += i - w.idx end
+                w.idx = i
+                wp = wps[i]
+                w.checkedIdx = i
+            else
+                w.state = "hold_wet"
+                h:MoveTo(r.Position)
+                caravan.logWalk(now, d)
+                return d
+            end
+        end
         if wp then
             if wp.Action == Enum.PathWaypointAction.Jump then h.Jump = true end
             h:MoveTo(wp.Position)
         end
+        w.state = "path"
+        caravan.logWalk(now, d)
         return d
+    end
+
+    -- Blocked while walking (an NPC or prop the path ignores): jump and side-step, then re-path.
+    -- Returns true while the side-step runs.
+    function caravan.unstuck(h, r, goal, d, now)
+        local w = caravan.walk
+        if w.dodgeUntil then
+            if now < w.dodgeUntil then
+                h:MoveTo(w.dodgeTo)
+                return true
+            end
+            w.dodgeUntil, w.computedAt, w.lastGoal, w.waypoints = nil, 0, nil, nil
+        end
+        local walking = w.state == "path" or w.state == "direct" or w.state == "nopath_direct"
+        -- Fresh window after a pause (scaring, blocked, holds): standing still there is intended
+        if not walking or d <= CFG.WAYPOINT_REACH * 2 or now - (w.lastCall or 0) > 0.5
+            or not w.stuckPos or (r.Position - w.stuckPos).Magnitude > CFG.STUCK_MOVE then
+            w.stuckPos, w.stuckAt, w.lastCall = r.Position, now, now
+            return false
+        end
+        w.lastCall = now
+        if now - w.stuckAt < CFG.STUCK_TIME then return false end
+        local fwd = Vector3.new(goal.X - r.Position.X, 0, goal.Z - r.Position.Z)
+        if fwd.Magnitude < 0.1 then fwd = r.CFrame.LookVector end
+        w.stucks = (w.stucks or 0) + 1
+        local side = Vector3.new(-fwd.Z, 0, fwd.X).Unit * CFG.STUCK_SIDESTEP * (w.stucks % 2 == 0 and -1 or 1)
+        local to = r.Position + side
+        if caravan.wetAt(to) then to = r.Position - side end
+        w.dodgeTo, w.dodgeUntil, w.stuckPos = to, now + CFG.STUCK_DODGE, nil
+        h.Jump = true
+        h:MoveTo(to)
+        w.state = "unstuck"
+        caravan.log("stuck", { at = r.Position, to = to, dist = d, count = w.stucks })
+        return true
+    end
+
+    -- Natural-mode diagnostics every 5 s: how it walks, sprint and stamina
+    function caravan.logWalk(now, d)
+        local w = caravan.walk
+        if not caravan.debug or now - (w.lastLog or 0) < CFG.FEAR_LOG_INTERVAL then return end
+        w.lastLog = now
+        local r = caravan.root()
+        caravan.log("walk", {
+            state = w.state, dist = d, sprint = caravan.sprinting, refilling = caravan.refilling,
+            stamina = plr:GetAttribute("Stamina"), staminaMax = caravan.staminaMax,
+            sprintActive = plr:GetAttribute("SprintActive"), skipped = w.skipped, lead = caravan.interceptLead, swims = w.swims, stucks = w.stucks,
+            wps = w.waypoints and #w.waypoints or 0, idx = w.idx,
+            inWater = r and caravan.wetAt(r.Position) or nil,
+        })
+    end
+
+    -- Natural-mode goal fix-up: a goal on water falls back to `alt` (or nil when both are wet)
+    function caravan.dryGoal(goal, alt)
+        if goal and not caravan.wetAt(goal) then return goal end
+        if alt and not caravan.wetAt(alt) then return alt end
+        return nil
     end
 
     -- Get within reach of a part: teleport mode stands there facing it, natural mode walks there
@@ -13425,24 +13629,48 @@ do
             end
             return true
         end
-        local goal = caravan.standPoint(part.Position, CFG.TARGET_OFFSET)
+        local goal = caravan.dryGoal(caravan.standPoint(part.Position, CFG.TARGET_OFFSET), part.Position)
         if not goal then return false end
         caravan.walkTo(goal, now)
         local r = caravan.root()
         return r ~= nil and caravan.flatDist(r.Position, part.Position) <= CFG.ACT_REACH
     end
 
-    -- Natural mode, OnRoad: beside the guide, or an intercept point ahead on the route when far
+    -- Natural mode, OnRoad: beside the guide, or, when far, the nearest route point ahead that
+    -- the cow reaches before the caravan does (walk time <= caravan time). A fixed lead ahead
+    -- chased a point running away on routes that bend away from the cow.
     function caravan.scareGoal(st, gp)
         local r = caravan.root()
         local far = r and caravan.flatDist(r.Position, gp) or 0
-        local lead = 1
-        if far > CFG.PATH_DIRECT and st.Speed then
-            lead = math.min(CFG.INTERCEPT_MAX, st.Speed * far / CFG.INTERCEPT_SPEED)
+        if far > CFG.PATH_DIRECT and st.Speed and st.Speed > 0 then
+            local h = caravan.humanoid()
+            local cowSpeed = math.max(CFG.INTERCEPT_SPEED, h and h.WalkSpeed or 0)
+            -- Keep the previous target while it is still reachable: a flipping target re-paths
+            -- across rivers
+            -- The same route point: its lead shrinks as the caravan drives toward it
+            local prev = caravan.interceptLead
+            if prev and prev > 0 and caravan.interceptAt then
+                local lead = prev - st.Speed * (os.clock() - caravan.interceptAt)
+                local cf = lead > 0 and caravan.routePose(st, lead)
+                if cf and caravan.flatDist(r.Position, cf.Position) * CFG.INTERCEPT_DETOUR / cowSpeed <= lead / st.Speed then
+                    return cf.Position
+                end
+            end
+            for lead = CFG.INTERCEPT_STEP, CFG.INTERCEPT_MAX, CFG.INTERCEPT_STEP do
+                local cf = caravan.routePose(st, lead)
+                if not cf then break end
+                local walk = caravan.flatDist(r.Position, cf.Position) * CFG.INTERCEPT_DETOUR / cowSpeed
+                if walk <= lead / st.Speed then
+                    caravan.interceptLead, caravan.interceptAt = lead, os.clock()
+                    return cf.Position
+                end
+            end
+            caravan.interceptLead = 0 -- no point ahead in time: close in on the guide itself
+            return gp
         end
-        local cf = caravan.routePose(st, lead)
+        caravan.interceptLead = nil
+        local cf = caravan.routePose(st, 1)
         if not cf then return gp end
-        if lead > 1 then return cf.Position end
         return gp + cf.RightVector * CFG.GUIDE_OFFSET + cf.LookVector
     end
 
@@ -13543,17 +13771,17 @@ do
         if r then pcall(function() r.Anchored = false end) end -- Manatite / Mithril anchor the root
         if h then pcall(function() h:Move(Vector3.zero, false) end) end
         caravan.savedCF = r and r.CFrame
+        -- Natural mode walks from the barn: from the old spot the path could lead into the river
+        if caravan.natural then caravan.teleportBarn() end
         caravan.log("takeover", { natural = caravan.natural })
     end
 
     -- Back where the event started; the paused farms resume from there
     function caravan.handback(why)
         caravan.releaseKick("handback")
-        if caravan.natural then
-            caravan.stopWalk()
-        elseif caravan.savedCF then
-            caravan.teleport(caravan.savedCF)
-        end
+        if caravan.natural then caravan.stopWalk() end
+        -- Natural mode walked back to the barn; both modes then return to the start spot
+        if caravan.savedCF then caravan.teleport(caravan.savedCF) end
         caravan.setSprint(false)
         caravan.savedCF, caravan.returningSince, caravan.barrelLock = nil, nil, nil
         farm.lastStuckCheckPos, farm.lastStuckCheckTime, farm.currentTargetNode = nil, 0, nil
@@ -13575,7 +13803,8 @@ do
         end
         local r = caravan.root()
         if caravan.natural then
-            caravan.walkTo(caravan.scareGoal(st, pos), now)
+            local goal = caravan.dryGoal(caravan.scareGoal(st, pos), pos)
+            if goal then caravan.walkTo(goal, now) else caravan.stopWalk() end
             if r and caravan.flatDist(r.Position, pos) <= CFG.SCARE_RADIUS then caravan.tryMoo(now, st) end
         else
             caravan.standAt(pos, CFG.GUIDE_OFFSET)
@@ -13663,16 +13892,16 @@ do
                 caravan.status = "Waiting for caravan"
                 return
             end
-            -- Natural mode walks back first; the farms stay paused until it arrives
+            -- Natural mode walks back to the barn first; the farms stay paused until it arrives
             if caravan.natural and caravan.savedCF then
                 caravan.returningSince = caravan.returningSince or now
-                local d = caravan.walkTo(caravan.savedCF.Position, now)
+                local d = caravan.walkTo(CFG.BARN_POS, now)
                 if d > 4 and now - caravan.returningSince <= CFG.RETURN_TIMEOUT then
                     caravan.status = string.format("Walking back · %.0f studs", d)
                     return
                 end
             end
-            caravan.handback("caravan_left")
+            caravan.handback(caravan.returningSince and now - caravan.returningSince > CFG.RETURN_TIMEOUT and "walk_back_timeout" or "caravan_left")
             caravan.status = "Waiting for caravan"
             return
         end
@@ -13746,7 +13975,7 @@ CaravanTab:CreateToggle({
 })
 
 CaravanTab:CreateToggle({
-    Name = "Natural Mode (walk, no teleports)",
+    Name = "Natural Mode (walk from the barn)",
     CurrentValue = false,
     Flag = "Toggle_CaravanNatural",
     Callback = function(Value)
@@ -13784,6 +14013,11 @@ CaravanTab:CreateToggle({
     CurrentValue = false,
     Flag = "Toggle_CaravanLootOnly",
     Callback = function(Value) caravan.lootOnly = Value == true end,
+})
+
+CaravanTab:CreateButton({
+    Name = "Teleport to Barn",
+    Callback = function() caravan.teleportBarn() end,
 })
 
 CaravanTab:CreateToggle({
