@@ -55,6 +55,12 @@ When a caravan spawns, the hub scares the guide until it stops, loots every crat
 - **Bite reply found:** `ClientEvent("GrazeResult", {NodeId, Accepted, Reason, RequestId})`. Reasons: `Stored` (ok), `ChewCooldown` (player-level, so the bite rate is about 1/s whatever the barrel count), `OutsideCone` (not facing). The farm now counts these. ChewCooldown → +0.5 s wait; OutsideCone → re-stand facing the barrel (teleport mode). The noisy `in_other` probe was removed.
 - Full loop proven solo: Stopped from moos, 3/3 crates, barrels grazed, reveal closed, position restored.
 
+### Hub UAT run 1 (2026-11-07, caravan_20261107_041152, preview.lua staging)
+- Joined at fear 36 → 1012 → Stopped (78 GrumpyMoo Frights, ~3.6 studs). 3/3 crates (1 KickCooldown retry). 70 `Loot`; rejects 7 ChewCooldown, 1 OutsideCone, 1 Unavailable (barrel emptied at pack-up).
+- Reveal closed 3/3 (one `reveal_stuck` 0.1 s after opening; the next retry closed it).
+- Handback 31 s after Leaving: consistent with Natural walk-back. Teleport mode hands back on the next step.
+- Still to confirm by eye: the other farms pause during the raid and resume after.
+
 ### Unknowns (Plan 1.2 resolves; manual search list in SEARCH.md)
 - U1: ~~Which remote delivers `HandleEvent` payloads~~ → `Remotes.ClientEvent("Caravan", payload)` (run 3).
 - U2: ~~Stomp~~ → replaced by Grumpy Moo (user decision 2026-11-05): `MooRequest:FireServer("Grumpy")`. Confirmed from CowExpressions: `MooStyles.Grumpy` has no Earned/Hidden/Disabled gate, and `IsMooStyle("Grumpy")` is true. The server should credit it as Action `GrumpyMoo` (+7); the script still falls back to a plain Moo if it is credited as Moo.
