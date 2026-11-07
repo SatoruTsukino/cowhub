@@ -32,10 +32,10 @@ See every dog and barn cat. Highlight each one. Label shows overall trait (Dispo
 | PE-03 | Traits from `record.Personality`, missing ones recomputed from `Seed` with ported Sample; never write to game records/models | Must |
 | PE-04 | No `getgc` → highlight still works, label say "traits unavailable" | Must |
 | PE-05 | `_G.PetESP` re-exec guard + `destroy()` | Must |
-| PE-06 | Hub-ready: idempotent `enable()` / `disable()` for a toggle; standalone run auto-enables | Must |
+| PE-06 | Separate Dog / Cat toggles: `petESP.show.Dog` / `petESP.show.Cat` + `petESP.update()`; standalone run turns both on | Must |
 
 ## Non-goals
-- No hub UI toggle yet (after UAT).
+- No hub integration; standalone script only.
 - No highlight-cap juggling (Roblox ~31 Highlight limit).
 
 ## Unknowns
@@ -46,5 +46,5 @@ See every dog and barn cat. Highlight each one. Label shows overall trait (Dispo
 
 ### Phase 1: Standalone Pet ESP
 - [x] Plan 1.1: `luascripts/pet_esp.lua` — compile ok, 23 regs, 0/5000 Sample+Disposition mismatch vs decompiled module
-- [ ] Plan 1.2: In-game UAT (checkpoint) — test toggle: `_G.PetESP.disable()` clears all, `enable()` brings back
-- [ ] Plan 1.3 (later): port `petESP` table into `preview.lua` with Rayfield toggle
+- [ ] Plan 1.2: In-game UAT (checkpoint) — test toggles: `_G.PetESP.show.Cat = false; _G.PetESP.update()` drops cats only, dogs stay
+- Hub integration: not planned. Script stays standalone in `luascripts/` (user decision 2026-11-06).
