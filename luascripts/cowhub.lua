@@ -1,4 +1,4 @@
--- Cow Hub [7ea5225] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [4ae695a] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -19,7 +19,10 @@ if _G.CowHubLoaded then
         _G.CowHubChompCleanup = nil
     end
     pcall(function()
-        if _G.CowHubRayfield and _G.CowHubRayfield.Destroy then
+        -- gen2 library has no Destroy; the old window tears itself down via Unload
+        if _G.CowHubWindow and _G.CowHubWindow.Unload then
+            _G.CowHubWindow:Unload()
+        elseif _G.CowHubRayfield and _G.CowHubRayfield.Destroy then
             _G.CowHubRayfield:Destroy()
         end
     end)
@@ -34,6 +37,7 @@ if _G.CowHubLoaded then
     end
     _G.CowHubConnections = nil
     _G.CowHubRayfield = nil
+    _G.CowHubWindow = nil
     task.wait(0.3)
 end
 _G.CowHubLoaded = true
@@ -54,7 +58,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [7ea5225]",
+    Name = "Cow Hub [4ae695a]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -66,6 +70,7 @@ local Window = Rayfield:CreateWindow({
     },
     KeySystem = false
 })
+_G.CowHubWindow = Window
 
 local function safeNotify(opts)
     if not Window or not opts then return end
@@ -446,6 +451,13 @@ local chomp = {
     stats = { sent = 0, accepted = 0, rejected = 0, cooldownRejects = 0, reasons = {} },
     calories = { sessionGained = 0, startTime = 0, activeDuration = 0, lastTimestamp = 0, lastCalories = nil, ratePerHour = 0 },
     natural = { held = false, lastTap = 0, lastEngage = 0, notGrazingSince = nil, rearmAt = 0, lastGrazing = nil, lastGameResult = 0, input = nil, lastScan = -math.huge, engaged = false },
+}
+
+-- Caravan raid (Plan 1.3). Declared early: the heartbeat, chomp.fire and the store teleport
+-- read caravan.active, the one gate that hands the character to the caravan farm
+local caravan = {
+    enabled = false,
+    active = false,
 }
 
 local dodge = {
@@ -1171,9 +1183,11 @@ function afkRelog.saveState()
     end
 
     if not root or not char then return false end
-    local pos = getRootPos(root)
+    -- Mid caravan raid: save where the raid started, not the convoy
+    local raidCF = caravan.active and caravan.savedCF or nil
+    local pos = raidCF and raidCF.Position or getRootPos(root)
     if not pos then return false end
-    local rootCF = getRootCFrame(root)
+    local rootCF = raidCF or getRootCFrame(root)
     local cfComponents = rootCF and { rootCF:GetComponents() } or { pos.X, pos.Y, pos.Z, 1, 0, 0, 0, 1, 0, 0, 0, 1 }
     afkRelog.lastLoggedPos = pos
 
@@ -1908,7 +1922,18 @@ end
 
 -- Single grass ChompRequest call site; wire shape matches InputController (nodeId, nil, serial)
 function chomp.fire(nodeId, node, now)
-    if farm.botCheckActive or chomp.mode ~= "Remote" then return false end
+    if farm.botCheckActive or chomp.mode ~= "Remote" or caravan.active then return false end
+    return chomp.send(nodeId, node, now)
+end
+
+-- Caravan barrel bite: the grass wire, serial, pending table and GrazeResult margin, outside the
+-- grass-only gates (Remote mode, caravan takeover). Interval comes from the barrel's CowBiteCooldown.
+function chomp.fireBarrel(nodeId, part, now)
+    if farm.botCheckActive then return false end
+    return chomp.send(nodeId, part, now)
+end
+
+function chomp.send(nodeId, node, now)
     local interval = chomp.getInterval(node)
     if now - chomp.lastFire < interval then return false end
     chomp.serial += 1
@@ -5952,6 +5977,8 @@ function updateHeartbeatConnection()
                 local rootPos = getRootPos(root)
                 if not rootPos then return end
                 if farm.botCheckActive then return end
+                -- Caravan raid owns the character while it runs: every farm below pauses
+                if caravan.active then return end
 
                 -- Targeted background caches refresh (only when mobs need caching)
                 if (farm.autoChompMobs or dodge.auto) and (now - cache.lastBackgroundTime > 1.5) then
@@ -8115,6 +8142,7 @@ function townAuction.executeBid(slotName, customAmount, forcePrice)
 end
 
 function townAuction.teleportToStore()
+    if caravan.active then return end -- caravan raid owns the character
     local fitout = townAuction.getFitoutModel()
     if not fitout then
         Window:Notify({ Title = "Not Found", Content = "TownStoreFitout model not streamed in yet.", Duration = 4 })
@@ -12971,6 +12999,838 @@ RaftingTab:CreateSlider({
 })
 
 -- ==========================
+-- CARAVAN RAID (Plan 1.3; proven in luascripts/caravan_autofarm.lua, UAT runs 1-5)
+-- Scare the guide with moos until it stops, hold-kick every crate, graze one barrel at a time,
+-- close the crate reveal, then hand the character back. While caravan.active is set the
+-- heartbeat farms, grass chomp and the store teleport all stand down.
+-- ==========================
+do
+    local CollectionService = game:GetService("CollectionService")
+    local caravanShared = cowGame:FindFirstChild("Shared")
+    local function sharedModule(name)
+        local m = caravanShared and caravanShared:FindFirstChild(name)
+        if not m then return nil end
+        local ok, res = pcall(require, m)
+        return ok and res or nil
+    end
+
+    caravan.CONFIG = {
+        LOOP_DT = 0.1,
+        MOO_INTERVAL = 1.6,      -- client cooldown 1.5 s; server bucket 2 cap / 0.667 per s
+        KICK_INTERVAL = 0.4,     -- server bucket 4 cap / 3 per s
+        KICK_KEEP = 0.4,         -- InputController:_updateKickHold sends "Keep" every 0.4 s
+        KICK_HOLD_CONFIRM = 1,   -- hold dropped if CowKickHolding isn't set after 1 s
+        KICK_HOLD_MAX = 8,
+        KICK_RETRY = 1.5,
+        GUIDE_OFFSET = 3,        -- CloseRadius 4 (+2 per moo)
+        TARGET_OFFSET = 3,
+        TARGET_SCAN = 0.25,
+        REVEAL_RETRY = 1,
+        SCARE_RADIUS = 14,       -- Intimidation.Radius 15
+        ACT_REACH = 6,
+        PATH_DIRECT = 30,
+        PATH_RECOMPUTE = 2,
+        PATH_GOAL_SHIFT = 12,
+        WAYPOINT_REACH = 3,
+        SPRINT_FAR = 14,
+        INTERCEPT_SPEED = 18,
+        INTERCEPT_MAX = 250,
+        RETURN_TIMEOUT = 90,
+        GRUMPY_MISSES = 3,
+        GRUMPY_UNANSWERED = 5,   -- in-range Grumpy sends with no Fear rise -> plain Moo
+        FEAR_LOG_INTERVAL = 5,
+        LOG_FOLDER = "cowhub/caravanlogs",
+    }
+    local CFG = caravan.CONFIG
+    caravan.NUM_ATTRS = { "EventId", "StartAt", "EndsAt", "Speed", "StopDistance", "StoppedAt", "LootEndsAt", "GoneAt", "LeftAt", "Fear", "FearAt" }
+    caravan.KINDS = {
+        Started = true, FrightSoon = true, Stopped = true, Escaped = true, PackedUp = true,
+        Fright = true, FrightMissed = true, Loot = true, CrateOpened = true, Crate = true,
+    }
+    caravan.Config = sharedModule("CaravanConfig")
+    caravan.Rules = sharedModule("CaravanRules")
+    caravan.Route = sharedModule("CaravanRoute")
+
+    caravan.natural = false
+    caravan.lootOnly = false
+    caravan.grazeBarrels = true
+    caravan.useGrumpy = true
+    caravan.debug = false
+    caravan.grumpyState = "unknown" -- unknown / ok / rejected
+    caravan.grumpyMisses = 0
+    caravan.grumpyUnanswered = 0
+    caravan.grumpyFear0 = 0
+    caravan.lastMooStyle = nil
+    caravan.hold = nil              -- { part, since, lastKeep } during a held kick
+    caravan.kickBackoff = 0
+    caravan.kickId = 100000         -- above the game's own RequestId counter
+    caravan.walk = { waypoints = nil, idx = 0, goal = nil, computedAt = 0, lastGoal = nil, lastMoveAt = 0 }
+    caravan.sprinting = false
+    caravan.returningSince = nil
+    caravan.savedCF = nil
+    caravan.reface = false
+    caravan.barrelLock = nil
+    caravan.crates, caravan.barrels = {}, {}
+    caravan.routes = {}
+    caravan.folder = nil
+    caravan.lastPhase, caravan.lastEventId = nil, nil
+    caravan.lastMoo, caravan.lastKick, caravan.lastScan, caravan.lastReveal, caravan.lastFearLog = 0, 0, 0, 0, 0
+    caravan.status = "Idle"
+    caravan.stats = { caravans = 0, stopped = 0, moos = 0, frights = 0, missed = 0, kicks = 0, kickOk = 0, kickBad = 0, opened = 0, skins = 0, bites = 0, grazeOk = 0, grazeBad = 0, loot = 0 }
+    caravan.logFile, caravan.logBuf, caravan.lastFlush = nil, {}, 0
+
+    function caravan.serverNow()
+        return workspace:GetServerTimeNow()
+    end
+
+    function caravan.root()
+        local r = resolveRoot(resolveCharacter())
+        return (r and r:IsA("BasePart")) and r or nil
+    end
+
+    function caravan.humanoid()
+        return resolveHumanoid(resolveCharacter())
+    end
+
+    function caravan.flatDist(a, b)
+        local dx, dz = a.X - b.X, a.Z - b.Z
+        return math.sqrt(dx * dx + dz * dz)
+    end
+
+    -- `offset` studs from pos on the side the cow is already on
+    function caravan.standPoint(pos, offset)
+        local r = caravan.root()
+        if not r then return nil end
+        local away = r.Position - pos
+        away = Vector3.new(away.X, 0, away.Z)
+        if away.Magnitude < 0.1 then away = Vector3.xAxis end
+        return pos + away.Unit * offset
+    end
+
+    function caravan.teleport(cf)
+        local r = caravan.root()
+        if not r then return end
+        setRootCFrame(cf, r)
+        pcall(function()
+            r.AssemblyLinearVelocity = Vector3.zero
+            r.AssemblyAngularVelocity = Vector3.zero
+        end)
+    end
+
+    function caravan.standAt(pos, offset)
+        local stand = caravan.standPoint(pos, offset)
+        if stand then caravan.teleport(CFrame.lookAt(stand, Vector3.new(pos.X, stand.Y, pos.Z))) end
+    end
+
+    function caravan.blocked()
+        if farm.botCheckActive then return "bot check" end
+        local c = resolveCharacter()
+        for _, a in ipairs(chomp.BLOCK_ATTRS) do
+            if plr:GetAttribute(a) == true or (c and c:GetAttribute(a) == true) then return a end
+        end
+        local h = caravan.humanoid()
+        if not h or h.Health <= 0 then return "dead" end
+        return nil
+    end
+
+    function caravan.fire(name, ...)
+        local rem = cowRemotes:FindFirstChild(name)
+        if not rem then return false end
+        local args = table.pack(...)
+        return (pcall(function() rem:FireServer(table.unpack(args, 1, args.n)) end))
+    end
+
+    -- ---------- Debug log (JSONL in cowhub/caravanlogs) ----------
+    -- Own sanitizer: the chomp debug helpers are staging-only (removed on promote)
+    function caravan.sanitize(v, depth)
+        local t = typeof(v)
+        if t == "nil" or t == "boolean" or t == "string" then return v end
+        if t == "number" then return (v ~= v or v == math.huge or v == -math.huge) and tostring(v) or v end
+        if t == "Instance" then
+            local ok, n = pcall(v.GetFullName, v)
+            return ok and n or tostring(v)
+        end
+        if t == "table" then
+            if depth >= 4 then return "<table>" end
+            local out = {}
+            for k, x in pairs(v) do out[tostring(k)] = caravan.sanitize(x, depth + 1) end
+            return out
+        end
+        return tostring(v)
+    end
+
+    function caravan.log(kind, data)
+        if not caravan.debug or not writefile then return end
+        if not caravan.logFile then
+            pcall(function()
+                if makefolder then
+                    if not (isfolder and isfolder("cowhub")) then pcall(makefolder, "cowhub") end
+                    if not (isfolder and isfolder(CFG.LOG_FOLDER)) then pcall(makefolder, CFG.LOG_FOLDER) end
+                end
+                local name = CFG.LOG_FOLDER .. "/caravan_" .. os.date("%Y%m%d_%H%M%S") .. ".jsonl"
+                writefile(name, "")
+                caravan.logFile = name
+            end)
+            if not caravan.logFile then return end
+        end
+        local ok, line = pcall(HttpService.JSONEncode, HttpService, {
+            t = math.floor(caravan.serverNow() * 1000) / 1000, k = kind, d = caravan.sanitize(data, 0),
+        })
+        if ok then table.insert(caravan.logBuf, line) end
+    end
+
+    function caravan.flushLog(force)
+        if not caravan.logFile or #caravan.logBuf == 0 then return end
+        local now = os.clock()
+        if not force and now - caravan.lastFlush < 1 then return end
+        caravan.lastFlush = now
+        local chunk = table.concat(caravan.logBuf, "\n") .. "\n"
+        table.clear(caravan.logBuf)
+        pcall(function()
+            if appendfile then
+                appendfile(caravan.logFile, chunk)
+            else
+                writefile(caravan.logFile, (readfile and readfile(caravan.logFile) or "") .. chunk)
+            end
+        end)
+    end
+
+    -- ---------- Caravan state (CowGame.CaravanState attributes) ----------
+    local function decode(v)
+        if type(v) ~= "string" or v == "" then return nil end
+        local ok, res = pcall(HttpService.JSONDecode, HttpService, v)
+        return ok and res or nil
+    end
+
+    function caravan.readState()
+        local f = caravan.folder
+        if not f or not f.Parent then
+            f = cowGame:FindFirstChild("CaravanState") -- the folder can be recreated
+            caravan.folder = (f and f:IsA("Folder")) and f or nil
+            f = caravan.folder
+            if not f then return nil end
+        end
+        local st = {
+            Phase = f:GetAttribute("Phase"),
+            Kind = f:GetAttribute("Kind") or "Supply",
+            Route = f:GetAttribute("Route"),
+        }
+        for _, k in ipairs(caravan.NUM_ATTRS) do
+            local v = f:GetAttribute(k)
+            st[k] = type(v) == "number" and v or nil
+        end
+        local kind = caravan.Config and caravan.Config.Kind and caravan.Config.Kind(st.Kind)
+        st.Goal = (kind and kind.GuideGoal) or 1000
+        st.Active = (st.Phase == "OnRoad" or st.Phase == "Stopped") and st.EventId ~= nil
+        return st
+    end
+
+    -- Same math the client uses to place the convoy (CaravanController:_distance / _pose)
+    function caravan.routePose(st, lead)
+        local Rules, Route = caravan.Rules, caravan.Route
+        if not (Rules and Route and type(st.Route) == "string") then return nil end
+        local route = caravan.routes[st.Route]
+        if not route then
+            local ok, built = pcall(Route.Build, st.Route)
+            if not ok then return nil end
+            route = built
+            caravan.routes[st.Route] = route
+        end
+        local dist
+        if st.Phase == "OnRoad" and st.StartAt and st.Speed then
+            dist = Rules.Travelled(route, st.StartAt, st.Speed, caravan.serverNow())
+        else
+            dist = st.StopDistance or 0
+        end
+        local ok, cf = pcall(Rules.Pose, route, dist + (lead or 0))
+        return ok and cf or nil
+    end
+
+    function caravan.guidePos(st)
+        local convoy = workspace:FindFirstChild("CaravanConvoy")
+        local guide = convoy and convoy:FindFirstChild("CaravanGuide", true)
+        local hrp = guide and guide:FindFirstChild("HumanoidRootPart")
+        if hrp and hrp:IsA("BasePart") then return hrp.Position, "model" end
+        local cf = caravan.routePose(st)
+        if cf then return cf.Position, "route" end
+        return nil, "none"
+    end
+
+    -- Open targets exactly as CaravanController shows them to the local player
+    function caravan.scanTargets()
+        local barrels, crates = {}, {}
+        for _, p in ipairs(CollectionService:GetTagged("CowBiteTarget")) do
+            if p:IsA("BasePart") and p:GetAttribute("CowBiteTargetKind") == "CaravanBarrel"
+                and p:GetAttribute("Available") == true
+                and (tonumber(p:GetAttribute("PortionsRemaining")) or 0) > 0 then
+                table.insert(barrels, p)
+            end
+        end
+        local convoy = workspace:FindFirstChild("CaravanConvoy")
+        if convoy then
+            for _, d in ipairs(convoy:GetDescendants()) do
+                if d:IsA("BillboardGui") and d.Name == "CrateKickPrompt" and d.Enabled
+                    and d.Adornee and d.Adornee:IsA("BasePart") then
+                    table.insert(crates, d.Adornee)
+                end
+            end
+        end
+        caravan.barrels, caravan.crates = barrels, crates
+    end
+
+    -- ---------- Server replies: ClientEvent("Caravan" | "KickEmote" | "GrazeResult", payload) ----------
+    function caravan.onClientEvent(name, a)
+        if type(a) ~= "table" then return end
+        if name == "KickEmote" then
+            if type(a.RequestId) == "number" and a.RequestId >= 100000 then
+                local s = caravan.stats
+                if a.Ok == true then s.kickOk += 1 else s.kickBad += 1 end
+                caravan.log("kick_result", a)
+            end
+            return
+        end
+        if name == "GrazeResult" then
+            if type(a.NodeId) == "string" and string.match(a.NodeId, "^Caravan%d+_B%d+$") then
+                if a.Accepted == true then
+                    caravan.stats.grazeOk += 1
+                else
+                    caravan.stats.grazeBad += 1
+                    if a.Reason == "OutsideCone" then caravan.reface = true end
+                    caravan.log("graze_rejected", { node = a.NodeId, reason = a.Reason })
+                end
+            end
+            return
+        end
+        if name ~= "Caravan" or not caravan.KINDS[a.Kind] then return end
+        local s = caravan.stats
+        local mine = tostring(a.ActorId) == tostring(plr.UserId)
+        if a.Kind == "Fright" and mine then
+            s.frights += 1
+            caravan.grumpyUnanswered = 0
+            if a.Action == "GrumpyMoo" then
+                caravan.grumpyState, caravan.grumpyMisses = "ok", 0
+            elseif a.Action == "Moo" and caravan.lastMooStyle == "GrumpyMoo" and caravan.grumpyState == "unknown" then
+                caravan.grumpyMisses += 1
+                if caravan.grumpyMisses >= CFG.GRUMPY_MISSES then
+                    caravan.grumpyState = "rejected"
+                    caravan.log("grumpy_rejected", { why = "credited_as_moo" })
+                end
+            end
+        elseif a.Kind == "FrightMissed" then
+            s.missed += 1
+        elseif a.Kind == "CrateOpened" and mine then
+            s.opened += 1
+        elseif a.Kind == "Loot" then
+            s.loot += 1
+        elseif a.Kind == "Crate" then
+            s.skins += 1
+        end
+        if not (a.Kind == "Fright" and not mine) then caravan.log("in", { mine = mine, payload = a }) end
+    end
+
+    -- ---------- Moo (Grumpy, falling back to plain Moo if the server doesn't credit it) ----------
+    function caravan.tryMoo(now, st)
+        if now - caravan.lastMoo < CFG.MOO_INTERVAL then return end
+        caravan.lastMoo = now
+        local grumpy = caravan.useGrumpy and caravan.grumpyState ~= "rejected"
+        local ok
+        if grumpy then
+            ok = caravan.fire("MooRequest", "Grumpy")
+            if caravan.grumpyState == "unknown" and st then
+                local fear = st.Fear or 0
+                if caravan.grumpyUnanswered == 0 then caravan.grumpyFear0 = fear end
+                caravan.grumpyUnanswered += 1
+                if caravan.grumpyUnanswered > CFG.GRUMPY_UNANSWERED then
+                    if fear <= caravan.grumpyFear0 then
+                        caravan.grumpyState = "rejected"
+                        caravan.log("grumpy_rejected", { why = "no_fear_rise", fear = fear })
+                    end
+                    caravan.grumpyUnanswered = 0
+                end
+            end
+        else
+            ok = caravan.fire("MooRequest")
+        end
+        caravan.lastMooStyle = grumpy and "GrumpyMoo" or "Moo"
+        if ok then caravan.stats.moos += 1 end
+    end
+
+    -- ---------- Natural movement (Humanoid MoveTo / PathfindingService, no teleports) ----------
+    function caravan.setSprint(on)
+        if caravan.sprinting == on then return end
+        caravan.sprinting = on
+        caravan.fire("SprintRequest", on)
+    end
+
+    function caravan.stopWalk()
+        local h, r = caravan.humanoid(), caravan.root()
+        if h and r then pcall(function() h:MoveTo(r.Position) end) end
+        caravan.walk.waypoints, caravan.walk.lastGoal = nil, nil
+        caravan.setSprint(false)
+    end
+
+    -- Walk toward goal; returns flat distance to it
+    function caravan.walkTo(goal, now)
+        local h, r = caravan.humanoid(), caravan.root()
+        if not (h and r) then return math.huge end
+        local w = caravan.walk
+        local d = caravan.flatDist(r.Position, goal)
+        caravan.setSprint(d > CFG.SPRINT_FAR)
+        if d <= CFG.PATH_DIRECT then
+            w.waypoints = nil
+            if not w.lastGoal or (w.lastGoal - goal).Magnitude > 0.5 or now - w.lastMoveAt > 1 then
+                w.lastGoal, w.lastMoveAt = goal, now
+                h:MoveTo(goal)
+            end
+            return d
+        end
+        if not w.waypoints or now - w.computedAt > CFG.PATH_RECOMPUTE
+            or (w.goal and (w.goal - goal).Magnitude > CFG.PATH_GOAL_SHIFT) then
+            w.computedAt, w.goal = now, goal
+            local path = PathfindingService:CreatePath({ AgentRadius = 2.5, AgentHeight = 5, AgentCanJump = true, WaypointSpacing = 6 })
+            local ok = pcall(function() path:ComputeAsync(r.Position, goal) end)
+            if not caravan.enabled then return math.huge end -- toggled off while ComputeAsync yielded
+            if ok and path.Status == Enum.PathStatus.Success then
+                w.waypoints, w.idx = path:GetWaypoints(), 2
+            else
+                w.waypoints = nil
+                caravan.log("path_fail", { to = goal, status = ok and path.Status or "error" })
+            end
+        end
+        local wps = w.waypoints
+        if not wps then
+            h:MoveTo(goal)
+            return d
+        end
+        local wp = wps[w.idx]
+        while wp and w.idx < #wps and caravan.flatDist(r.Position, wp.Position) < CFG.WAYPOINT_REACH do
+            w.idx += 1
+            wp = wps[w.idx]
+        end
+        if wp then
+            if wp.Action == Enum.PathWaypointAction.Jump then h.Jump = true end
+            h:MoveTo(wp.Position)
+        end
+        return d
+    end
+
+    -- Get within reach of a part: teleport mode stands there facing it, natural mode walks there
+    function caravan.approach(part, now)
+        if not caravan.natural then
+            local r = caravan.root()
+            if caravan.reface or not r or caravan.flatDist(r.Position, part.Position) > CFG.ACT_REACH
+                or math.abs(r.Position.Y - part.Position.Y) > 6 then
+                caravan.standAt(part.Position, CFG.TARGET_OFFSET)
+                caravan.reface = false
+            end
+            return true
+        end
+        local goal = caravan.standPoint(part.Position, CFG.TARGET_OFFSET)
+        if not goal then return false end
+        caravan.walkTo(goal, now)
+        local r = caravan.root()
+        return r ~= nil and caravan.flatDist(r.Position, part.Position) <= CFG.ACT_REACH
+    end
+
+    -- Natural mode, OnRoad: beside the guide, or an intercept point ahead on the route when far
+    function caravan.scareGoal(st, gp)
+        local r = caravan.root()
+        local far = r and caravan.flatDist(r.Position, gp) or 0
+        local lead = 1
+        if far > CFG.PATH_DIRECT and st.Speed then
+            lead = math.min(CFG.INTERCEPT_MAX, st.Speed * far / CFG.INTERCEPT_SPEED)
+        end
+        local cf = caravan.routePose(st, lead)
+        if not cf then return gp end
+        if lead > 1 then return cf.Position end
+        return gp + cf.RightVector * CFG.GUIDE_OFFSET + cf.LookVector
+    end
+
+    -- ---------- Held kick: "Hold" once (Target = crate model), "Keep" every 0.4 s, "Release" ----------
+    function caravan.kickReady(now)
+        if (tonumber(plr:GetAttribute("CowUpgrade_HindStrength")) or 0) < 1 then return false, "no_hind_strength" end
+        if now - caravan.lastKick < CFG.KICK_INTERVAL then return false, "spacing" end
+        local gate = math.max(tonumber(plr:GetAttribute("CowNextKickAt")) or 0, tonumber(plr:GetAttribute("CowKickPendingUntil")) or 0)
+        if caravan.serverNow() < gate then return false, "server_cooldown" end
+        return true
+    end
+
+    function caravan.kickAim(part, withTarget)
+        caravan.kickId = caravan.kickId % 2147483647 + 1
+        local aim = { Position = part.Position, RequestId = caravan.kickId }
+        if withTarget then
+            local model = part.Parent
+            aim.Target = (model and model:IsA("Model")) and model or part
+        end
+        return aim
+    end
+
+    function caravan.releaseKick(why)
+        if not caravan.hold then return end
+        caravan.fire("KickRequest", nil, "Release")
+        caravan.log("kick_release", { why = why, held = os.clock() - caravan.hold.since })
+        caravan.hold = nil
+    end
+
+    function caravan.grounded()
+        local h = caravan.humanoid()
+        return h ~= nil and h.FloorMaterial ~= Enum.Material.Air and not h.Sit
+    end
+
+    function caravan.holdKick(part, now)
+        local hold = caravan.hold
+        if hold and hold.part ~= part then
+            caravan.releaseKick("target_changed")
+            hold = nil
+        end
+        if not hold then
+            if now < caravan.kickBackoff then return "backoff" end
+            if not caravan.grounded() then return "airborne" end
+            local ok, why = caravan.kickReady(now)
+            if not ok then return why end
+            caravan.lastKick = now
+            if caravan.fire("KickRequest", caravan.kickAim(part, true), "Hold") then caravan.stats.kicks += 1 end
+            caravan.hold = { part = part, since = now, lastKeep = now }
+            caravan.log("kick_hold", { part = part, id = caravan.kickId })
+            return "hold"
+        end
+        if now - hold.since > CFG.KICK_HOLD_MAX then
+            caravan.releaseKick("timeout")
+            caravan.kickBackoff = now + CFG.KICK_RETRY
+            return "timeout"
+        end
+        if now - hold.lastKeep < CFG.KICK_KEEP then return "holding" end
+        local c = resolveCharacter()
+        if now - hold.since > CFG.KICK_HOLD_CONFIRM and not (c and c:GetAttribute("CowKickHolding") == true) then
+            caravan.releaseKick("not_holding")
+            caravan.kickBackoff = now + CFG.KICK_RETRY
+            return "dropped"
+        end
+        if not caravan.grounded() then
+            caravan.releaseKick("airborne")
+            return "airborne"
+        end
+        hold.lastKeep = now
+        caravan.fire("KickRequest", caravan.kickAim(part), "Keep")
+        return "holding"
+    end
+
+    -- ---------- Crate reveal: the hub's safe dismiss matcher (never wear / equip) ----------
+    function caravan.closeReveal(now)
+        if plr:GetAttribute("CowCrateRevealOpen") ~= true then return end
+        if now - caravan.lastReveal < CFG.REVEAL_RETRY then return end
+        caravan.lastReveal = now
+        local pg = plr:FindFirstChildOfClass("PlayerGui")
+        local gui = pg and pg:FindFirstChild("CaravanCrateReveal")
+        if not gui then return end
+        for _, d in ipairs(gui:GetDescendants()) do
+            if isRewardDismissButton(d) and activateGuiButton(d, VirtualInput) then
+                caravan.log("reveal_close", { button = d.Name })
+                return
+            end
+        end
+        caravan.log("reveal_stuck", {})
+    end
+
+    -- ---------- Takeover / handback ----------
+    -- Stops what the heartbeat farms were doing so nothing fights the caravan for the character
+    function caravan.takeover()
+        caravan.active = true
+        chomp.release()
+        if dodge.isDodging or dodge.isUnderground then pcall(dodge.cleanup) end
+        aerial.active = false
+        local r, h = caravan.root(), caravan.humanoid()
+        if r then pcall(function() r.Anchored = false end) end -- Manatite / Mithril anchor the root
+        if h then pcall(function() h:Move(Vector3.zero, false) end) end
+        caravan.savedCF = r and r.CFrame
+        caravan.log("takeover", { natural = caravan.natural })
+    end
+
+    -- Back where the event started; the paused farms resume from there
+    function caravan.handback(why)
+        caravan.releaseKick("handback")
+        if caravan.natural then
+            caravan.stopWalk()
+        elseif caravan.savedCF then
+            caravan.teleport(caravan.savedCF)
+        end
+        caravan.setSprint(false)
+        caravan.savedCF, caravan.returningSince, caravan.barrelLock = nil, nil, nil
+        farm.lastStuckCheckPos, farm.lastStuckCheckTime, farm.currentTargetNode = nil, 0, nil
+        caravan.active = false
+        caravan.log("handback", { why = why })
+    end
+
+    -- A raft voyage keeps running: teleporting off a moving raft would lose it
+    function caravan.raftBusy()
+        return rafting.enabled == true and rafting.isSailing == true
+    end
+
+    -- ---------- Phases ----------
+    function caravan.scareStep(st, now)
+        local pos, src = caravan.guidePos(st)
+        if not pos then
+            caravan.status = "OnRoad: guide not found"
+            return
+        end
+        local r = caravan.root()
+        if caravan.natural then
+            caravan.walkTo(caravan.scareGoal(st, pos), now)
+            if r and caravan.flatDist(r.Position, pos) <= CFG.SCARE_RADIUS then caravan.tryMoo(now, st) end
+        else
+            caravan.standAt(pos, CFG.GUIDE_OFFSET)
+            r = caravan.root()
+            caravan.tryMoo(now, r and caravan.flatDist(r.Position, pos) <= CFG.SCARE_RADIUS and st or nil)
+        end
+        caravan.status = string.format("Scaring (%s%s) · fear %d/%d · %s",
+            src, caravan.natural and ", walking" or "", math.floor(st.Fear or 0), st.Goal,
+            r and string.format("%.0f studs", caravan.flatDist(r.Position, pos)) or "?")
+        if now - caravan.lastFearLog >= CFG.FEAR_LOG_INTERVAL then
+            caravan.lastFearLog = now
+            caravan.log("fear", { fear = st.Fear, goal = st.Goal, src = src, dist = r and (r.Position - pos).Magnitude })
+        end
+    end
+
+    function caravan.lootStep(st, now)
+        if now - caravan.lastScan >= CFG.TARGET_SCAN then
+            caravan.lastScan = now
+            caravan.scanTargets()
+        end
+        local crate = caravan.crates[1]
+        if crate and crate.Parent then
+            local why = caravan.approach(crate, now) and caravan.holdKick(crate, now) or "walking"
+            if why ~= "no_hind_strength" then -- can't kick without HindStrength: graze instead
+                caravan.status = string.format("Kicking crates · %d left · %s", #caravan.crates, why)
+                return
+            end
+        end
+        caravan.releaseKick("no_crate")
+        if not caravan.grazeBarrels then
+            caravan.status = "Crates done · barrel looting off"
+            return
+        end
+        -- One barrel at a time until it empties (rotating between barrels just hits ChewCooldown)
+        local lock = caravan.barrelLock
+        if not (lock and lock.Parent and table.find(caravan.barrels, lock)) then
+            lock = nil
+            local r = caravan.root()
+            local bestD = math.huge
+            for _, b in ipairs(caravan.barrels) do
+                local d = r and caravan.flatDist(r.Position, b.Position) or 0
+                if b.Parent and d < bestD then lock, bestD = b, d end
+            end
+            caravan.barrelLock = lock
+        end
+        if not lock then
+            caravan.status = "Looted · waiting for caravan to leave"
+            return
+        end
+        local nodeId = lock:GetAttribute("CowBiteTargetId") or lock:GetAttribute("NodeId")
+        if caravan.approach(lock, now) and type(nodeId) == "string" and chomp.fireBarrel(nodeId, lock, now) then
+            caravan.stats.bites += 1
+        end
+        caravan.status = string.format("Grazing barrels · %d left · %ds", #caravan.barrels,
+            math.max(0, math.floor((st.LootEndsAt or 0) - caravan.serverNow())))
+    end
+
+    function caravan.onPhase(st, prev)
+        caravan.log("phase", { from = prev, to = st and st.Phase, event = st and st.EventId, fear = st and st.Fear })
+        if st and st.Phase == "OnRoad" and prev ~= "OnRoad" then
+            caravan.stats.caravans += 1
+            caravan.barrelLock = nil
+        elseif st and st.Phase == "Stopped" then
+            caravan.stats.stopped += 1
+        end
+    end
+
+    function caravan.step(now)
+        local st = caravan.readState()
+        local phase, eventId = st and st.Phase, st and st.EventId
+        if phase ~= caravan.lastPhase or eventId ~= caravan.lastEventId then
+            local prev = caravan.lastPhase
+            caravan.lastPhase, caravan.lastEventId = phase, eventId
+            caravan.onPhase(st, prev)
+        end
+        if not caravan.enabled then
+            if caravan.active then caravan.handback("toggle_off") end
+            caravan.status = "Off"
+            return
+        end
+        if caravan.active then caravan.closeReveal(now) end
+        local live = st and st.Active
+        if not live then
+            if not caravan.active then
+                caravan.status = "Waiting for caravan"
+                return
+            end
+            -- Natural mode walks back first; the farms stay paused until it arrives
+            if caravan.natural and caravan.savedCF then
+                caravan.returningSince = caravan.returningSince or now
+                local d = caravan.walkTo(caravan.savedCF.Position, now)
+                if d > 4 and now - caravan.returningSince <= CFG.RETURN_TIMEOUT then
+                    caravan.status = string.format("Walking back · %.0f studs", d)
+                    return
+                end
+            end
+            caravan.handback("caravan_left")
+            caravan.status = "Waiting for caravan"
+            return
+        end
+        if not caravan.active then
+            if caravan.raftBusy() then
+                caravan.status = "Caravan " .. tostring(phase) .. " · waiting for the raft voyage"
+                return
+            end
+            caravan.takeover()
+        end
+        caravan.returningSince = nil
+        local why = caravan.blocked()
+        if why then
+            caravan.releaseKick("blocked")
+            if caravan.natural then caravan.stopWalk() end
+            caravan.status = "Paused: " .. why
+            return
+        end
+        if phase == "OnRoad" then
+            if caravan.lootOnly then
+                caravan.status = "OnRoad · loot only, waiting"
+            else
+                caravan.scareStep(st, now)
+            end
+        elseif phase == "Stopped" then
+            caravan.lootStep(st, now)
+        end
+    end
+
+    local clientEvent = cowRemotes:FindFirstChild("ClientEvent")
+    if clientEvent and clientEvent:IsA("RemoteEvent") then
+        table.insert(scriptConnections, clientEvent.OnClientEvent:Connect(function(name, payload)
+            if caravan.enabled then caravan.onClientEvent(name, payload) end
+        end))
+    end
+
+    -- Own loop: runs whether or not any heartbeat farm is on; ends with this hub instance
+    task.spawn(function()
+        while _G.CowHubConnections == scriptConnections do
+            local ok, err = pcall(caravan.step, os.clock())
+            if not ok then
+                caravan.status = "Error: " .. tostring(err)
+                caravan.log("step_error", { err = tostring(err) })
+            end
+            if caravan.debug then caravan.flushLog(false) end
+            task.wait(CFG.LOOP_DT)
+        end
+        if caravan.active then pcall(caravan.handback, "unload") end
+        caravan.enabled = false
+        caravan.flushLog(true)
+    end)
+end
+
+-- ==========================
+-- UI SETUP: Caravan Raid Tab
+-- ==========================
+local CaravanTab = Window:CreateTab({ Name = "Caravan Raid", Icon = 4483362458 })
+
+CaravanTab:CreateSection({ Name = "Caravan Raid" })
+
+CaravanTab:CreateToggle({
+    Name = "Caravan Autofarm (overrides other farms)",
+    CurrentValue = false,
+    Flag = "Toggle_CaravanAutofarm",
+    Callback = function(Value)
+        caravan.enabled = Value == true
+        if caravan.enabled then
+            caravan.grumpyState, caravan.grumpyMisses, caravan.grumpyUnanswered = "unknown", 0, 0
+        end
+    end,
+})
+
+CaravanTab:CreateToggle({
+    Name = "Natural Mode (walk, no teleports)",
+    CurrentValue = false,
+    Flag = "Toggle_CaravanNatural",
+    Callback = function(Value)
+        local on = Value == true
+        if on ~= caravan.natural and caravan.active then
+            -- Switching mid-event: stop walking or keep the teleport-mode return point
+            if not on then caravan.stopWalk() end
+        end
+        caravan.natural = on
+    end,
+})
+
+CaravanTab:CreateToggle({
+    Name = "Grumpy Moo",
+    CurrentValue = true,
+    Flag = "Toggle_CaravanGrumpy",
+    Callback = function(Value)
+        caravan.useGrumpy = Value == true
+        if caravan.useGrumpy then caravan.grumpyState, caravan.grumpyMisses, caravan.grumpyUnanswered = "unknown", 0, 0 end
+    end,
+})
+
+CaravanTab:CreateToggle({
+    Name = "Loot Barrels (materials)",
+    CurrentValue = true,
+    Flag = "Toggle_CaravanGrazeBarrels",
+    Callback = function(Value)
+        caravan.grazeBarrels = Value == true
+        if not caravan.grazeBarrels then caravan.barrelLock = nil end
+    end,
+})
+
+CaravanTab:CreateToggle({
+    Name = "Loot Only (skip scaring)",
+    CurrentValue = false,
+    Flag = "Toggle_CaravanLootOnly",
+    Callback = function(Value) caravan.lootOnly = Value == true end,
+})
+
+CaravanTab:CreateToggle({
+    Name = "Caravan Debug Log",
+    CurrentValue = false,
+    Flag = "Toggle_CaravanDebugLog",
+    Callback = function(Value)
+        caravan.debug = Value == true
+        if not caravan.debug then caravan.flushLog(true) end
+    end,
+})
+
+do
+    local card
+    local title, body = "Caravan: --", "Waiting for caravan"
+    if CaravanTab.CreateText then
+        pcall(function() card = CaravanTab:CreateText({ name = title, text = body }) end)
+    end
+    if not card and CaravanTab.CreateParagraph then
+        pcall(function() card = CaravanTab:CreateParagraph({ Title = title, Content = body }) end)
+    end
+    task.spawn(function()
+        while card and _G.CowHubConnections == scriptConnections do
+            task.wait(1)
+            local s, st = caravan.stats, caravan.readState()
+            local t = string.format("Caravan: %s", caravan.status)
+            local b = string.format(
+                "Mode: %s · Grumpy: %s · Override: %s\nPhase: %s · Kind: %s\nCaravans %d · Stopped %d\nMoos %d · Frights %d · Missed %d\nKicks %d (ok %d / rejected %d) · Crates opened %d · Skins %d\nBites %d (ok %d / rejected %d) · Loot drops %d%s",
+                caravan.natural and "Natural (walk)" or "Teleport", caravan.useGrumpy and caravan.grumpyState or "off",
+                caravan.active and "ACTIVE" or "idle",
+                tostring(st and st.Phase or "none"), tostring(st and st.Kind or "-"),
+                s.caravans, s.stopped, s.moos, s.frights, s.missed, s.kicks, s.kickOk, s.kickBad, s.opened, s.skins,
+                s.bites, s.grazeOk, s.grazeBad, s.loot,
+                caravan.debug and caravan.logFile and ("\nLog: " .. caravan.logFile) or "")
+            pcall(function()
+                if card.SetTitle then
+                    card:SetTitle(t)
+                    card:Set(b)
+                elseif card.Set then
+                    card:Set({ Title = t, Content = b })
+                end
+            end)
+        end
+    end)
+end
+
+-- ==========================
 -- UI SETUP: Settings Tab
 -- ==========================
 local SettingsTab = Window:CreateTab({ Name = "Settings", Icon = 4483362458 })
@@ -13334,6 +14194,7 @@ SettingsTab:CreateButton({
 
             _G.CowHubLoaded = nil
             _G.CowHubRayfield = nil
+            _G.CowHubWindow = nil
             _G.CowHubConnections = nil
             _G.CowHubHeartbeat = nil
         end)

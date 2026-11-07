@@ -1,13 +1,13 @@
 ---
 name: caravan-autofarm
 version: v0.1
-status: planning
+status: complete
 created: 2026-11-05T00:00:00Z
 ---
 
 # Milestone: Caravan Autofarm
 
-> **Status:** 🧪 Plan 1.1 built; standalone UAT (Plan 1.2) pending.
+> **Status:** ✅ Shipped: caravan raid in cowhub.lua (production) and preview.lua (staging).
 > Prototype in `luascripts/caravan_autofarm.lua` first, then port into `preview.lua` (theme `frost`), then promote to cowhub via `scripts/promote-preview.py`.
 
 ## Vision
@@ -28,8 +28,41 @@ When a caravan spawns, the hub scares the guide until it stops, loots every crat
 | CaravanController L1353–1425 | Server events: `Started`, `Stopped`, `Escaped`, `PackedUp`, `Fright` (Target Guide/Farmer, Total, Level), `FrightMissed` (too far), `Loot`, `CrateOpened`, `Crate` (reveal). **The carrying remote is not in the dumps.** |
 | preview.lua L10449 | The existing reward-GUI closer already includes `CaravanCrateReveal`. Reuse it. |
 
+### UAT run 1 findings (2026-11-05, caravan_20261105_162746 / _163119)
+- Moo reaches the server: in our-moos-only windows fear rose 22–42 per 5 s at 3.5 studs, and caravan #2 hit 996 → Stopped. Manual moos share the 2-cap bucket, so don't moo by hand while the farm runs.
+- Zero `in` events: the listener only checked arg 1 of `CowGame.Remotes` RemoteEvents. Now it covers every (Unreliable)RemoteEvent under ReplicatedStorage and finds the payload in any arg.
+- That made the Grumpy "no_reply" rejection a false positive. "No reply" now counts only once the listener has heard a caravan event.
+- Crates show "Hold Kick to open": a held kick (`"Hold"`, then `"Keep"` every 0.4 s, `CowKickHolding` must be set within 1 s, then `KickRequest(nil, "Release")`, grounded). Taps (no 2nd arg) never open them.
+
+### UAT run 2 findings (2026-11-06, caravan_20261106_000519)
+- Grumpy moo is **not credited**: 37 `MooRequest("Grumpy")` sends at about 3.5 studs, and Fear stayed 0 all caravan. Run 1 only scared because it fell back to a plain Moo. The fallback now uses the replicated `Fear` attribute: 5 in-range Grumpy sends with no rise → rejected → plain Moo.
+- Still zero `in` events, so U1 is open. Caravan feedback can't rely on events. Use the `Fear` attribute instead.
+- Destroy: the gen2 library has no `Destroy`. Use `Window:Unload()`.
+
+### UAT run 3 findings (2026-11-06, caravan_20261106_163745)
+- **U1 resolved:** caravan events arrive on `Remotes.ClientEvent` as `("Caravan", payload)`. 57 events seen.
+- **Grumpy is credited:** `Fright{Action="GrumpyMoo", Base=7, Armor=5, Herd=3, Close=0}` → Total 15 per moo (17 with Close=2). Run 2's flat Fear was the debug hook: `log()` → `GetServerTimeNow` inside `__namecall` overwrote the pending method, so our own `MooRequest:FireServer` failed silently in `fire()`'s pcall (same bug as the CosmeticRequest error). Fixed by deferring the log.
+- Pace: about 9 fear/s solo (15 per ~1.65 s). The script joined 61 s into the road phase, plus a 22 s walk-in, and reached 662/1000 → Escaped. A full 180 s at ~160 s in range ≈ 1450, so **solo reaches the goal if running from `Started`**.
+- 5× `FrightMissed` (server Distance 16–18) while the client measured ~3.7 to the guide model. The server measures against something else. `miss_probe` now logs model vs route-pose distances.
+
+### UAT run 4 findings (2026-11-06, caravan_20261106_181609, full AFK caravan)
+- **Scare solved solo:** 1004/1000 → Stopped (14–16 per Grumpy moo, Herd 2). 1 FrightMissed. `miss_probe`: server 20.0, model 3.7, route pose 6.9, so the server's guide reference is neither.
+- **Crates solved:** 3/3 `CrateOpened` (held kick, Target = crate model, Ok:true). One `KickCooldown` retry. Reveal closed via `KeepRaiding`.
+- **Barrels weak:** 232 bites rotated across 4 barrels (1 s `CowBiteCooldown` each) but only 16 `Loot` events. User: grazing is continuous on one selected hitbox, with no need to move between bites. The farm now locks one barrel until it empties, then the nearest. `in_other` logs unknown replies while grazing to find the chomp result.
+
+### UAT run 5 findings (2026-11-07, caravan_20261107_035154)
+- **Barrels solved:** grazing one locked barrel gave 75 `Loot` from 79 bites (rotation in run 4: 16 from 232). B4 was drained 50 → 0, then B3.
+- **Bite reply found:** `ClientEvent("GrazeResult", {NodeId, Accepted, Reason, RequestId})`. Reasons: `Stored` (ok), `ChewCooldown` (player-level, so the bite rate is about 1/s whatever the barrel count), `OutsideCone` (not facing). The farm now counts these. ChewCooldown → +0.5 s wait; OutsideCone → re-stand facing the barrel (teleport mode). The noisy `in_other` probe was removed.
+- Full loop proven solo: Stopped from moos, 3/3 crates, barrels grazed, reveal closed, position restored.
+
+### Hub UAT run 1 (2026-11-07, caravan_20261107_041152, preview.lua staging)
+- Joined at fear 36 → 1012 → Stopped (78 GrumpyMoo Frights, ~3.6 studs). 3/3 crates (1 KickCooldown retry). 70 `Loot`; rejects 7 ChewCooldown, 1 OutsideCone, 1 Unavailable (barrel emptied at pack-up).
+- Reveal closed 3/3 (one `reveal_stuck` 0.1 s after opening; the next retry closed it).
+- Handback 31 s after Leaving: consistent with Natural walk-back. Teleport mode hands back on the next step.
+- Still to confirm by eye: the other farms pause during the raid and resume after.
+
 ### Unknowns (Plan 1.2 resolves; manual search list in SEARCH.md)
-- U1: Which remote delivers `HandleEvent` payloads (needed for `FrightMissed` / `Fright` feedback).
+- U1: ~~Which remote delivers `HandleEvent` payloads~~ → `Remotes.ClientEvent("Caravan", payload)` (run 3).
 - U2: ~~Stomp~~ → replaced by Grumpy Moo (user decision 2026-11-05): `MooRequest:FireServer("Grumpy")`. Confirmed from CowExpressions: `MooStyles.Grumpy` has no Earned/Hidden/Disabled gate, and `IsMooStyle("Grumpy")` is true. The server should credit it as Action `GrumpyMoo` (+7); the script still falls back to a plain Moo if it is credited as Moo.
 - U3: Whether a kick at a crate's `Position` (no `Target`, since the hitbox has CanQuery=false) opens it, and the kick reach.
 - U4: Barrel bite range and cooldown (`AppleSupplyRules.Cooldown`), and whether one bite takes 1 portion (`BiteAmount = 1`).
@@ -55,6 +88,6 @@ When a caravan spawns, the hub scares the guide until it stops, loots every crat
 
 ### Phase 1: Caravan Autofarm
 - [x] Plan 1.1: Standalone `luascripts/caravan_autofarm.lua` (watcher + probe + experimental farm)
-- [ ] Plan 1.2: Standalone UAT (resolves U1–U5, proves farm)
-- [ ] Plan 1.3: Integrate into preview.lua
-- [ ] Plan 1.4: Hub UAT + promote to cowhub
+- [x] Plan 1.2: Standalone UAT (resolves U1–U5, proves farm) — passed run 5
+- [x] Plan 1.3: Integrate into preview.lua (built 10ea309; hub UAT pending)
+- [x] Plan 1.4: Hub UAT + promote to cowhub (hub UAT run 1 passed; promoted 2026-11-07)

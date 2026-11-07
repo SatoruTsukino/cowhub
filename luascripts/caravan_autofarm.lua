@@ -34,6 +34,10 @@ local CONFIG = {
     LOOP_DT = 0.1,
     MOO_INTERVAL = 1.6,       -- client cooldown 1.5 s; server bucket 2 cap / 0.667 per s
     KICK_INTERVAL = 0.4,      -- server bucket 4 cap / 3 per s
+    KICK_KEEP = 0.4,          -- InputController:_updateKickHold sends "Keep" every 0.4 s
+    KICK_HOLD_CONFIRM = 1,    -- hold dropped if CowKickHolding isn't set after 1 s
+    KICK_HOLD_MAX = 8,        -- give up on one crate after this long
+    KICK_RETRY = 1.5,         -- back off after a dropped hold
     BITE_SPACING = 0.15,      -- server bucket 8 cap / 8 per s
     BITE_COOLDOWN_PAD = 0.05,
     GUIDE_OFFSET = 3,         -- CloseRadius is 4 (+2 per moo)
@@ -55,8 +59,9 @@ local CONFIG = {
     INTERCEPT_MAX = 250,
     RETURN_TIMEOUT = 90,
     -- Grumpy Moo (replaces Stomp): fall back to plain Moo if the server won't credit it
+    CHEW_RETRY = 0.5,         -- extra wait after a ChewCooldown graze reject
     GRUMPY_MISSES = 3,
-    GRUMPY_UNANSWERED = 4,
+    GRUMPY_UNANSWERED = 5,    -- Grumpy sends in range with no Fear rise → fall back to plain Moo
 }
 
 local BLOCK_ATTRS = { "CowBotCheckActive", "CowBotQuarantined", "CowCaptured", "CowStunned", "CowMoofCutscene", "CatapultActive" }
@@ -89,6 +94,7 @@ local S = {
     running = true,
     farm = false,
     lootOnly = false,
+    grazeBarrels = true,  -- off: open crates only, leave material barrels
     debug = false,
     natural = false,
     useGrumpy = true,
@@ -96,6 +102,9 @@ local S = {
     grumpyMisses = 0,
     grumpyUnanswered = 0,
     lastMooStyle = nil,
+    eventsSeen = 0,
+    hold = nil,               -- { part, since, lastKeep } while a held kick is active
+    kickBackoff = 0,
     walk = { waypoints = nil, idx = 0, goal = nil, computedAt = 0, lastGoal = nil, lastMoveAt = 0, failures = 0 },
     sprinting = false,
     returningSince = nil,
@@ -114,13 +123,13 @@ local S = {
     lastReveal = 0,
     lastFearLog = 0,
     lastScan = 0,
-    kickId = 0,
+    kickId = 100000,          -- above the game's own counter in case the server wants increasing RequestIds
     serial = 0,
     barrelNext = {},
     crates = {},
     barrels = {},
     status = "Idle",
-    stats = { caravans = 0, stopped = 0, moos = 0, kicks = 0, bites = 0, opened = 0, loot = 0, frights = 0, missed = 0, skins = 0 },
+    stats = { caravans = 0, stopped = 0, moos = 0, kicks = 0, bites = 0, grazeOk = 0, grazeBad = 0, opened = 0, kickOk = 0, kickBad = 0, loot = 0, frights = 0, missed = 0, skins = 0 },
     logFile = nil,
     pending = {},
     lastFlush = 0,
@@ -379,11 +388,53 @@ end
 -- Probe: incoming caravan events + outgoing requests
 ----------------------------------------------------------------------------------------------------
 
+-- The caravan payload may not be the first arg (Aura/FjordStorm HandleEvent take (name, payload))
+local function caravanPayload(...)
+    for i = 1, select("#", ...) do
+        local a = select(i, ...)
+        if type(a) == "table" and CARAVAN_KINDS[a.Kind] then return a end
+    end
+    return nil
+end
+
+local function kickResult(...)
+    for i = 1, select("#", ...) do
+        local a = select(i, ...)
+        if type(a) == "table" and type(a.RequestId) == "number" and a.Ok ~= nil then return a end
+    end
+    return nil
+end
+
 local function watchIncoming(rem)
-    if not rem:IsA("RemoteEvent") then return end
+    if not (rem:IsA("RemoteEvent") or rem:IsA("UnreliableRemoteEvent")) then return end
     table.insert(S.probeConns, rem.OnClientEvent:Connect(function(...)
-        local a = ...
-        if type(a) ~= "table" or not CARAVAN_KINDS[a.Kind] then return end
+        local a = caravanPayload(...)
+        if not a then
+            local kr = kickResult(...)
+            if kr and kr.RequestId >= 100000 then
+                if kr.Ok == true then S.stats.kickOk += 1 else S.stats.kickBad += 1 end
+                log("kick_result", { remote = rem:GetFullName(), args = { ... } })
+            else
+                -- ClientEvent("GrazeResult", {NodeId, Accepted, Reason, RequestId}) answers barrel bites
+                local tag, g = ...
+                if tag == "GrazeResult" and type(g) == "table" and type(g.NodeId) == "string"
+                    and string.match(g.NodeId, "^Caravan%d+_B%d+$") then
+                    if g.Accepted == true then
+                        S.stats.grazeOk += 1
+                    else
+                        S.stats.grazeBad += 1
+                        if g.Reason == "ChewCooldown" then
+                            S.barrelNext[g.NodeId] = os.clock() + CONFIG.CHEW_RETRY
+                        elseif g.Reason == "OutsideCone" then
+                            S.reface = true -- not facing the barrel: re-stand facing it
+                        end
+                        log("graze_rejected", { node = g.NodeId, reason = g.Reason, id = g.RequestId })
+                    end
+                end
+            end
+            return
+        end
+        S.eventsSeen += 1
         local mine = tostring(a.ActorId) == tostring(plr.UserId)
         if a.Kind == "Fright" and mine then
             S.stats.frights += 1
@@ -401,18 +452,30 @@ local function watchIncoming(rem)
         if a.Kind == "FrightMissed" then
             S.stats.missed += 1
             S.grumpyUnanswered = 0
+            -- Server measured ~17 studs while we stood ~3.7 from the guide model: record both
+            -- client references so the next run shows which one the server measures against
+            if S.debug then
+                local r, hrp, st = getRoot(), guidePart(), readState()
+                local cf = st and routePose(st)
+                log("miss_probe", {
+                    server = a.Distance,
+                    toModel = r and hrp and (r.Position - hrp.Position).Magnitude or nil,
+                    toRoute = r and cf and (r.Position - cf.Position).Magnitude or nil,
+                    modelToRoute = hrp and cf and (hrp.Position - cf.Position).Magnitude or nil,
+                })
+            end
         end
         if a.Kind == "CrateOpened" and mine then S.stats.opened += 1 end
         if a.Kind == "Loot" then S.stats.loot += 1 end
         if a.Kind == "Crate" then S.stats.skins += 1 end
-        log("in", { remote = rem.Name, mine = mine, args = { ... } })
+        log("in", { remote = rem:GetFullName(), mine = mine, args = { ... } })
     end))
 end
 
 -- Incoming listeners always run (they feed the stats); log() itself is gated by Debug Log
 local function listenIncoming()
-    for _, rem in ipairs(remotes:GetChildren()) do watchIncoming(rem) end
-    table.insert(S.probeConns, remotes.ChildAdded:Connect(watchIncoming))
+    for _, rem in ipairs(ReplicatedStorage:GetDescendants()) do watchIncoming(rem) end
+    table.insert(S.probeConns, ReplicatedStorage.DescendantAdded:Connect(watchIncoming))
 end
 
 -- Outgoing hook is installed on first Debug Log enable; the handler passes through while debug is off
@@ -421,15 +484,14 @@ local function startProbe()
     S.hookInstalled = true
     local original
     local handler = function(self, ...)
-        if S.debug and getnamecallmethod() == "FireServer" and typeof(self) == "Instance"
+        if S.running and S.debug and getnamecallmethod() == "FireServer" and typeof(self) == "Instance"
             and self.Parent == remotes and WATCH_OUT[self.Name] then
             local a = ...
             if self.Name ~= "ChompRequest" or (type(a) == "string" and string.match(a, "^Caravan")) then
-                log("out", {
-                    remote = self.Name,
-                    ours = checkcaller and checkcaller() or nil,
-                    args = { ... },
-                })
+                -- Log outside the hook: log() makes namecalls (GetServerTimeNow) that would
+                -- overwrite the pending namecall method before original() runs
+                local entry = { remote = self.Name, ours = checkcaller and checkcaller() or nil, args = { ... } }
+                task.defer(log, "out", entry)
             end
         end
         return original(self, ...)
@@ -453,19 +515,25 @@ local function fire(name, ...)
     return (pcall(function() rem:FireServer(table.unpack(args, 1, args.n)) end))
 end
 
-local function tryMoo(now)
+local function tryMoo(now, st)
     if now - S.lastMoo < CONFIG.MOO_INTERVAL then return end
     S.lastMoo = now
     local grumpy = S.useGrumpy and S.grumpyState ~= "rejected"
     local ok
     if grumpy then
         ok = fire("MooRequest", "Grumpy") -- CowExpressions.MooStyles.Grumpy (no unlock)
-        if S.grumpyState == "unknown" then
-            -- No Fright / FrightMissed reply at all → server dropped the style
+        if S.grumpyState == "unknown" and st then
+            -- Caravan events never reach us, so judge by the replicated Fear attribute:
+            -- a window of Grumpy sends in range with no rise → server is not crediting it
+            local fear = st.Fear or 0
+            if S.grumpyUnanswered == 0 then S.grumpyFear0 = fear end
             S.grumpyUnanswered += 1
-            if S.grumpyUnanswered >= CONFIG.GRUMPY_UNANSWERED then
-                S.grumpyState = "rejected"
-                log("grumpy_rejected", { why = "no_reply" })
+            if S.grumpyUnanswered > CONFIG.GRUMPY_UNANSWERED then
+                if fear <= (S.grumpyFear0 or 0) then
+                    S.grumpyState = "rejected"
+                    log("grumpy_rejected", { why = "no_fear_rise", fear = fear, sends = S.grumpyUnanswered - 1 })
+                end
+                S.grumpyUnanswered = 0
             end
         end
     else
@@ -518,6 +586,7 @@ local function walkTo(goal, now)
         w.computedAt, w.goal = now, goal
         local path = PathfindingService:CreatePath({ AgentRadius = 2.5, AgentHeight = 5, AgentCanJump = true, WaypointSpacing = 6 })
         local ok = pcall(function() path:ComputeAsync(r.Position, goal) end)
+        if not S.running then return math.huge end  -- destroyed while ComputeAsync yielded
         if ok and path.Status == Enum.PathStatus.Success then
             w.waypoints, w.idx = path:GetWaypoints(), 2
         else
@@ -547,7 +616,11 @@ end
 -- Get within reach of a part: teleport mode stands there, natural mode walks there
 local function approach(part, now)
     if not S.natural then
-        standAt(part.Position, CONFIG.TARGET_OFFSET)
+        local r = getRoot()
+        if S.reface or not r or flatDist(r.Position, part.Position) > CONFIG.ACT_REACH or math.abs(r.Position.Y - part.Position.Y) > 6 then
+            standAt(part.Position, CONFIG.TARGET_OFFSET)
+            S.reface = false
+        end
         return true
     end
     local goal = standPoint(part.Position, CONFIG.TARGET_OFFSET)
@@ -565,15 +638,69 @@ local function kickReady(now)
     return true
 end
 
-local function tryKick(part, now)
-    local ok, why = kickReady(now)
-    if not ok then return why end
-    S.lastKick = now
+-- Matches InputController:_kickAim: Target = the model the aim locked onto (tree, crate, ...),
+-- sent on "Hold" only; "Keep" carries just Position + RequestId
+local function kickAim(part, withTarget)
     S.kickId = S.kickId % 2147483647 + 1
-    local payload = { Position = part.Position, RequestId = S.kickId }
-    if fire("KickRequest", payload, nil) then S.stats.kicks += 1 end
-    log("kick", { part = part, pos = part.Position, id = S.kickId })
-    return "sent"
+    local aim = { Position = part.Position, RequestId = S.kickId }
+    if withTarget then
+        local model = part.Parent
+        aim.Target = (model and model:IsA("Model")) and model or part
+    end
+    return aim
+end
+
+local function releaseKick(why)
+    if not S.hold then return end
+    fire("KickRequest", nil, "Release")
+    log("kick_release", { why = why, held = os.clock() - S.hold.since })
+    S.hold = nil
+end
+
+local function grounded()
+    local c = plr.Character
+    local h = c and c:FindFirstChildOfClass("Humanoid")
+    return h ~= nil and h.FloorMaterial ~= Enum.Material.Air and not h.Sit
+end
+
+-- Crates say "Hold Kick to open": same wire as InputController:_updateKickHold
+-- ("Hold" once, "Keep" every 0.4 s, "Release" at the end)
+local function holdKick(part, now)
+    local hold = S.hold
+    if hold and hold.part ~= part then
+        releaseKick("target_changed")
+        hold = nil
+    end
+    if not hold then
+        if now < S.kickBackoff then return "backoff" end
+        if not grounded() then return "airborne" end
+        local ok, why = kickReady(now)
+        if not ok then return why end
+        S.lastKick = now
+        if fire("KickRequest", kickAim(part, true), "Hold") then S.stats.kicks += 1 end
+        S.hold = { part = part, since = now, lastKeep = now }
+        log("kick_hold", { part = part, id = S.kickId })
+        return "hold"
+    end
+    if now - hold.since > CONFIG.KICK_HOLD_MAX then
+        releaseKick("timeout")
+        S.kickBackoff = now + CONFIG.KICK_RETRY
+        return "timeout"
+    end
+    if now - hold.lastKeep < CONFIG.KICK_KEEP then return "holding" end
+    local c = plr.Character
+    if now - hold.since > CONFIG.KICK_HOLD_CONFIRM and not (c and c:GetAttribute("CowKickHolding") == true) then
+        releaseKick("not_holding")
+        S.kickBackoff = now + CONFIG.KICK_RETRY
+        return "dropped"
+    end
+    if not grounded() then
+        releaseKick("airborne")
+        return "airborne"
+    end
+    hold.lastKeep = now
+    fire("KickRequest", kickAim(part), "Keep")
+    return "holding"
 end
 
 local function biteReady(part, now)
@@ -648,6 +775,7 @@ end
 
 -- Teleport mode: snap back. Natural mode: stop walking here (step() walks back while the farm is on).
 local function restore()
+    releaseKick("restore")
     if S.natural then
         stopWalk()
     elseif S.savedCF then
@@ -678,6 +806,7 @@ local function onPhase(st, prev)
     if st and st.Phase == "OnRoad" and prev ~= "OnRoad" then
         S.stats.caravans += 1
         table.clear(S.barrelNext)
+        S.barrelLock = nil
     end
     if st and st.Phase == "Stopped" then S.stats.stopped += 1 end
     if S.debug and st and (st.Phase == "OnRoad" or st.Phase == "Stopped") then
@@ -696,10 +825,11 @@ local function scareStep(st, now)
     local r = getRoot()
     if S.natural then
         walkTo(scareGoal(st, pos), now)
-        if r and flatDist(r.Position, pos) <= CONFIG.SCARE_RADIUS then tryMoo(now) end
+        if r and flatDist(r.Position, pos) <= CONFIG.SCARE_RADIUS then tryMoo(now, st) end
     else
         standAt(pos, CONFIG.GUIDE_OFFSET)
-        tryMoo(now)
+        r = getRoot()
+        tryMoo(now, r and flatDist(r.Position, pos) <= CONFIG.SCARE_RADIUS and st or nil)
     end
     S.status = string.format("Scaring (%s%s) · fear %d/%d · %s",
         src, S.natural and ", walking" or "", math.floor(st.Fear or 0), st.Goal,
@@ -717,35 +847,45 @@ local function lootStep(st, now)
     end
     local crate = S.crates[1]
     if crate and crate.Parent then
-        local why = approach(crate, now) and tryKick(crate, now) or "walking"
+        local why = approach(crate, now) and holdKick(crate, now) or "walking"
         -- Without HindStrength we can't kick: fall through and graze
         if why ~= "no_hind_strength" then
             S.status = string.format("Kicking crates · %d left · %s", #S.crates, why)
             return
         end
     end
-    local best, bestId
-    local soonest, soonPart = math.huge, nil
-    for _, b in ipairs(S.barrels) do
-        if b.Parent then
-            local id = biteReady(b, now)
-            if id then best, bestId = b, id; break end
-            local nodeId = b:GetAttribute("CowBiteTargetId")
-            local t = S.barrelNext[nodeId] or 0
-            if t < soonest then soonest, soonPart = t, b end
-        end
+    releaseKick("no_crate")
+    if not S.grazeBarrels then
+        S.status = "Crates done · barrel looting off"
+        return
     end
-    local target = best or soonPart
-    if not target then
+    -- Graze one barrel continuously (as a held graze does) instead of rotating: stay on the
+    -- locked barrel until it empties or disappears, then lock the nearest remaining one
+    local lock = S.barrelLock
+    if not (lock and lock.Parent and table.find(S.barrels, lock)) then
+        lock = nil
+        local r = getRoot()
+        local bestD = math.huge
+        for _, b in ipairs(S.barrels) do
+            if b.Parent then
+                local d = r and flatDist(r.Position, b.Position) or 0
+                if d < bestD then lock, bestD = b, d end
+            end
+        end
+        S.barrelLock = lock
+    end
+    if not lock then
         S.status = "Looted · waiting for caravan to leave"
         return
     end
-    if approach(target, now) and best then tryBite(best, bestId, now) end
+    local id = biteReady(lock, now)
+    if approach(lock, now) and id then tryBite(lock, id, now) end
     local left = math.max(0, math.floor((st.LootEndsAt or 0) - serverNow()))
     S.status = string.format("Grazing barrels · %d left · %ds", #S.barrels, left)
 end
 
 local function step(now)
+    if not S.running then return end
     if not S.folder or not S.folder.Parent then
         bindFolder(cowGame:FindFirstChild("CaravanState"))
     end
@@ -783,6 +923,7 @@ local function step(now)
     S.returningSince = nil
     local why = blocked()
     if why then
+        releaseKick("blocked")
         if S.natural then stopWalk() end
         S.status = "Paused: " .. why
         return
@@ -806,13 +947,16 @@ end
 -- UI
 ----------------------------------------------------------------------------------------------------
 
-local Rayfield = _G.CowHubRayfield
-if not Rayfield then
+-- Own Rayfield instance: Destroy Script tears it down with Window:Unload() (gen2; Rayfield:Destroy() fallback);
+-- reusing _G.CowHubRayfield would close the hub's window too
+local Rayfield = nil
+do
     local ok, res = pcall(function()
         return loadstring(game:HttpGet("https://sirius.menu/gen2"))()
     end)
     if ok then Rayfield = res end
 end
+S.rayfield = Rayfield
 
 local Window, statusCard
 local function setCard(title, body)
@@ -827,20 +971,33 @@ local function setCard(title, body)
     end)
 end
 
+-- Every step is isolated so one failure can't leave connections or the UI behind.
+-- The __namecall hook stays installed (restoring it would clobber hooks added after ours);
+-- its handler passes straight through once S.running is false.
 local function destroy()
+    if S.destroyed then return end
+    S.destroyed = true
     S.running = false
     S.farm = false
-    restore()
-    stopProbe()
+    local function try(label, f)
+        local ok, err = pcall(f)
+        if not ok then warn("[CaravanAutofarm] destroy/" .. label .. ": " .. tostring(err)) end
+    end
+    try("restore", restore)
+    try("log", stopProbe)
     for _, c in ipairs(S.probeConns) do pcall(function() c:Disconnect() end) end
     table.clear(S.probeConns)
-    if S.folderConn then S.folderConn:Disconnect() end
+    if S.folderConn then pcall(function() S.folderConn:Disconnect() end) end
     for _, c in ipairs(S.conns) do pcall(function() c:Disconnect() end) end
-    if S.originalNamecall and hookmetamethod then
-        pcall(hookmetamethod, game, "__namecall", S.originalNamecall)
-        S.originalNamecall = nil
-    end
-    if Window and Window.Destroy then pcall(function() Window:Destroy() end) end
+    table.clear(S.conns)
+    try("ui", function()
+        -- gen2 library has no Destroy; the window owns teardown via Unload (cowhub L13239 pattern)
+        if Window and Window.Unload then
+            Window:Unload()
+        elseif S.rayfield and S.rayfield.Destroy then
+            S.rayfield:Destroy()
+        end
+    end)
     if _G.CowCaravanAutofarm == S then _G.CowCaravanAutofarm = nil end
 end
 S.destroy = destroy
@@ -888,6 +1045,15 @@ if Window then
         Callback = function(v)
             S.useGrumpy = v == true
             if S.useGrumpy then S.grumpyState, S.grumpyMisses, S.grumpyUnanswered = "unknown", 0, 0 end
+        end,
+    })
+    tab:CreateToggle({
+        Name = "Loot Barrels (materials)",
+        CurrentValue = true,
+        Flag = "Toggle_CaravanGrazeBarrels",
+        Callback = function(v)
+            S.grazeBarrels = v == true
+            if not S.grazeBarrels then S.barrelLock = nil end
         end,
     })
     tab:CreateToggle({
@@ -943,7 +1109,7 @@ if Window then
             S.debug = was
         end,
     })
-    tab:CreateButton({ Name = "Destroy Script", Callback = destroy })
+    tab:CreateButton({ Name = "Destroy Script", Callback = function() task.defer(destroy) end })
     tab:CreateSection({ Name = "Status" })
     pcall(function()
         if tab.CreateText then
@@ -982,10 +1148,10 @@ task.spawn(function()
             local st = S.snap
             local s = S.stats
             setCard("Status: " .. S.status, string.format(
-                "Mode: %s · Grumpy: %s\nPhase: %s · Kind: %s\nCaravans %d · Stopped %d\nMoos %d · Frights %d · Missed %d\nKicks %d · Crates opened %d · Skins %d\nBites %d · Loot drops %d%s",
+                "Mode: %s · Grumpy: %s\nPhase: %s · Kind: %s\nCaravans %d · Stopped %d\nMoos %d · Frights %d · Missed %d\nKicks %d (ok %d / rejected %d) · Crates opened %d · Skins %d\nBites %d (ok %d / rejected %d) · Loot drops %d%s",
                 S.natural and "Natural (walk)" or "Teleport", S.useGrumpy and S.grumpyState or "off",
                 tostring(st and st.Phase or "none"), tostring(st and st.Kind or "-"),
-                s.caravans, s.stopped, s.moos, s.frights, s.missed, s.kicks, s.opened, s.skins, s.bites, s.loot,
+                s.caravans, s.stopped, s.moos, s.frights, s.missed, s.kicks, s.kickOk, s.kickBad, s.opened, s.skins, s.bites, s.grazeOk, s.grazeBad, s.loot,
                 S.debug and ("\nLog: " .. tostring(S.logFile)) or ""))
         end
         task.wait(CONFIG.LOOP_DT)
