@@ -433,6 +433,18 @@ local function watchIncoming(rem)
         if a.Kind == "FrightMissed" then
             S.stats.missed += 1
             S.grumpyUnanswered = 0
+            -- Server measured ~17 studs while we stood ~3.7 from the guide model: record both
+            -- client references so the next run shows which one the server measures against
+            if S.debug then
+                local r, hrp, st = getRoot(), guidePart(), readState()
+                local cf = st and routePose(st)
+                log("miss_probe", {
+                    server = a.Distance,
+                    toModel = r and hrp and (r.Position - hrp.Position).Magnitude or nil,
+                    toRoute = r and cf and (r.Position - cf.Position).Magnitude or nil,
+                    modelToRoute = hrp and cf and (hrp.Position - cf.Position).Magnitude or nil,
+                })
+            end
         end
         if a.Kind == "CrateOpened" and mine then S.stats.opened += 1 end
         if a.Kind == "Loot" then S.stats.loot += 1 end
