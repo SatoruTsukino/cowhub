@@ -55,5 +55,6 @@ See every dog and barn cat. Highlight each one. Label shows overall trait (Dispo
 - Hub integration: not planned. Script stays standalone in `luascripts/` (user decision 2026-11-06).
 
 ### Phase 2: Bait Drop ESP
-- [x] Plan 2.1: `luascripts/bait_drop_esp.lua` — ChickenDrop (Dog Bone) + CatfishDrop; compile ok, 14 regs, stub test pass. In-game check pending.
+- [x] Plan 2.1: `luascripts/bait_drop_esp.lua` — ChickenDrop (Dog Bone) + CatfishDrop; compile ok, 14 regs, stub test pass.
 - [x] Plan 2.1 fix: in-game run showed nothing with exact `ChickenDrop` name match. Now match any Model with `ItemId` Chicken/Catfish (drop name as fallback), incl. `AnimalTamingMeal` labeled (eating); LOG prints each find. 16 regs, stub 4/4 hit, 2/2 skip.
+- [x] Plan 2.1 UAT (2026-11-07): Dog Bone at `Workspace.GrazingBaitFind` (server-spawned grazing find, not in client/Shared dumps) highlighted with label; highlight removed on pickup. Catfish not yet seen in game.
