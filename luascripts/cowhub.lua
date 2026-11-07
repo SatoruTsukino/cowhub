@@ -1,4 +1,4 @@
--- Cow Hub [6b22d25] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [f8b6666] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -54,7 +54,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [6b22d25]",
+    Name = "Cow Hub [f8b6666]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -495,7 +495,6 @@ local cache = {
     nodeCleanNames = {},
     nodeIDs = setmetatable({}, { __mode = "k" }),
     mobPayloads = {},
-    nodePosition = setmetatable({}, { __mode = "k" }),
     mobAttackOriginPart = setmetatable({}, { __mode = "kv" }),
     mobHumanoid = setmetatable({}, { __mode = "kv" }),
     mobWarning = setmetatable({}, { __mode = "kv" }),
@@ -2229,12 +2228,12 @@ local function getResourcesFolder()
     return rafting and rafting:FindFirstChild("Resources")
 end
 
+-- Read live: the grass renderer pools visuals and moves them to other nodes, so a cached position goes stale.
+-- RestCFrame is where the node sits (the game's targeting uses it); the part itself animates.
 function cache.getNodePosition(node)
-    local pos = cache.nodePosition[node]
-    if pos then return pos end
-    pos = node:IsA("Model") and node:GetPivot().Position or node.Position
-    cache.nodePosition[node] = pos
-    return pos
+    local rest = node:GetAttribute("RestCFrame")
+    if typeof(rest) == "CFrame" then return rest.Position end
+    return node:IsA("Model") and node:GetPivot().Position or node.Position
 end
 
 function cache.getGrassNodes()
@@ -2333,13 +2332,15 @@ end
 
 function cache.getNodeID(node)
     if not node or not node.Parent then return nil end
+    -- Pooled visuals are renamed GrassVisual_<id> on reuse, so a cached ID is valid only while the name matches
+    local name = node.Name
     local cached = cache.nodeIDs[node]
-    if cached ~= nil then return cached or nil end
+    if cached ~= nil and cached.name == name then return cached.id or nil end
 
     -- Must be strictly in CowVirtualGrass
     local folder = cache.grassFolder or findGrassFolder()
     if folder and not node:IsDescendantOf(folder) then
-        cache.nodeIDs[node] = false
+        cache.nodeIDs[node] = { name = name, id = false }
         return nil
     end
 
@@ -2363,7 +2364,7 @@ function cache.getNodeID(node)
             cleanId = string.gsub(cleanId, "_+$", "")
         end
         if isValidGrassNodeID(cleanId) then
-            cache.nodeIDs[node] = cleanId
+            cache.nodeIDs[node] = { name = name, id = cleanId }
             return cleanId
         end
     end
@@ -2371,11 +2372,11 @@ function cache.getNodeID(node)
     -- Fallback: legacy name cleaning if attribute is absent
     local fallback = cache.getCleanGrassName(node.Name)
     if fallback and isValidGrassNodeID(fallback) then
-        cache.nodeIDs[node] = fallback
+        cache.nodeIDs[node] = { name = name, id = fallback }
         return fallback
     end
 
-    cache.nodeIDs[node] = false
+    cache.nodeIDs[node] = { name = name, id = false }
     return nil
 end
 
@@ -4443,12 +4444,6 @@ end
 function cache.sanitizeMemory(now)
     if now - cache.lastSanitationTime > 15 then
         cache.lastSanitationTime = now
-
-        for node, _ in pairs(cache.nodePosition) do
-            if not node or not node.Parent then
-                cache.nodePosition[node] = nil
-            end
-        end
 
         for node, _ in pairs(cache.nodeIDs) do
             if not node or not node.Parent then
