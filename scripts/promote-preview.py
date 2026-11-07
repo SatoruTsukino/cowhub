@@ -3,7 +3,8 @@
 
 The output is a copy of preview.lua with the staging-only chomp debug log removed:
 the log state fields, chomp.log / chomp.flushLog, every call to them, and the
-"Chomp Debug Log" toggle. The golden-grass probe that feeds that log (Plan 4.1:
+"Chomp Debug Log" toggle. The "Caravan Debug Log" toggle is removed too; its log
+helpers stay but never write, since caravan.debug can't turn on without it. The golden-grass probe that feeds that log (Plan 4.1:
 chomp.sanitize / goldenState / findNodeById / watchStats, chomp.statConns, the
 per-send Golden capture) is removed with it. The window theme is switched from "frost" (staging)
 to "rose" (production), per .agents/rules/script_environments.md. It fails,
@@ -25,11 +26,12 @@ LOG_CALL = re.compile(r"^\s*chomp\.(log|flushLog|watchStats)\(.*\)\s*$")
 DEBUG_FUNCS = ("log", "flushLog", "sanitize", "goldenState", "findNodeById", "watchStats")
 GOLDEN_LOCAL = re.compile(r"^\s*local golden = chomp\.goldenState\(.*\)\s*$")
 GOLDEN_FIELD = re.compile(r", Golden = golden \}")
+DEBUG_TOGGLES = {"MainTab": "Chomp Debug Log", "CaravanTab": "Caravan Debug Log"}
 DEBUG_IF_LINE = re.compile(r"^\s*if chomp\.debug then .* end\s*$")
 THEME = re.compile(r'^(\s*theme = )"frost",\s*$')
 LEFTOVER = re.compile(
     r"chomp\.(log|flushLog|debug|logBuf|logPath|lastFlush|lastIdleLog|sanitize|goldenState|findNodeById|watchStats|statConns)\b"
-    r"|ChompDebug|chomplogs|Golden probe|\bgolden\b"
+    r"|ChompDebug|chomplogs|Golden probe|\bgolden\b|Caravan Debug Log|Toggle_CaravanDebugLog"
 )
 
 
@@ -61,7 +63,8 @@ def strip(lines):
         if s == "if chomp.debug then":
             i = skip_block(lines, i, "end")
             continue
-        if s == "MainTab:CreateToggle({" and i + 1 < len(lines) and "Chomp Debug Log" in lines[i + 1]:
+        tab = s[: -len(":CreateToggle({")] if s.endswith(":CreateToggle({") else None
+        if tab in DEBUG_TOGGLES and i + 1 < len(lines) and DEBUG_TOGGLES[tab] in lines[i + 1]:
             i = skip_block(lines, i, "})")
             while i < len(lines) and not lines[i].strip():
                 i += 1

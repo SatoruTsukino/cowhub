@@ -1,4 +1,4 @@
--- Cow Hub [e654ff8] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [256a39a] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -58,7 +58,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [e654ff8]",
+    Name = "Cow Hub [256a39a]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -14018,16 +14018,6 @@ CaravanTab:CreateToggle({
 CaravanTab:CreateButton({
     Name = "Teleport to Barn",
     Callback = function() caravan.teleportBarn() end,
-})
-
-CaravanTab:CreateToggle({
-    Name = "Caravan Debug Log",
-    CurrentValue = false,
-    Flag = "Toggle_CaravanDebugLog",
-    Callback = function(Value)
-        caravan.debug = Value == true
-        if not caravan.debug then caravan.flushLog(true) end
-    end,
 })
 
 do
