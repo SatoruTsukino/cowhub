@@ -8,7 +8,7 @@
 -- record Seed with the game's own Sample PRNG (AnimalTemperament.Sample).
 --
 -- The block between BEGIN/END petESP core is pasted verbatim into preview.lua.
--- API: set petESP.show.Dog / petESP.show.Cat, then call petESP.update().
+-- API: set petESP.show.Dog / petESP.show.Cat / petESP.leaderOnly, then call petESP.update().
 
 if not game:IsLoaded() then
     game.Loaded:Wait()
@@ -30,6 +30,7 @@ end
 -- BEGIN petESP core
 local petESP = {
     show = { Dog = false, Cat = false },
+    leaderOnly = false, -- true: show only stand-ground leaders (Defiance > 0.86, Timidity < 0.72)
     visuals = {}, -- [Model] = { highlight, billboard, label, targetPart, folderName, lastText }
     controllers = {}, -- [folderName] = DogController / BarnCatController table
     modelRecords = {}, -- [Model] = record
@@ -51,6 +52,7 @@ do
         Sociable = Color3.fromRGB(110, 230, 120),
     }
     local UNKNOWN_COLOR = Color3.fromRGB(0, 220, 255)
+    local LEADER_COLOR = Color3.fromRGB(255, 215, 0)
 
     -- Trait rows shown on the label: { key, short label, salt }
     local TRAIT_ROWS = {
@@ -116,6 +118,16 @@ do
         if desc then head = head .. " · " .. desc end
         local lines = { head }
 
+        -- Stand-ground leader: hard gates from AnimalTemperament.CanStand
+        -- (Defiance must beat the 0.86–0.91 threshold; Timidity < 0.72 unlocks taunt resistance).
+        local function t(key, salt) return traitValue(personality, seed, key, salt) or 0 end
+        local leader = t("Defiance", 307) > 0.86 and t("Timidity", 409) < 0.72
+        if leader then
+            local score = (t("Initiative", 281) + t("Leadership", 417) + t("Dominance", 401)
+                + (1 - t("Timidity", 409)) + (1 - t("Neuroticism", 419))) / 5
+            lines[1] = "★ LEADER " .. string.format("%.2f", score) .. " · " .. head
+        end
+
         for _, row in ipairs(TRAIT_ROWS) do
             local parts = {}
             for _, t in ipairs(row) do
@@ -136,7 +148,7 @@ do
             if #extras > 0 then lines[#lines + 1] = table.concat(extras, "  ") end
         end
 
-        return table.concat(lines, "\n"), disposition
+        return table.concat(lines, "\n"), disposition, leader
     end
     petESP.buildTraitText = buildTraitText
 
@@ -257,7 +269,7 @@ do
         local info = FOLDERS[visual.folderName]
         local record = petESP.modelRecords[model]
         local title = info.icon .. " " .. info.species
-        local body, disposition
+        local body, disposition, leader
 
         if record then
             local variant = record.Variant or record.Coat
@@ -268,8 +280,15 @@ do
             if record.AgeStage == "Young" or record.Puppy == true or record.Kitten == true then
                 title = title .. " [young]"
             end
-            body, disposition = buildTraitText(record)
+            body, disposition, leader = buildTraitText(record)
         end
+
+        local visible = leader or not petESP.leaderOnly
+        if visual.highlight.Enabled ~= visible then
+            visual.highlight.Enabled = visible
+            visual.billboard.Enabled = visible
+        end
+        if not visible then return end
         body = body or (petESP.controllers[visual.folderName] and "traits: no record" or "traits unavailable (no getgc)")
 
         local dist = ""
@@ -281,7 +300,7 @@ do
         if text ~= visual.lastText then
             visual.lastText = text
             visual.label.Text = text
-            local color = disposition and DISPOSITION_COLORS[disposition] or UNKNOWN_COLOR
+            local color = leader and LEADER_COLOR or disposition and DISPOSITION_COLORS[disposition] or UNKNOWN_COLOR
             visual.highlight.FillColor = color
             visual.label.TextColor3 = color
         end

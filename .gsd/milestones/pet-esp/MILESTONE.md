@@ -33,6 +33,7 @@ See every dog and barn cat. Highlight each one. Label shows overall trait (Dispo
 | PE-04 | No `getgc` → highlight still works, label say "traits unavailable" | Must |
 | PE-05 | `_G.PetESP` re-exec guard + `destroy()` | Must |
 | PE-06 | Separate Dog / Cat toggles: `petESP.show.Dog` / `petESP.show.Cat` + `petESP.update()`; standalone run turns both on | Must |
+| PE-07 | Leader-only filter `petESP.leaderOnly` (dog + cat): show only pets passing `CanStand` gates Defiance > 0.86 and Timidity < 0.72; gold highlight + `★ LEADER <score>` (avg Ini, Ldr, Dom, 1−Tim, 1−Neu). ~10% of seeds match | Must |
 
 ## Non-goals
 - No hub integration; standalone script only.
