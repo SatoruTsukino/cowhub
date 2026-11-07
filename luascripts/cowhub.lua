@@ -1,4 +1,4 @@
--- Cow Hub [f8b6666] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [f6c95c2] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -54,7 +54,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [f8b6666]",
+    Name = "Cow Hub [f6c95c2]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -2252,7 +2252,12 @@ function cache.getGrassNodes()
                 updateWallRaycastFilter()
             end
         end
-        cache.grassNodes = cache.grassFolder:GetChildren()
+        -- Only node visuals: the folder also holds non-node children (e.g. the CroppedGrass folder)
+        local nodes = {}
+        for _, child in ipairs(cache.grassFolder:GetChildren()) do
+            if child:IsA("BasePart") or child:IsA("Model") then table.insert(nodes, child) end
+        end
+        cache.grassNodes = nodes
     end
     return cache.grassNodes
 end
@@ -5178,6 +5183,9 @@ function farm.findClearEscapeDirection(rootPos)
         end
 
         local score = clearDist
+        if farm.isWaterAt(rootPos + dir * 8.0) then
+            score = score - 20.0
+        end
         if farm.anchorPos then
             local testPos = rootPos + (dir * 8.0)
             local distFromAnchorSq = get2DDistanceSq(farm.anchorPos, testPos)
@@ -5201,6 +5209,27 @@ function farm.findClearEscapeDirection(rootPos)
     end
 
     return bestDir
+end
+
+-- True when the ground under pos is terrain water (the Fjord river)
+function farm.isWaterAt(pos)
+    local hit = workspace:Raycast(pos + Vector3.new(0, 25, 0), Vector3.new(0, -60, 0), wallRaycastParams)
+    return hit ~= nil and hit.Material == Enum.Material.Water
+end
+
+-- Random wander point inside the radius: not over water, not behind a wall. Falls back to the anchor.
+function farm.pickWanderPos(rootPos)
+    local maxDist = math.max(5, math.floor(farm.radius))
+    local minDist = math.min(5, maxDist)
+    for _ = 1, 8 do
+        local angle = math.random() * (math.pi * 2)
+        local dist = math.random(minDist, maxDist)
+        local pos = farm.anchorPos + Vector3.new(math.cos(angle) * dist, 0, math.sin(angle) * dist)
+        if not farm.isWaterAt(pos) and not (farm.collisionDetection and farm.hasWallBetween(rootPos, pos)) then
+            return pos
+        end
+    end
+    return farm.anchorPos
 end
 
 function farm.processMovement(dt, now, rootPos)
@@ -5351,25 +5380,7 @@ function farm.processMovement(dt, now, rootPos)
                 farm.currentTargetNode = nil
                 farm.currentNodeStartTime = 0
                 if not farm.nextRandomPos or get2DDistanceSq(rootPos, farm.nextRandomPos) < 25 then
-                    local foundSafe = false
-                    if farm.collisionDetection then
-                        local maxDist = math.max(5, math.floor(farm.radius))
-                        local minDist = math.min(5, maxDist)
-                        for _ = 1, 6 do
-                            local angle = math.random() * (math.pi * 2)
-                            local dist = math.random(minDist, maxDist)
-                            local candidatePos = farm.anchorPos + Vector3.new(math.cos(angle) * dist, 0, math.sin(angle) * dist)
-                            if not farm.hasWallBetween(rootPos, candidatePos) then
-                                farm.nextRandomPos = candidatePos
-                                foundSafe = true
-                                break
-                            end
-                        end
-                    end
-                    if not foundSafe then
-                        local angle = math.random() * (math.pi * 2)
-                        farm.nextRandomPos = farm.anchorPos + Vector3.new(math.cos(angle) * farm.radius, 0, math.sin(angle) * farm.radius)
-                    end
+                    farm.nextRandomPos = farm.pickWanderPos(rootPos)
                 end
             end
         end
@@ -5393,25 +5404,7 @@ function farm.processMovement(dt, now, rootPos)
 
     elseif farm.pattern == "Random" then
         if not farm.nextRandomPos or get2DDistanceSq(rootPos, farm.nextRandomPos) < 25 then
-            local foundSafe = false
-            if farm.collisionDetection then
-                local maxDist = math.max(5, math.floor(farm.radius))
-                local minDist = math.min(5, maxDist)
-                for _ = 1, 6 do
-                    local angle = math.random() * (math.pi * 2)
-                    local dist = math.random(minDist, maxDist)
-                    local candidatePos = farm.anchorPos + Vector3.new(math.cos(angle) * dist, 0, math.sin(angle) * dist)
-                    if not farm.hasWallBetween(rootPos, candidatePos) then
-                        farm.nextRandomPos = candidatePos
-                        foundSafe = true
-                        break
-                    end
-                end
-            end
-            if not foundSafe then
-                local angle = math.random() * (math.pi * 2)
-                farm.nextRandomPos = farm.anchorPos + Vector3.new(math.cos(angle) * farm.radius, 0, math.sin(angle) * farm.radius)
-            end
+            farm.nextRandomPos = farm.pickWanderPos(rootPos)
         end
         targetPos = farm.nextRandomPos
     end
