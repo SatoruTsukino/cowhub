@@ -1,4 +1,4 @@
--- Cow Hub [ec6e281] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [3715ba9] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -58,7 +58,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [ec6e281]",
+    Name = "Cow Hub [3715ba9]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -13226,6 +13226,7 @@ do
         INTERCEPT_DETOUR = 1.3,  -- path length vs straight line
         INTERCEPT_MAX = 800,     -- furthest route point ahead to consider
         RETURN_TIMEOUT = 90,
+        BARN_POS = Vector3.new(-528, 705, 564), -- natural mode starts and ends here: dry land, away from the river
         GRUMPY_MISSES = 3,
         GRUMPY_UNANSWERED = 5,   -- in-range Grumpy sends with no Fear rise -> plain Moo
         FEAR_LOG_INTERVAL = 5,
@@ -13305,6 +13306,10 @@ do
             r.AssemblyLinearVelocity = Vector3.zero
             r.AssemblyAngularVelocity = Vector3.zero
         end)
+    end
+
+    function caravan.teleportBarn()
+        caravan.teleport(CFrame.new(CFG.BARN_POS))
     end
 
     function caravan.standAt(pos, offset)
@@ -13907,17 +13912,17 @@ do
         if r then pcall(function() r.Anchored = false end) end -- Manatite / Mithril anchor the root
         if h then pcall(function() h:Move(Vector3.zero, false) end) end
         caravan.savedCF = r and r.CFrame
+        -- Natural mode walks from the barn: from the old spot the path could lead into the river
+        if caravan.natural then caravan.teleportBarn() end
         caravan.log("takeover", { natural = caravan.natural })
     end
 
     -- Back where the event started; the paused farms resume from there
     function caravan.handback(why)
         caravan.releaseKick("handback")
-        if caravan.natural then
-            caravan.stopWalk()
-        elseif caravan.savedCF then
-            caravan.teleport(caravan.savedCF)
-        end
+        if caravan.natural then caravan.stopWalk() end
+        -- Natural mode walked back to the barn; both modes then return to the start spot
+        if caravan.savedCF then caravan.teleport(caravan.savedCF) end
         caravan.setSprint(false)
         caravan.savedCF, caravan.returningSince, caravan.barrelLock = nil, nil, nil
         farm.lastStuckCheckPos, farm.lastStuckCheckTime, farm.currentTargetNode = nil, 0, nil
@@ -14028,10 +14033,10 @@ do
                 caravan.status = "Waiting for caravan"
                 return
             end
-            -- Natural mode walks back first; the farms stay paused until it arrives
+            -- Natural mode walks back to the barn first; the farms stay paused until it arrives
             if caravan.natural and caravan.savedCF then
                 caravan.returningSince = caravan.returningSince or now
-                local d = caravan.walkTo(caravan.savedCF.Position, now)
+                local d = caravan.walkTo(CFG.BARN_POS, now)
                 if d > 4 and now - caravan.returningSince <= CFG.RETURN_TIMEOUT then
                     caravan.status = string.format("Walking back · %.0f studs", d)
                     return
@@ -14111,7 +14116,7 @@ CaravanTab:CreateToggle({
 })
 
 CaravanTab:CreateToggle({
-    Name = "Natural Mode (walk, no teleports)",
+    Name = "Natural Mode (walk from the barn)",
     CurrentValue = false,
     Flag = "Toggle_CaravanNatural",
     Callback = function(Value)
@@ -14149,6 +14154,11 @@ CaravanTab:CreateToggle({
     CurrentValue = false,
     Flag = "Toggle_CaravanLootOnly",
     Callback = function(Value) caravan.lootOnly = Value == true end,
+})
+
+CaravanTab:CreateButton({
+    Name = "Teleport to Barn",
+    Callback = function() caravan.teleportBarn() end,
 })
 
 CaravanTab:CreateToggle({
