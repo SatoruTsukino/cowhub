@@ -1,3 +1,22 @@
+-- ===================== SETTINGS (edit, then execute) =====================
+local SETTINGS = {
+    DESTROY = false, -- true: remove the running Pet ESP and stop (nothing new starts)
+
+    DOGS = true, -- highlight workspace.LocalDogs
+    CATS = true, -- highlight workspace.LocalBarnCats
+
+    -- Stand-ground leader filters. All off = show every pet.
+    -- Any on = show only pets one of them picks (all need Defiance > 0.86, Timidity < 0.72).
+    LEADER_SCORE = false, -- leader score >= MIN_SCORE
+    LEADER_STRICT = false, -- Ini, Ldr, Dom >= MIN_TRAIT and Boldness >= MIN_BOLD
+    LEADER_BEST = false, -- only the highest-scoring leader in range
+
+    MIN_SCORE = 0.70,
+    MIN_TRAIT = 0.70,
+    MIN_BOLD = 1.0,
+}
+-- ==========================================================================
+
 -- Pet ESP (Dogs / Barn Cats) with temperament readout
 -- Highlights every pet model in workspace.LocalDogs / workspace.LocalBarnCats and
 -- labels it with Disposition + full personality vector.
@@ -10,7 +29,8 @@
 --   AnimalTemperament.Init   salted Sample() traits + Disposition
 --   AnimalRelationships      Generosity / FoodTaking;  AnimalBaitBehavior  Chattiness
 --
--- Toggles (set, then call petESP.update()):
+-- Re-executing always replaces the running ESP with the SETTINGS above.
+-- Live toggles from console (set, then call _G.PetESP.update()):
 --   petESP.show.Dog / petESP.show.Cat         species on/off
 --   petESP.leader.score / .strict / .best     stand-ground leader filters (any on = filter;
 --                                             a pet shows if any enabled filter picks it)
@@ -22,6 +42,10 @@ end
 
 if _G.PetESP and type(_G.PetESP.destroy) == "function" then
     pcall(_G.PetESP.destroy)
+end
+
+if SETTINGS.DESTROY then
+    return nil
 end
 
 local Players = game:GetService("Players")
@@ -446,9 +470,14 @@ function petESP.destroy()
     end
 end
 
--- Standalone run: both species on, leader filters off.
-petESP.show.Dog = true
-petESP.show.Cat = true
+petESP.show.Dog = SETTINGS.DOGS == true
+petESP.show.Cat = SETTINGS.CATS == true
+petESP.leader.score = SETTINGS.LEADER_SCORE == true
+petESP.leader.strict = SETTINGS.LEADER_STRICT == true
+petESP.leader.best = SETTINGS.LEADER_BEST == true
+petESP.leaderRules.minScore = tonumber(SETTINGS.MIN_SCORE) or petESP.leaderRules.minScore
+petESP.leaderRules.minTrait = tonumber(SETTINGS.MIN_TRAIT) or petESP.leaderRules.minTrait
+petESP.leaderRules.minBold = tonumber(SETTINGS.MIN_BOLD) or petESP.leaderRules.minBold
 petESP.update()
 _G.PetESP = petESP
 return petESP

@@ -37,6 +37,7 @@ See every dog and barn cat. Highlight each one. Label shows overall trait (Dispo
 | PE-06 | Separate Dog / Cat toggles: `petESP.show.Dog` / `petESP.show.Cat` + `petESP.update()`; standalone run turns both on | Must |
 | PE-07 | Three leader toggles `petESP.leader.score / .strict / .best` (dog + cat, union when several on). All need `CanStand` gate Defiance > 0.86 + Timidity < 0.72. score: avg(Ini, Ldr, Dom, 1−Tim, 1−Neu, Bold norm) ≥ 0.70. strict: Ini, Ldr, Dom ≥ 0.70 + Boldness ≥ 1.0. best: top score in range. Per 20000 seeds: gate 1994, score 144, strict 31 | Must |
 | PE-08 | Full vector from Seed: AnimalIntent 12 base traits (LCG × breed), Temperament salts, Generosity 541 / FoodTaking 547 / Chattiness 193. Fixes Rascal (needs real Play) | Must |
+| PE-09 | SETTINGS block at top of script: DESTROY (kill running ESP, start nothing), DOGS, CATS, LEADER_SCORE/STRICT/BEST, MIN_SCORE/TRAIT/BOLD. Re-execute applies them; no separate destroy script | Must |
 
 ## Non-goals
 - No hub integration; standalone script only.
