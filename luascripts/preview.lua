@@ -1,4 +1,4 @@
--- Cow Hub [f1a1eda] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [4314dd7] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -58,7 +58,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [f1a1eda]",
+    Name = "Cow Hub [4314dd7]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -13252,7 +13252,7 @@ do
     caravan.hold = nil              -- { part, since, lastKeep } during a held kick
     caravan.kickBackoff = 0
     caravan.kickId = 100000         -- above the game's own RequestId counter
-    caravan.walk = { waypoints = nil, idx = 0, goal = nil, computedAt = 0, lastGoal = nil, lastMoveAt = 0 }
+    caravan.walk = { waypoints = nil, idx = 0, goal = nil, computedAt = 0, lastGoal = nil, lastMoveAt = 0, skipped = 0, state = "idle" }
     caravan.sprinting = false
     caravan.returningSince = nil
     caravan.savedCF = nil
@@ -13610,7 +13610,11 @@ do
                     h:MoveTo(goal)
                 end
             end
-            if not w.directWet then return d end
+            if not w.directWet then
+                w.state = "direct"
+                caravan.logWalk(now, d)
+                return d
+            end
         end
         if not w.waypoints or now - w.computedAt > CFG.PATH_RECOMPUTE
             or (w.goal and (w.goal - goal).Magnitude > CFG.PATH_GOAL_SHIFT) then
@@ -13622,7 +13626,7 @@ do
             local ok = pcall(function() path:ComputeAsync(r.Position, goal) end)
             if not caravan.enabled then return math.huge end -- toggled off while ComputeAsync yielded
             if ok and path.Status == Enum.PathStatus.Success then
-                w.waypoints, w.idx = path:GetWaypoints(), 2
+                w.waypoints, w.idx, w.checkedIdx = path:GetWaypoints(), 2, nil
             else
                 w.waypoints = nil
                 w.noPathWet = caravan.lineWet(r.Position, goal) -- checked once per recompute
@@ -13633,6 +13637,8 @@ do
         if not wps then
             -- No path: walk straight only if that stays dry, otherwise wait for the next recompute
             if not w.noPathWet then h:MoveTo(goal) else h:MoveTo(r.Position) end
+            w.state = w.noPathWet and "hold_nopath" or "nopath_direct"
+            caravan.logWalk(now, d)
             return d
         end
         local wp = wps[w.idx]
@@ -13640,16 +13646,45 @@ do
             w.idx += 1
             wp = wps[w.idx]
         end
-        if wp then
-            if farm.isWaterAt(wp.Position) then
-                w.waypoints = nil -- path dipped into water: hold and recompute
+        -- A waypoint over water (shore edge): skip ahead to the next dry one. Checked once per
+        -- waypoint; if the rest is wet, hold until the regular recompute instead of every step.
+        if wp and w.checkedIdx ~= w.idx then
+            local i = w.idx
+            while wps[i] and farm.isWaterAt(wps[i].Position) do i += 1 end
+            if wps[i] then
+                if i ~= w.idx then w.skipped += i - w.idx end
+                w.idx = i
+                wp = wps[i]
+                w.checkedIdx = i
+            else
+                w.state = "hold_wet"
                 h:MoveTo(r.Position)
+                caravan.logWalk(now, d)
                 return d
             end
+        end
+        if wp then
             if wp.Action == Enum.PathWaypointAction.Jump then h.Jump = true end
             h:MoveTo(wp.Position)
         end
+        w.state = "path"
+        caravan.logWalk(now, d)
         return d
+    end
+
+    -- Natural-mode diagnostics every 5 s: how it walks, sprint and stamina
+    function caravan.logWalk(now, d)
+        local w = caravan.walk
+        if not caravan.debug or now - (w.lastLog or 0) < CFG.FEAR_LOG_INTERVAL then return end
+        w.lastLog = now
+        local r = caravan.root()
+        caravan.log("walk", {
+            state = w.state, dist = d, sprint = caravan.sprinting, refilling = caravan.refilling,
+            stamina = plr:GetAttribute("Stamina"), staminaMax = caravan.staminaMax,
+            sprintActive = plr:GetAttribute("SprintActive"), skipped = w.skipped,
+            wps = w.waypoints and #w.waypoints or 0, idx = w.idx,
+            inWater = r and farm.isWaterAt(r.Position) or nil,
+        })
     end
 
     -- Natural-mode goal fix-up: a goal on water falls back to `alt` (or nil when both are wet)
@@ -13918,7 +13953,7 @@ do
                     return
                 end
             end
-            caravan.handback("caravan_left")
+            caravan.handback(caravan.returningSince and now - caravan.returningSince > CFG.RETURN_TIMEOUT and "walk_back_timeout" or "caravan_left")
             caravan.status = "Waiting for caravan"
             return
         end
