@@ -1,4 +1,4 @@
--- Cow Hub [7308f8e] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [dbe8741] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -54,7 +54,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [7308f8e]",
+    Name = "Cow Hub [dbe8741]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -5992,6 +5992,22 @@ function updateHeartbeatConnection()
                     dodge.process(now, rootPos)
                 elseif dodge.isDodging or dodge.isUnderground then
                     dodge.cleanup()
+                end
+
+                if chomp.debug then
+                    if now - (chomp.lastFarmLog or 0) >= 5 then
+                        chomp.lastFarmLog = now
+                        local tgt = farm.currentTargetNode
+                        chomp.log("farm", {
+                            on = farm.on == true, pattern = farm.pattern, radius = farm.radius,
+                            anchorDist = farm.anchorPos and math.sqrt(get2DDistanceSq(rootPos, farm.anchorPos)) or nil,
+                            manatite = (manatite and manatite.auto) == true, mithril = (mithril and mithril.auto) == true,
+                            dodging = dodge.isDodging == true, underground = dodge.isUnderground == true,
+                            onlyMature = farm.onlyMatureGrass, stuck = farm.stuckCounter, unsticking = farm.isUnsticking == true,
+                            target = tgt and tgt.Parent and cache.getNodeID(tgt) or nil,
+                            nodes = #cache.grassNodes,
+                        })
+                    end
                 end
 
                 -- 1. Movement Logic
