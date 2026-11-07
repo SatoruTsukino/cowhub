@@ -59,6 +59,7 @@ local CONFIG = {
     INTERCEPT_MAX = 250,
     RETURN_TIMEOUT = 90,
     -- Grumpy Moo (replaces Stomp): fall back to plain Moo if the server won't credit it
+    CHEW_RETRY = 0.5,         -- extra wait after a ChewCooldown graze reject
     GRUMPY_MISSES = 3,
     GRUMPY_UNANSWERED = 5,    -- Grumpy sends in range with no Fear rise → fall back to plain Moo
 }
@@ -128,7 +129,7 @@ local S = {
     crates = {},
     barrels = {},
     status = "Idle",
-    stats = { caravans = 0, stopped = 0, moos = 0, kicks = 0, bites = 0, opened = 0, kickOk = 0, kickBad = 0, loot = 0, frights = 0, missed = 0, skins = 0 },
+    stats = { caravans = 0, stopped = 0, moos = 0, kicks = 0, bites = 0, grazeOk = 0, grazeBad = 0, opened = 0, kickOk = 0, kickBad = 0, loot = 0, frights = 0, missed = 0, skins = 0 },
     logFile = nil,
     pending = {},
     lastFlush = 0,
@@ -413,9 +414,23 @@ local function watchIncoming(rem)
             if kr and kr.RequestId >= 100000 then
                 if kr.Ok == true then S.stats.kickOk += 1 else S.stats.kickBad += 1 end
                 log("kick_result", { remote = rem:GetFullName(), args = { ... } })
-            elseif S.debug and S.lastPhase == "Stopped" and S.barrelLock then
-                -- Unknown reply while grazing: look for the ChompRequest result shape
-                log("in_other", { remote = rem:GetFullName(), args = { ... } })
+            else
+                -- ClientEvent("GrazeResult", {NodeId, Accepted, Reason, RequestId}) answers barrel bites
+                local tag, g = ...
+                if tag == "GrazeResult" and type(g) == "table" and type(g.NodeId) == "string"
+                    and string.match(g.NodeId, "^Caravan%d+_B%d+$") then
+                    if g.Accepted == true then
+                        S.stats.grazeOk += 1
+                    else
+                        S.stats.grazeBad += 1
+                        if g.Reason == "ChewCooldown" then
+                            S.barrelNext[g.NodeId] = os.clock() + CONFIG.CHEW_RETRY
+                        elseif g.Reason == "OutsideCone" then
+                            S.reface = true -- not facing the barrel: re-stand facing it
+                        end
+                        log("graze_rejected", { node = g.NodeId, reason = g.Reason, id = g.RequestId })
+                    end
+                end
             end
             return
         end
@@ -602,8 +617,9 @@ end
 local function approach(part, now)
     if not S.natural then
         local r = getRoot()
-        if not r or flatDist(r.Position, part.Position) > CONFIG.ACT_REACH or math.abs(r.Position.Y - part.Position.Y) > 6 then
+        if S.reface or not r or flatDist(r.Position, part.Position) > CONFIG.ACT_REACH or math.abs(r.Position.Y - part.Position.Y) > 6 then
             standAt(part.Position, CONFIG.TARGET_OFFSET)
+            S.reface = false
         end
         return true
     end
@@ -1132,10 +1148,10 @@ task.spawn(function()
             local st = S.snap
             local s = S.stats
             setCard("Status: " .. S.status, string.format(
-                "Mode: %s · Grumpy: %s\nPhase: %s · Kind: %s\nCaravans %d · Stopped %d\nMoos %d · Frights %d · Missed %d\nKicks %d (ok %d / rejected %d) · Crates opened %d · Skins %d\nBites %d · Loot drops %d%s",
+                "Mode: %s · Grumpy: %s\nPhase: %s · Kind: %s\nCaravans %d · Stopped %d\nMoos %d · Frights %d · Missed %d\nKicks %d (ok %d / rejected %d) · Crates opened %d · Skins %d\nBites %d (ok %d / rejected %d) · Loot drops %d%s",
                 S.natural and "Natural (walk)" or "Teleport", S.useGrumpy and S.grumpyState or "off",
                 tostring(st and st.Phase or "none"), tostring(st and st.Kind or "-"),
-                s.caravans, s.stopped, s.moos, s.frights, s.missed, s.kicks, s.kickOk, s.kickBad, s.opened, s.skins, s.bites, s.loot,
+                s.caravans, s.stopped, s.moos, s.frights, s.missed, s.kicks, s.kickOk, s.kickBad, s.opened, s.skins, s.bites, s.grazeOk, s.grazeBad, s.loot,
                 S.debug and ("\nLog: " .. tostring(S.logFile)) or ""))
         end
         task.wait(CONFIG.LOOP_DT)
