@@ -337,6 +337,10 @@ On every modification/commit to `luascripts/cowhub.lua` and `luascripts/preview.
 - `luascripts/cowhub.lua`: Production for stable features deployable without debugging. Theme: `rose`.
 - Do not enforce 100% parity between preview and cowhub. Keep themes distinct.
 
+### Non-Main Branch / Brain Loadstring
+- If a commit is pushed to any branch or brain other than `main`, always provide an executable `loadstring` in chat.
+- Format: `loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/<branch>/luascripts/<script>.lua'))()` or commit-pinned hash.
+
 ---
 
 *GSD Methodology — Model-Agnostic Edition*

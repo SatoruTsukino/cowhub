@@ -40,7 +40,14 @@ All files generated or persisted by CowHub scripts (configs, state, logs, teleme
 - `luascripts/cowhub.lua`: Stable / production for features deployable without debugging. Theme: `"rose"`.
 - **Parity**: Do not force 100% parity between preview and cowhub. Keep themes distinct.
 
-
+## Non-Main Branch / Brain Loadstring
+When pushing commits on any branch or brain workspace other than `main`:
+Always provide an executable Roblox loadstring in chat:
+```lua
+loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/<branch>/luascripts/<script>.lua'))()
+-- or commit-pinned:
+loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/<commit-hash>/luascripts/<script>.lua'))()
+```
 
 ## FUNCTIONS.md Line Numbers
 Line numbers in `FUNCTIONS.md` must always match the code. After any change that shifts lines in an indexed script, run:
