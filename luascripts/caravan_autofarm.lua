@@ -93,6 +93,7 @@ local S = {
     running = true,
     farm = false,
     lootOnly = false,
+    grazeBarrels = true,  -- off: open crates only, leave material barrels
     debug = false,
     natural = false,
     useGrumpy = true,
@@ -838,6 +839,10 @@ local function lootStep(st, now)
         end
     end
     releaseKick("no_crate")
+    if not S.grazeBarrels then
+        S.status = "Crates done · barrel looting off"
+        return
+    end
     -- Graze one barrel continuously (as a held graze does) instead of rotating: stay on the
     -- locked barrel until it empties or disappears, then lock the nearest remaining one
     local lock = S.barrelLock
@@ -1024,6 +1029,15 @@ if Window then
         Callback = function(v)
             S.useGrumpy = v == true
             if S.useGrumpy then S.grumpyState, S.grumpyMisses, S.grumpyUnanswered = "unknown", 0, 0 end
+        end,
+    })
+    tab:CreateToggle({
+        Name = "Loot Barrels (materials)",
+        CurrentValue = true,
+        Flag = "Toggle_CaravanGrazeBarrels",
+        Callback = function(v)
+            S.grazeBarrels = v == true
+            if not S.grazeBarrels then S.barrelLock = nil end
         end,
     })
     tab:CreateToggle({
