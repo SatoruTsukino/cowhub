@@ -1,4 +1,4 @@
--- Cow Hub [4ca5b03] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [e57ca56] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [4ca5b03]",
+    Name = "Cow Hub [e57ca56]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -5605,46 +5605,6 @@ function farm.teleportTo(target)
         farm.currentNodeStartTime = 0
         farm.nextRandomPos = nil
     end
-end
-
--- Best accessible field by the game's own calorie inputs:
--- LiveBalance.Category(zone).BaseValue x LiveBalance.ZoneMultiplier(zone) (Shared FoodValue.Calculate)
-function farm.bestField()
-    local shared = cowGame:FindFirstChild("Shared")
-    if not shared then return nil end
-    local ok, catalog, balance = pcall(function()
-        return require(shared.FieldCatalog), require(shared.LiveBalance)
-    end)
-    if not ok then return nil end
-    local mask = tonumber(plr:GetAttribute("CowFieldAccessMask")) or 0
-    local best, bestValue = nil, -1
-    for _, zone in ipairs(catalog.Zones) do
-        if catalog.CanAccessMask(zone.Id, mask) and zone.Houses[1] then
-            local okV, value = pcall(function()
-                return balance.Category(zone.Id).BaseValue * balance.ZoneMultiplier(zone.Id)
-            end)
-            if okV and type(value) == "number" and value > bestValue then
-                best, bestValue = zone, value
-            end
-        end
-    end
-    return best, bestValue
-end
-
--- Open terrain near the field's first farmer house (not a roof, not water)
-function farm.fieldLandingSpot(zone)
-    local house = zone.Houses[1]
-    for _, radius in ipairs({ 25, 45 }) do
-        for i = 0, 7 do
-            local a = i * math.pi / 4
-            local x, z = house.X + math.cos(a) * radius, house.Z + math.sin(a) * radius
-            local hit = workspace:Raycast(Vector3.new(x, 900, z), Vector3.new(0, -400, 0), wallRaycastParams)
-            if hit and hit.Instance == workspace.Terrain and hit.Material ~= Enum.Material.Water then
-                return hit.Position + Vector3.new(0, 4, 0)
-            end
-        end
-    end
-    return nil
 end
 
 -- Calories a bite on this node earns relative to a full-grown plain node:
@@ -14304,19 +14264,6 @@ do
             Name = "Teleport to Farming Area",
             Callback = function()
                 farm.teleportTo(CFrame.new(6269, 706, -185))
-            end,
-        })
-        row:CreateButton({
-            Name = "Teleport to Best Calorie Field",
-            Callback = function()
-                local field, value = farm.bestField()
-                local spot = field and farm.fieldLandingSpot(field)
-                if not spot then
-                    Window:Notify({ Title = "Best Calorie Field", Content = field and ("No open ground found in " .. field.DisplayName) or "Field data unavailable", Duration = 4, Image = 4483362458 })
-                    return
-                end
-                farm.teleportTo(CFrame.new(spot))
-                Window:Notify({ Title = "Best Calorie Field", Content = string.format("%s (%.3g cal base per bite)", field.DisplayName, value), Duration = 4, Image = 4483362458 })
             end,
         })
         row:CreateButton({
