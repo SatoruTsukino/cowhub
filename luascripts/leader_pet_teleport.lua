@@ -198,6 +198,9 @@ local app = {
     lastGcScan = {}, -- [folderName] = os.clock() of last scan
     track = nil, -- { pet, statusLabel, startedAt, untilAt, lastStep, mode }
     trackConn = nil,
+    marker = nil, -- { part, label } shown at a pet's live position when its model is not loaded
+    liveLabels = {}, -- [pet.id] = TextLabel on the pet's card
+    lastLive = -math.huge,
 }
 _G.LeaderPetTeleport = app
 
@@ -253,6 +256,85 @@ local function findPetModelBySeed(petData)
         end
     end
     return nil
+end
+
+-- Live record by seed. controller.Records holds every pet the server sends (Seed, Position, Variant/Coat),
+-- with or without a loaded model; LocalDogs/LocalCats hold client-simulated pets.
+local function findRecordBySeed(petData)
+    local folderName = FOLDER_BY_SPECIES[petData.species]
+    local folder = Workspace:FindFirstChild(folderName)
+    if not folder then return nil end
+    local ctrl = getController(folder, folderName)
+    if not ctrl then return nil end
+    for _, listName in ipairs({ "Records", "LocalDogs", "LocalCats" }) do
+        local list = rawget(ctrl, listName)
+        if type(list) == "table" then
+            for _, record in pairs(list) do
+                if type(record) == "table" and tonumber(rawget(record, "Seed")) == petData.seed
+                    and typeof(rawget(record, "Position")) == "Vector3" then
+                    return record
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- "GermanShepherd [young]" from the live record
+local function breedText(record)
+    local look = record.Variant or record.Coat
+    local young = record.AgeStage == "Young" or record.Puppy == true or record.Kitten == true
+    return (type(look) == "string" and look or "?") .. (young and " [young]" or "")
+end
+
+local function getRootPos()
+    local char = plr.Character
+    local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
+    return root and root.Position or nil
+end
+
+local function clearMarker()
+    if app.marker then
+        pcall(function() app.marker.part:Destroy() end)
+        app.marker = nil
+    end
+end
+
+-- Invisible anchored part + tag at the pet's live position (model not streamed in)
+local function placeMarker(pos, petData, record)
+    if not app.marker then
+        local part = Instance.new("Part")
+        part.Name = "LeaderPetMarker"
+        part.Anchored = true
+        part.CanCollide = false
+        part.CanQuery = false
+        part.CanTouch = false
+        part.Transparency = 1
+        part.Size = Vector3.new(1, 1, 1)
+
+        local bb = Instance.new("BillboardGui")
+        bb.Name = "LeaderPetMarkerTag"
+        bb.Size = UDim2.new(0, 220, 0, 40)
+        bb.StudsOffset = Vector3.new(0, 3, 0)
+        bb.AlwaysOnTop = true
+        bb.Parent = part
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, 0, 1, 0)
+        label.BackgroundTransparency = 1
+        label.Font = Enum.Font.GothamBold
+        label.TextSize = 13
+        label.TextStrokeTransparency = 0
+        label.TextColor3 = SETTINGS.HIGHLIGHT_COLOR
+        label.Parent = bb
+
+        part.Parent = Workspace
+        app.marker = { part = part, label = label }
+    end
+    app.marker.part.Position = pos
+    local rPos = getRootPos()
+    local dist = rPos and ("\n" .. math.floor((rPos - pos).Magnitude) .. " studs") or ""
+    app.marker.label.Text = "★ " .. petData.rank .. " · " .. breedText(record) .. " (not loaded)" .. dist
 end
 
 -- Fallback guess: nearest pet model of the species near the habitat
@@ -365,17 +447,25 @@ local function teleportToPet(petData, statusLabel)
         return
     end
 
-    local targetPos = petData.pos + Vector3.new(0, SETTINGS.TELEPORT_HEIGHT, 0)
+    -- Live position when the server reports this pet; otherwise its home
+    local record = findRecordBySeed(petData)
+    local basePos = record and record.Position or petData.pos
+    local targetPos = basePos + Vector3.new(0, SETTINGS.TELEPORT_HEIGHT, 0)
     root.CFrame = CFrame.new(targetPos)
     root.AssemblyLinearVelocity = Vector3.zero
     root.AssemblyAngularVelocity = Vector3.zero
 
     if statusLabel then
-        statusLabel.Text = "Teleported to " .. petData.id .. " (" .. petData.zone .. "). Searching by seed..."
+        if record then
+            statusLabel.Text = "Teleported to live " .. petData.id .. " (" .. breedText(record) .. "). Tracking..."
+        else
+            statusLabel.Text = "Not in server data; teleported to home " .. petData.id .. " (" .. petData.zone .. "). Searching..."
+        end
     end
 
     -- Track the pet until HIGHLIGHT_DURATION ends or the next teleport
     clearHighlight()
+    clearMarker()
     local now = os.clock()
     app.track = {
         pet = petData,
@@ -403,6 +493,7 @@ local function stepTrack()
 
     if now >= track.untilAt then
         clearHighlight()
+        clearMarker()
         app.track = nil
         setStatus(track, "Highlight expired for " .. track.pet.id .. ".")
         return
@@ -410,6 +501,18 @@ local function stepTrack()
 
     local pet = track.pet
     local model = findPetModelBySeed(pet)
+    local record = not model and findRecordBySeed(pet) or nil
+
+    -- Server reports the pet but its model is not streamed in: mark its live position
+    if record then
+        if app.highlightedModel then clearHighlight() end
+        track.mode = "marker"
+        placeMarker(record.Position, pet, record)
+        setStatus(track, "★ " .. pet.rank .. " found by seed · not loaded yet · marker at live position")
+        return
+    end
+    clearMarker()
+
     local guessed = false
     if not model and (type(getgc) ~= "function" or now - track.startedAt >= SEED_SEARCH_SECONDS) then
         model = findPetModelAt(pet.pos, pet.species)
@@ -418,7 +521,7 @@ local function stepTrack()
 
     if not model then
         if app.highlightedModel then clearHighlight() end
-        setStatus(track, "Searching for " .. pet.id .. " (seed " .. pet.seed .. ")... pet not loaded / nearby")
+        setStatus(track, "Searching for " .. pet.id .. " (seed " .. pet.seed .. ")... not in server data")
         return
     end
 
@@ -431,6 +534,36 @@ local function stepTrack()
         setStatus(track, "No seed match for " .. pet.id .. "; highlighting nearest " .. pet.species .. " (guess)")
     else
         setStatus(track, "★ " .. pet.rank .. " matched by seed " .. pet.seed .. " · highlighted")
+    end
+end
+
+-- Every 1 s: refresh each card's live line from controller Records
+local function stepLive()
+    local now = os.clock()
+    if now - app.lastLive < 1 then return end
+    app.lastLive = now
+    local rPos = getRootPos()
+    for _, pet in ipairs(PET_CATALOG) do
+        local label = app.liveLabels[pet.id]
+        if label then
+            local record = findRecordBySeed(pet)
+            local text, color
+            if record then
+                local dist = rPos and (math.floor((rPos - record.Position).Magnitude) .. " studs") or "?"
+                text = "LIVE " .. dist .. " · " .. breedText(record)
+                color = Color3.fromRGB(80, 255, 140)
+            elseif type(getgc) ~= "function" then
+                text = "live: unavailable (no getgc)"
+                color = Color3.fromRGB(150, 150, 150)
+            else
+                text = "not in server data"
+                color = Color3.fromRGB(150, 150, 150)
+            end
+            if label.Text ~= text then
+                label.Text = text
+                label.TextColor3 = color
+            end
+        end
     end
 end
 
@@ -541,7 +674,7 @@ local function createGui()
     scroll.BorderSizePixel = 0
     scroll.ScrollBarThickness = 4
     scroll.ScrollBarImageColor3 = Color3.fromRGB(80, 95, 120)
-    scroll.CanvasSize = UDim2.new(0, 0, 0, #PET_CATALOG * 78)
+    scroll.CanvasSize = UDim2.new(0, 0, 0, #PET_CATALOG * 94)
     scroll.Parent = main
 
     local listLayout = Instance.new("UIListLayout")
@@ -552,7 +685,7 @@ local function createGui()
     for i, pet in ipairs(PET_CATALOG) do
         local card = Instance.new("Frame")
         card.Name = "Card_" .. pet.id
-        card.Size = UDim2.new(1, -6, 0, 72)
+        card.Size = UDim2.new(1, -6, 0, 88)
         card.BackgroundColor3 = Color3.fromRGB(24, 30, 40)
         card.BorderSizePixel = 0
         card.LayoutOrder = i
@@ -612,6 +745,19 @@ local function createGui()
         subLabel.Text = pet.desc
         subLabel.Parent = card
 
+        local liveLabel = Instance.new("TextLabel")
+        liveLabel.Name = "Live"
+        liveLabel.Size = UDim2.new(1, -85, 0, 14)
+        liveLabel.Position = UDim2.new(0, 8, 0, 70)
+        liveLabel.BackgroundTransparency = 1
+        liveLabel.Font = Enum.Font.GothamBold
+        liveLabel.TextSize = 10
+        liveLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+        liveLabel.TextXAlignment = Enum.TextXAlignment.Left
+        liveLabel.Text = "live: checking..."
+        liveLabel.Parent = card
+        app.liveLabels[pet.id] = liveLabel
+
         -- Teleport Button
         local tpBtn = Instance.new("TextButton")
         tpBtn.Name = "TeleportBtn"
@@ -640,7 +786,10 @@ end
 
 -- Initialize
 createGui()
-app.trackConn = RunService.Heartbeat:Connect(stepTrack)
+app.trackConn = RunService.Heartbeat:Connect(function()
+    stepTrack()
+    stepLive()
+end)
 
 -- Cleanup
 function app.destroy()
@@ -651,6 +800,8 @@ function app.destroy()
     end
     app.track = nil
     clearHighlight()
+    clearMarker()
+    table.clear(app.liveLabels)
     if app.gui then
         pcall(function() app.gui:Destroy() end)
         app.gui = nil
