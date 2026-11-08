@@ -1,4 +1,4 @@
--- Cow Hub [872e180] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [2da6a4a] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -43,14 +43,16 @@ end
 _G.CowHubLoaded = true
 
 -- 1. The Server-Hop Queue Hook
-local queueOnTeleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
-if queueOnTeleport then
-    pcall(function()
-        queueOnTeleport([[
-            task.wait(3)
-            loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/cowhub.lua'))()
-        ]])
-    end)
+do
+    local queueOnTeleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
+    if queueOnTeleport then
+        pcall(function()
+            queueOnTeleport([[
+                task.wait(3)
+                loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/cowhub.lua'))()
+            ]])
+        end)
+    end
 end
 
 -- 2. Build the Hub
@@ -58,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [872e180]",
+    Name = "Cow Hub [2da6a4a]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -245,11 +247,13 @@ end
 updateCharBaseParts(char)
 
 -- Anti-AFK (Runs on Load)
-local idleConn = plr.Idled:Connect(function()
-    VirtualUser:CaptureController()
-    VirtualUser:ClickButton2(Vector2.zero)
-end)
-table.insert(scriptConnections, idleConn)
+do
+    local idleConn = plr.Idled:Connect(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.zero)
+    end)
+    table.insert(scriptConnections, idleConn)
+end
 
 -- ==========================
 -- REMOTES & GAME FOLDERS
@@ -312,78 +316,80 @@ local manatite
 local mithril
 local updateHeartbeatConnection
 
-local charConn = plr.CharacterAdded:Connect(function(newChar)
-    char = newChar
-    root = resolveRoot(newChar)
-    if not root then
-        task.spawn(function()
-            local waited = newChar:WaitForChild("HumanoidRootPart", 2)
-            if waited and waited:IsA("BasePart") then
-                root = waited
-            else
-                root = resolveRoot(newChar)
-            end
-        end)
-    end
-    local function setupHumanoid(h)
-        if not h then return end
-        if dodge and (dodge.originalWalkSpeed == nil or dodge.originalWalkSpeed == 16) then
-            dodge.originalWalkSpeed = h.WalkSpeed
+do
+    local charConn = plr.CharacterAdded:Connect(function(newChar)
+        char = newChar
+        root = resolveRoot(newChar)
+        if not root then
+            task.spawn(function()
+                local waited = newChar:WaitForChild("HumanoidRootPart", 2)
+                if waited and waited:IsA("BasePart") then
+                    root = waited
+                else
+                    root = resolveRoot(newChar)
+                end
+            end)
         end
-        h.Died:Connect(function()
-            if rafting and rafting.onSessionEnded and (rafting.isSailing or (rafting.status and rafting.status ~= "Idle")) then
-                rafting.onSessionEnded("Player died. Automated rafting stopped.")
+        local function setupHumanoid(h)
+            if not h then return end
+            if dodge and (dodge.originalWalkSpeed == nil or dodge.originalWalkSpeed == 16) then
+                dodge.originalWalkSpeed = h.WalkSpeed
             end
-        end)
-    end
-    humanoid = resolveHumanoid(newChar)
-    if humanoid then
-        setupHumanoid(humanoid)
-    else
-        task.spawn(function()
-            local waited = newChar:WaitForChild("Humanoid", 2)
-            if waited and waited:IsA("Humanoid") then
-                humanoid = waited
-                setupHumanoid(humanoid)
-            end
-        end)
-    end
-    if rafting and rafting.onSessionEnded and (rafting.isSailing or (rafting.status and rafting.status ~= "Idle")) then
-        rafting.onSessionEnded("Character respawned. Automated rafting stopped.")
-    end
-    raycastParams.FilterDescendantsInstances = {char}
-    updateWallRaycastFilter()
-    updateCharBaseParts(newChar)
-    if dodge then
-        dodge.isDodging = false
-        dodge.isUnderground = false
-        dodge.lastRecordedHearts = nil
-        dodge.currentAttackingMob = nil
-        dodge.preDodgePos = nil
-        dodge.preDodgeCFrame = nil
-        dodge.lastSurfaceCFrame = nil
-        dodge.lastSurfacePos = nil
-        dodge.undergroundCFrame = nil
-        dodge.currentUndergroundRetreatOffset = nil
-    end
-    if aerial then
-        aerial.active = false
-        aerial.cframe = nil
-        aerial.preCFrame = nil
-        aerial.startTime = 0
-    end
-    if manatite then
-        manatite.model = nil
-        manatite.target = nil
-        manatite.payload = nil
-    end
-    if mithril then
-        mithril.model = nil
-        mithril.orePart = nil
-        mithril.payload = nil
-    end
-end)
-table.insert(scriptConnections, charConn)
+            h.Died:Connect(function()
+                if rafting and rafting.onSessionEnded and (rafting.isSailing or (rafting.status and rafting.status ~= "Idle")) then
+                    rafting.onSessionEnded("Player died. Automated rafting stopped.")
+                end
+            end)
+        end
+        humanoid = resolveHumanoid(newChar)
+        if humanoid then
+            setupHumanoid(humanoid)
+        else
+            task.spawn(function()
+                local waited = newChar:WaitForChild("Humanoid", 2)
+                if waited and waited:IsA("Humanoid") then
+                    humanoid = waited
+                    setupHumanoid(humanoid)
+                end
+            end)
+        end
+        if rafting and rafting.onSessionEnded and (rafting.isSailing or (rafting.status and rafting.status ~= "Idle")) then
+            rafting.onSessionEnded("Character respawned. Automated rafting stopped.")
+        end
+        raycastParams.FilterDescendantsInstances = {char}
+        updateWallRaycastFilter()
+        updateCharBaseParts(newChar)
+        if dodge then
+            dodge.isDodging = false
+            dodge.isUnderground = false
+            dodge.lastRecordedHearts = nil
+            dodge.currentAttackingMob = nil
+            dodge.preDodgePos = nil
+            dodge.preDodgeCFrame = nil
+            dodge.lastSurfaceCFrame = nil
+            dodge.lastSurfacePos = nil
+            dodge.undergroundCFrame = nil
+            dodge.currentUndergroundRetreatOffset = nil
+        end
+        if aerial then
+            aerial.active = false
+            aerial.cframe = nil
+            aerial.preCFrame = nil
+            aerial.startTime = 0
+        end
+        if manatite then
+            manatite.model = nil
+            manatite.target = nil
+            manatite.payload = nil
+        end
+        if mithril then
+            mithril.model = nil
+            mithril.orePart = nil
+            mithril.payload = nil
+        end
+    end)
+    table.insert(scriptConnections, charConn)
+end
 
 -- ==========================
 -- ==========================
@@ -930,80 +936,83 @@ local function stopCharacterVelocity()
     end
 end
 
-local function isGuiObjectTrulyVisible(obj)
-    if not obj or not obj:IsA("GuiObject") then return false end
-    if not obj.Visible then return false end
+local isRewardDismissButton
+do
+    local function isGuiObjectTrulyVisible(obj)
+        if not obj or not obj:IsA("GuiObject") then return false end
+        if not obj.Visible then return false end
 
-    local absSize = nil
-    local absPos = nil
-    pcall(function()
-        absSize = obj.AbsoluteSize
-        absPos = obj.AbsolutePosition
-    end)
-    if not absSize or not absPos then return false end
-    if absSize.X < 4 or absSize.Y < 4 then return false end
+        local absSize = nil
+        local absPos = nil
+        pcall(function()
+            absSize = obj.AbsoluteSize
+            absPos = obj.AbsolutePosition
+        end)
+        if not absSize or not absPos then return false end
+        if absSize.X < 4 or absSize.Y < 4 then return false end
 
-    local cam = workspace.CurrentCamera
-    local vp = cam and cam.ViewportSize
-    if vp then
-        if (absPos.X + absSize.X) <= 0 or absPos.X >= vp.X
-            or (absPos.Y + absSize.Y) <= 0 or absPos.Y >= vp.Y then
+        local cam = workspace.CurrentCamera
+        local vp = cam and cam.ViewportSize
+        if vp then
+            if (absPos.X + absSize.X) <= 0 or absPos.X >= vp.X
+                or (absPos.Y + absSize.Y) <= 0 or absPos.Y >= vp.Y then
+                return false
+            end
+        end
+
+        local cur = obj.Parent
+        while cur and cur:IsA("GuiObject") do
+            if not cur.Visible then return false end
+            if cur:IsA("CanvasGroup") and cur.GroupTransparency >= 0.95 then
+                return false
+            end
+            cur = cur.Parent
+        end
+
+        if cur and (cur:IsA("ScreenGui") or cur:IsA("BillboardGui") or cur:IsA("SurfaceGui")) then
+            if not cur.Enabled then return false end
+        end
+
+        return true
+    end
+
+    function isRewardDismissButton(desc)
+        if not desc or not desc:IsA("GuiButton") then return false end
+        if not isGuiObjectTrulyVisible(desc) then return false end
+
+        local name = desc.Name:lower()
+        local text = (desc:IsA("TextButton") and desc.Text:lower()) or ""
+        local attrLabel = desc:GetAttribute("AccessibilityLabel")
+        local label = (typeof(attrLabel) == "string" and attrLabel:lower()) or ""
+
+        -- Explicit Reject: Never click buttons that equip / wear items
+        if name:find("wear") or name:find("equip")
+            or text:find("wear") or text:find("equip") or text:find("try on") or text:find("put on")
+            or label:find("wear") or label:find("equip") then
             return false
         end
-    end
 
-    local cur = obj.Parent
-    while cur and cur:IsA("GuiObject") do
-        if not cur.Visible then return false end
-        if cur:IsA("CanvasGroup") and cur.GroupTransparency >= 0.95 then
-            return false
-        end
-        cur = cur.Parent
-    end
-
-    if cur and (cur:IsA("ScreenGui") or cur:IsA("BillboardGui") or cur:IsA("SurfaceGui")) then
-        if not cur.Enabled then return false end
-    end
-
-    return true
-end
-
-local function isRewardDismissButton(desc)
-    if not desc or not desc:IsA("GuiButton") then return false end
-    if not isGuiObjectTrulyVisible(desc) then return false end
-
-    local name = desc.Name:lower()
-    local text = (desc:IsA("TextButton") and desc.Text:lower()) or ""
-    local attrLabel = desc:GetAttribute("AccessibilityLabel")
-    local label = (typeof(attrLabel) == "string" and attrLabel:lower()) or ""
-
-    -- Explicit Reject: Never click buttons that equip / wear items
-    if name:find("wear") or name:find("equip")
-        or text:find("wear") or text:find("equip") or text:find("try on") or text:find("put on")
-        or label:find("wear") or label:find("equip") then
-        return false
-    end
-
-    -- Match safe dismiss / close / accept buttons
-    local isDismiss = false
-    if name == "secondary" or name == "keepraiding" or name == "notnow"
-        or name:find("close") or name:find("done") or name:find("claim") or name:find("accept")
-        or name:find("okay") or name == "ok" or name:find("dismiss") or name:find("cancel") then
-        isDismiss = true
-    elseif name == "primary" then
-        -- Primary button is ONLY safe if it does not wear items (e.g. "Done", "Open another", "Claim", "Accept", "OK", "Continue")
-        if text == "done" or text:find("done") or text:find("claim") or text:find("accept") or text:find("okay") or text == "ok" or text:find("open another") or text:find("continue") then
+        -- Match safe dismiss / close / accept buttons
+        local isDismiss = false
+        if name == "secondary" or name == "keepraiding" or name == "notnow"
+            or name:find("close") or name:find("done") or name:find("claim") or name:find("accept")
+            or name:find("okay") or name == "ok" or name:find("dismiss") or name:find("cancel") then
             isDismiss = true
-        elseif text == "" and (label:find("done") or label:find("claim") or label:find("close") or label:find("accept")) then
+        elseif name == "primary" then
+            -- Primary button is ONLY safe if it does not wear items (e.g. "Done", "Open another", "Claim", "Accept", "OK", "Continue")
+            if text == "done" or text:find("done") or text:find("claim") or text:find("accept") or text:find("okay") or text == "ok" or text:find("open another") or text:find("continue") then
+                isDismiss = true
+            elseif text == "" and (label:find("done") or label:find("claim") or label:find("close") or label:find("accept")) then
+                isDismiss = true
+            end
+        elseif text == "done" or text:find("done") or text:find("close") or text:find("claim") or text:find("accept") or text:find("okay") or text == "ok" or text:find("not now") or text:find("keep raiding") or text:find("keep knocking") or text:find("thank you") or text:find("sweet") or text:find("treat") or text:find("great") then
+            isDismiss = true
+        elseif label:find("done") or label:find("close") or label:find("claim") or label:find("accept") or label:find("okay") or label:find("not now") or label:find("keep raiding") then
             isDismiss = true
         end
-    elseif text == "done" or text:find("done") or text:find("close") or text:find("claim") or text:find("accept") or text:find("okay") or text == "ok" or text:find("not now") or text:find("keep raiding") or text:find("keep knocking") or text:find("thank you") or text:find("sweet") or text:find("treat") or text:find("great") then
-        isDismiss = true
-    elseif label:find("done") or label:find("close") or label:find("claim") or label:find("accept") or label:find("okay") or label:find("not now") or label:find("keep raiding") then
-        isDismiss = true
-    end
 
-    return isDismiss
+        return isDismiss
+    end
 end
 
 local function activateGuiButton(desc, vi)
@@ -1047,6 +1056,7 @@ local penESP = {
 local chestESP = {
     show = false,
     visuals = {},
+    pending = {}, -- chests seen before their parts streamed in; retried on the 2s scan
     highlight = nil,
     billboard = nil,
     espConn = nil,
@@ -1079,92 +1089,98 @@ local httpRequest = (request or http_request or (http and http.request) or (syn 
 -- FILE SAVING SYSTEM
 -- ==========================
 local COWHUB_DIR = "cowhub"
-local resolvedPaths = {}
+local resolveCowHubPath
+do
+    local resolvedPaths = {}
 
-local function resolveCowHubPath(fileName, subFolder)
-    local cacheKey = (subFolder and (subFolder .. "/") or "") .. fileName
-    if resolvedPaths[cacheKey] then
-        return resolvedPaths[cacheKey]
-    end
-
-    local targetDir = COWHUB_DIR
-    if makefolder then
-        if isfolder then
-            if not isfolder(COWHUB_DIR) then
-                pcall(makefolder, COWHUB_DIR)
-            end
-        else
-            pcall(makefolder, COWHUB_DIR)
+    function resolveCowHubPath(fileName, subFolder)
+        local cacheKey = (subFolder and (subFolder .. "/") or "") .. fileName
+        if resolvedPaths[cacheKey] then
+            return resolvedPaths[cacheKey]
         end
-    end
 
-    if subFolder then
-        targetDir = COWHUB_DIR .. "/" .. subFolder
+        local targetDir = COWHUB_DIR
         if makefolder then
             if isfolder then
-                if not isfolder(targetDir) then
-                    pcall(makefolder, targetDir)
+                if not isfolder(COWHUB_DIR) then
+                    pcall(makefolder, COWHUB_DIR)
                 end
             else
-                pcall(makefolder, targetDir)
+                pcall(makefolder, COWHUB_DIR)
             end
         end
-    end
 
-    local hasFolder = false
-    if isfolder then
-        hasFolder = isfolder(targetDir)
-    elseif makefolder then
-        hasFolder = true
-    end
-
-    if not hasFolder then
-        resolvedPaths[cacheKey] = fileName
-        return fileName
-    end
-
-    local folderPath = targetDir .. "/" .. fileName
-
-    -- Migrate legacy files into new directory if present
-    local legacyPaths = { fileName }
-    if subFolder then
-        table.insert(legacyPaths, COWHUB_DIR .. "/" .. fileName)
-    end
-
-    for _, oldPath in ipairs(legacyPaths) do
-        if isfile and isfile(oldPath) and (not isfile(folderPath)) then
-            if readfile and writefile then
-                local ok, content = pcall(readfile, oldPath)
-                if ok and content then
-                    pcall(writefile, folderPath, content)
-                    local deleteFn = delfile or deletefile
-                    if deleteFn then pcall(deleteFn, oldPath) end
+        if subFolder then
+            targetDir = COWHUB_DIR .. "/" .. subFolder
+            if makefolder then
+                if isfolder then
+                    if not isfolder(targetDir) then
+                        pcall(makefolder, targetDir)
+                    end
+                else
+                    pcall(makefolder, targetDir)
                 end
             end
         end
-    end
 
-    resolvedPaths[cacheKey] = folderPath
-    return folderPath
+        local hasFolder = false
+        if isfolder then
+            hasFolder = isfolder(targetDir)
+        elseif makefolder then
+            hasFolder = true
+        end
+
+        if not hasFolder then
+            resolvedPaths[cacheKey] = fileName
+            return fileName
+        end
+
+        local folderPath = targetDir .. "/" .. fileName
+
+        -- Migrate legacy files into new directory if present
+        local legacyPaths = { fileName }
+        if subFolder then
+            table.insert(legacyPaths, COWHUB_DIR .. "/" .. fileName)
+        end
+
+        for _, oldPath in ipairs(legacyPaths) do
+            if isfile and isfile(oldPath) and (not isfile(folderPath)) then
+                if readfile and writefile then
+                    local ok, content = pcall(readfile, oldPath)
+                    if ok and content then
+                        pcall(writefile, folderPath, content)
+                        local deleteFn = delfile or deletefile
+                        if deleteFn then pcall(deleteFn, oldPath) end
+                    end
+                end
+            end
+        end
+
+        resolvedPaths[cacheKey] = folderPath
+        return folderPath
+    end
 end
 
-local configFileName = resolveCowHubPath("CowScannerWebhook.txt")
+local saveWebhook, WEBHOOK_URL
+do
+    local configFileName = resolveCowHubPath("CowScannerWebhook.txt")
 
-local function loadWebhook()
-    if isfile and readfile and isfile(configFileName) then
-        local success, result = pcall(function() return readfile(configFileName) end)
-        if success and result then return result end
+    local function loadWebhook()
+        if isfile and readfile and isfile(configFileName) then
+            local success, result = pcall(function() return readfile(configFileName) end)
+            if success and result then return result end
+        end
+        return ""
     end
-    return ""
-end
 
-local function saveWebhook(url)
-    if writefile then
-        pcall(function() writefile(configFileName, url) end)
+    function saveWebhook(url)
+        if writefile then
+            pcall(function() writefile(configFileName, url) end)
+        end
     end
-end
 
-local WEBHOOK_URL = loadWebhook()
+    WEBHOOK_URL = loadWebhook()
+end
 
 -- ==========================
 -- 6-HOUR AFK AUTO-REJOIN & STATE PERSISTENCE SYSTEM
@@ -1541,10 +1557,8 @@ end
 -- ==========================
 -- SPIDER IDENTIFIER LOGGER & CACHE (JSON Persistence in Workspace)
 -- ==========================
-local SPIDER_JSON_FILE = resolveCowHubPath("SpiderIdentifiers.json")
-
 local spiderLogger = {
-    fileName = SPIDER_JSON_FILE,
+    fileName = resolveCowHubPath("SpiderIdentifiers.json"),
     data = {
         identifiers = {},   -- Array of unique string IDs e.g. ["200809"]
         byPosition = {},    -- "X_Y_Z" -> identifier
@@ -1557,251 +1571,255 @@ local spiderLogger = {
     isInternalFire = false, -- Flag to distinguish script's own chomp calls from other scripts
 }
 
-local function getSpiderPosKey(pos)
-    if not pos then return nil end
-    local rx = math.floor(pos.X / 5 + 0.5) * 5
-    local ry = math.floor(pos.Y / 5 + 0.5) * 5
-    local rz = math.floor(pos.Z / 5 + 0.5) * 5
-    return string.format("%d_%d_%d", rx, ry, rz)
-end
+do
+    local function getSpiderPosKey(pos)
+        if not pos then return nil end
+        local rx = math.floor(pos.X / 5 + 0.5) * 5
+        local ry = math.floor(pos.Y / 5 + 0.5) * 5
+        local rz = math.floor(pos.Z / 5 + 0.5) * 5
+        return string.format("%d_%d_%d", rx, ry, rz)
+    end
 
-function spiderLogger.load()
-    if isfile and readfile and isfile(spiderLogger.fileName) then
-        local success, raw = pcall(function() return readfile(spiderLogger.fileName) end)
-        if success and raw and raw ~= "" then
-            local parseSuccess, decoded = pcall(function() return HttpService:JSONDecode(raw) end)
-            if parseSuccess and type(decoded) == "table" then
-                spiderLogger.data.identifiers = decoded.identifiers or {}
-                spiderLogger.data.byPosition = decoded.byPosition or {}
-                spiderLogger.data.byPath = decoded.byPath or {}
-                spiderLogger.data.history = decoded.history or {}
+    function spiderLogger.load()
+        if isfile and readfile and isfile(spiderLogger.fileName) then
+            local success, raw = pcall(function() return readfile(spiderLogger.fileName) end)
+            if success and raw and raw ~= "" then
+                local parseSuccess, decoded = pcall(function() return HttpService:JSONDecode(raw) end)
+                if parseSuccess and type(decoded) == "table" then
+                    spiderLogger.data.identifiers = decoded.identifiers or {}
+                    spiderLogger.data.byPosition = decoded.byPosition or {}
+                    spiderLogger.data.byPath = decoded.byPath or {}
+                    spiderLogger.data.history = decoded.history or {}
 
-                spiderLogger.idSet = {}
-                for _, id in ipairs(spiderLogger.data.identifiers) do
-                    spiderLogger.idSet[tostring(id)] = true
-                end
-                for _, id in pairs(spiderLogger.data.byPosition) do
-                    spiderLogger.idSet[tostring(id)] = true
-                end
-                for _, id in pairs(spiderLogger.data.byPath) do
-                    spiderLogger.idSet[tostring(id)] = true
+                    spiderLogger.idSet = {}
+                    for _, id in ipairs(spiderLogger.data.identifiers) do
+                        spiderLogger.idSet[tostring(id)] = true
+                    end
+                    for _, id in pairs(spiderLogger.data.byPosition) do
+                        spiderLogger.idSet[tostring(id)] = true
+                    end
+                    for _, id in pairs(spiderLogger.data.byPath) do
+                        spiderLogger.idSet[tostring(id)] = true
+                    end
                 end
             end
         end
     end
-end
 
-function spiderLogger.save()
-    if not writefile then return end
-    local success, encoded = pcall(function()
-        return HttpService:JSONEncode(spiderLogger.data)
-    end)
-    if success and encoded then
-        pcall(function()
-            writefile(spiderLogger.fileName, encoded)
+    function spiderLogger.save()
+        if not writefile then return end
+        local success, encoded = pcall(function()
+            return HttpService:JSONEncode(spiderLogger.data)
         end)
+        if success and encoded then
+            pcall(function()
+                writefile(spiderLogger.fileName, encoded)
+            end)
+        end
     end
-end
 
-function spiderLogger.extractIdentifier(val, depth)
-    depth = depth or 0
-    if depth > 3 or val == nil then return nil end
+    function spiderLogger.extractIdentifier(val, depth)
+        depth = depth or 0
+        if depth > 3 or val == nil then return nil end
 
-    local valType = typeof(val)
-    if valType == "string" then
-        if string.find(val, "Grass", 1, true)
-            or string.find(val, "VirtualGrass", 1, true)
-            or string.find(val, "Manatite", 1, true)
-            or string.find(val, "Mithril", 1, true)
-            or string.find(val, "Ore", 1, true)
-            or string.find(val, "Fish", 1, true) then
-            return nil
-        end
+        local valType = typeof(val)
+        if valType == "string" then
+            if string.find(val, "Grass", 1, true)
+                or string.find(val, "VirtualGrass", 1, true)
+                or string.find(val, "Manatite", 1, true)
+                or string.find(val, "Mithril", 1, true)
+                or string.find(val, "Ore", 1, true)
+                or string.find(val, "Fish", 1, true) then
+                return nil
+            end
 
-        local num = string.match(val, "Cavern_Mob_Spider_(%d+)")
-            or string.match(val, "Spider_(%d+)")
-            or string.match(val, "Mob_Spider_(%d+)")
-        if num then return tostring(num) end
+            local num = string.match(val, "Cavern_Mob_Spider_(%d+)")
+                or string.match(val, "Spider_(%d+)")
+                or string.match(val, "Mob_Spider_(%d+)")
+            if num then return tostring(num) end
 
-        local digits = string.match(val, "^(%d%d%d%d+)$")
-        if digits then return digits end
+            local digits = string.match(val, "^(%d%d%d%d+)$")
+            if digits then return digits end
 
-        local anyNum = string.match(val, "(%d%d%d%d+)")
-        if anyNum and #anyNum >= 4 then return anyNum end
-    elseif valType == "number" then
-        if val >= 1000 then
-            return tostring(math.floor(val))
-        end
-    elseif valType == "table" then
-        for _, k in ipairs({"Identifier", "identifier", "Id", "id", "ID", "SpiderId", "spiderId", "MobId", "mobId", "Payload", "payload", "TargetId", "Target", "target"}) do
-            if val[k] ~= nil then
-                local found = spiderLogger.extractIdentifier(val[k], depth + 1)
+            local anyNum = string.match(val, "(%d%d%d%d+)")
+            if anyNum and #anyNum >= 4 then return anyNum end
+        elseif valType == "number" then
+            if val >= 1000 then
+                return tostring(math.floor(val))
+            end
+        elseif valType == "table" then
+            for _, k in ipairs({"Identifier", "identifier", "Id", "id", "ID", "SpiderId", "spiderId", "MobId", "mobId", "Payload", "payload", "TargetId", "Target", "target"}) do
+                if val[k] ~= nil then
+                    local found = spiderLogger.extractIdentifier(val[k], depth + 1)
+                    if found then return found end
+                end
+            end
+            for _, subVal in pairs(val) do
+                local found = spiderLogger.extractIdentifier(subVal, depth + 1)
                 if found then return found end
             end
-        end
-        for _, subVal in pairs(val) do
-            local found = spiderLogger.extractIdentifier(subVal, depth + 1)
-            if found then return found end
-        end
-    elseif valType == "Instance" then
-        if val:IsA("Model") or val:IsA("BasePart") then
-            local numMatch = string.match(val.Name, "(%d%d%d%d+)")
-            if numMatch then return numMatch end
-        end
-    end
-    return nil
-end
-
-function spiderLogger.getMobPosition(mob)
-    if not mob then return nil end
-    if dodge and dodge.getMobAttackOrigin then
-        local pos = dodge.getMobAttackOrigin(mob)
-        if pos then return pos end
-    end
-    if mob.PrimaryPart then return mob.PrimaryPart.Position end
-    local hrp = mob:FindFirstChild("HumanoidRootPart") or mob:FindFirstChild("Head") or mob:FindFirstChild("CavernBodyVisual")
-    if hrp and hrp:IsA("BasePart") then return hrp.Position end
-    if mob:IsA("BasePart") then return mob.Position end
-    local ok, pivot = pcall(function() return mob:GetPivot().Position end)
-    if ok and pivot then return pivot end
-    return nil
-end
-
-function spiderLogger.recordIdentifier(idStr, source, mobInstance, extraRaw)
-    if not idStr or idStr == "" then return end
-    idStr = tostring(idStr)
-
-    local targetMob = mobInstance or spiderLogger.currentUnknownMob
-    local changed = false
-
-    if not spiderLogger.idSet[idStr] then
-        spiderLogger.idSet[idStr] = true
-        table.insert(spiderLogger.data.identifiers, idStr)
-        if #spiderLogger.data.identifiers > 200 then
-            local oldId = table.remove(spiderLogger.data.identifiers, 1)
-            if oldId then spiderLogger.idSet[oldId] = nil end
-        end
-        changed = true
-    end
-
-    local mobPos = nil
-    if targetMob and targetMob.Parent then
-        cache.spiderIdentifier[targetMob] = idStr
-
-        local path = targetMob:GetFullName()
-        if not spiderLogger.data.byPath[path] then
-            spiderLogger.data.byPath[path] = idStr
-            changed = true
-        end
-        if not spiderLogger.data.byPath[targetMob.Name] then
-            spiderLogger.data.byPath[targetMob.Name] = idStr
-            changed = true
-        end
-
-        mobPos = spiderLogger.getMobPosition(targetMob)
-        if mobPos then
-            local posKey = getSpiderPosKey(mobPos)
-            if posKey and not spiderLogger.data.byPosition[posKey] then
-                spiderLogger.data.byPosition[posKey] = idStr
-                changed = true
+        elseif valType == "Instance" then
+            if val:IsA("Model") or val:IsA("BasePart") then
+                local numMatch = string.match(val.Name, "(%d%d%d%d+)")
+                if numMatch then return numMatch end
             end
         end
+        return nil
     end
 
-    table.insert(spiderLogger.data.history, 1, {
-        timestamp = os.date("!%Y-%m-%d %H:%M:%SZ"),
-        identifier = idStr,
-        source = source or "ChompRequest",
-        mobName = targetMob and targetMob.Name or "Unknown",
-        position = mobPos and string.format("%.1f, %.1f, %.1f", mobPos.X, mobPos.Y, mobPos.Z) or nil,
-        raw = extraRaw and tostring(extraRaw) or nil
-    })
-    if #spiderLogger.data.history > 50 then
-        table.remove(spiderLogger.data.history)
+    function spiderLogger.getMobPosition(mob)
+        if not mob then return nil end
+        if dodge and dodge.getMobAttackOrigin then
+            local pos = dodge.getMobAttackOrigin(mob)
+            if pos then return pos end
+        end
+        if mob.PrimaryPart then return mob.PrimaryPart.Position end
+        local hrp = mob:FindFirstChild("HumanoidRootPart") or mob:FindFirstChild("Head") or mob:FindFirstChild("CavernBodyVisual")
+        if hrp and hrp:IsA("BasePart") then return hrp.Position end
+        if mob:IsA("BasePart") then return mob.Position end
+        local ok, pivot = pcall(function() return mob:GetPivot().Position end)
+        if ok and pivot then return pivot end
+        return nil
     end
 
-    spiderLogger.save()
+    function spiderLogger.recordIdentifier(idStr, source, mobInstance, extraRaw)
+        if not idStr or idStr == "" then return end
+        idStr = tostring(idStr)
 
-    if targetMob == spiderLogger.currentUnknownMob then
-        spiderLogger.currentUnknownMob = nil
-        spiderLogger.currentUnknownTime = 0
-    end
-end
+        local targetMob = mobInstance or spiderLogger.currentUnknownMob
+        local changed = false
 
-function spiderLogger.resolveSpiderIdentifier(mob)
-    if not mob or not mob.Parent then return nil end
-
-    -- 1. Check direct path / name lookup
-    local path = mob:GetFullName()
-    if spiderLogger.data.byPath[path] then
-        return spiderLogger.data.byPath[path]
-    end
-    if spiderLogger.data.byPath[mob.Name] then
-        return spiderLogger.data.byPath[mob.Name]
-    end
-
-    -- 2. Check position proximity (within 10 studs / 100 studs squared)
-    local mobPos = spiderLogger.getMobPosition(mob)
-    if mobPos then
-        local posKey = getSpiderPosKey(mobPos)
-        if posKey and spiderLogger.data.byPosition[posKey] then
-            return spiderLogger.data.byPosition[posKey]
+        if not spiderLogger.idSet[idStr] then
+            spiderLogger.idSet[idStr] = true
+            table.insert(spiderLogger.data.identifiers, idStr)
+            if #spiderLogger.data.identifiers > 200 then
+                local oldId = table.remove(spiderLogger.data.identifiers, 1)
+                if oldId then spiderLogger.idSet[oldId] = nil end
+            end
+            changed = true
         end
 
-        for savedPosKey, id in pairs(spiderLogger.data.byPosition) do
-            local sx, sy, sz = string.match(savedPosKey, "^(%-?%d+)_(%-?%d+)_(%-?%d+)$")
-            if sx and sy and sz then
-                local spos = Vector3.new(tonumber(sx), tonumber(sy), tonumber(sz))
-                local distSq = (mobPos.X - spos.X)^2 + (mobPos.Y - spos.Y)^2 + (mobPos.Z - spos.Z)^2
-                if distSq <= 100 then
-                    return id
+        local mobPos = nil
+        if targetMob and targetMob.Parent then
+            cache.spiderIdentifier[targetMob] = idStr
+
+            local path = targetMob:GetFullName()
+            if not spiderLogger.data.byPath[path] then
+                spiderLogger.data.byPath[path] = idStr
+                changed = true
+            end
+            if not spiderLogger.data.byPath[targetMob.Name] then
+                spiderLogger.data.byPath[targetMob.Name] = idStr
+                changed = true
+            end
+
+            mobPos = spiderLogger.getMobPosition(targetMob)
+            if mobPos then
+                local posKey = getSpiderPosKey(mobPos)
+                if posKey and not spiderLogger.data.byPosition[posKey] then
+                    spiderLogger.data.byPosition[posKey] = idStr
+                    changed = true
                 end
             end
         end
+
+        table.insert(spiderLogger.data.history, 1, {
+            timestamp = os.date("!%Y-%m-%d %H:%M:%SZ"),
+            identifier = idStr,
+            source = source or "ChompRequest",
+            mobName = targetMob and targetMob.Name or "Unknown",
+            position = mobPos and string.format("%.1f, %.1f, %.1f", mobPos.X, mobPos.Y, mobPos.Z) or nil,
+            raw = extraRaw and tostring(extraRaw) or nil
+        })
+        if #spiderLogger.data.history > 50 then
+            table.remove(spiderLogger.data.history)
+        end
+
+        spiderLogger.save()
+
+        if targetMob == spiderLogger.currentUnknownMob then
+            spiderLogger.currentUnknownMob = nil
+            spiderLogger.currentUnknownTime = 0
+        end
     end
 
-    return nil
+    function spiderLogger.resolveSpiderIdentifier(mob)
+        if not mob or not mob.Parent then return nil end
+
+        -- 1. Check direct path / name lookup
+        local path = mob:GetFullName()
+        if spiderLogger.data.byPath[path] then
+            return spiderLogger.data.byPath[path]
+        end
+        if spiderLogger.data.byPath[mob.Name] then
+            return spiderLogger.data.byPath[mob.Name]
+        end
+
+        -- 2. Check position proximity (within 10 studs / 100 studs squared)
+        local mobPos = spiderLogger.getMobPosition(mob)
+        if mobPos then
+            local posKey = getSpiderPosKey(mobPos)
+            if posKey and spiderLogger.data.byPosition[posKey] then
+                return spiderLogger.data.byPosition[posKey]
+            end
+
+            for savedPosKey, id in pairs(spiderLogger.data.byPosition) do
+                local sx, sy, sz = string.match(savedPosKey, "^(%-?%d+)_(%-?%d+)_(%-?%d+)$")
+                if sx and sy and sz then
+                    local spos = Vector3.new(tonumber(sx), tonumber(sy), tonumber(sz))
+                    local distSq = (mobPos.X - spos.X)^2 + (mobPos.Y - spos.Y)^2 + (mobPos.Z - spos.Z)^2
+                    if distSq <= 100 then
+                        return id
+                    end
+                end
+            end
+        end
+
+        return nil
+    end
 end
 
 spiderLogger.load()
 
 -- Hook ChompRequest for server-fired responses & client-fired bite events
-local function onChompRemoteReceived(source, ...)
-    local firstArg = ...
-    if firstArg then
-        local firstStr = tostring(firstArg)
-        if string.find(firstStr, "Grass", 1, true)
-            or string.find(firstStr, "VirtualGrass", 1, true)
-            or string.find(firstStr, "Manatite", 1, true)
-            or string.find(firstStr, "Mithril", 1, true) then
-            return
+do
+    local function onChompRemoteReceived(source, ...)
+        local firstArg = ...
+        if firstArg then
+            local firstStr = tostring(firstArg)
+            if string.find(firstStr, "Grass", 1, true)
+                or string.find(firstStr, "VirtualGrass", 1, true)
+                or string.find(firstStr, "Manatite", 1, true)
+                or string.find(firstStr, "Mithril", 1, true) then
+                return
+            end
         end
+        local args = {...}
+        task.spawn(function()
+            local id = nil
+            for _, arg in ipairs(args) do
+                id = spiderLogger.extractIdentifier(arg)
+                if id then break end
+            end
+            if id then
+                spiderLogger.recordIdentifier(id, source, spiderLogger.currentUnknownMob, args[1])
+            end
+        end)
     end
-    local args = {...}
-    task.spawn(function()
-        local id = nil
-        for _, arg in ipairs(args) do
-            id = spiderLogger.extractIdentifier(arg)
-            if id then break end
-        end
-        if id then
-            spiderLogger.recordIdentifier(id, source, spiderLogger.currentUnknownMob, args[1])
-        end
-    end)
-end
 
--- 1. Hook incoming server events via OnClientEvent
-if chompEvent and chompEvent:IsA("RemoteEvent") then
-    local serverConn = chompEvent.OnClientEvent:Connect(function(...)
-        onChompRemoteReceived("OnClientEvent", ...)
-    end)
-    table.insert(scriptConnections, serverConn)
-elseif chompEvent and chompEvent:IsA("RemoteFunction") then
-    local origCallback = chompEvent.OnClientInvoke
-    chompEvent.OnClientInvoke = function(...)
-        onChompRemoteReceived("OnClientInvoke", ...)
-        if origCallback then
-            return origCallback(...)
+    -- 1. Hook incoming server events via OnClientEvent
+    if chompEvent and chompEvent:IsA("RemoteEvent") then
+        local serverConn = chompEvent.OnClientEvent:Connect(function(...)
+            onChompRemoteReceived("OnClientEvent", ...)
+        end)
+        table.insert(scriptConnections, serverConn)
+    elseif chompEvent and chompEvent:IsA("RemoteFunction") then
+        local origCallback = chompEvent.OnClientInvoke
+        chompEvent.OnClientInvoke = function(...)
+            onChompRemoteReceived("OnClientInvoke", ...)
+            if origCallback then
+                return origCallback(...)
+            end
         end
     end
 end
@@ -1973,46 +1991,48 @@ end
 
 -- Mirrors InputController:_findTarget (Available, TargetDistance, forward cone). Range and cone are
 -- judged from where the server sees the cow: the root position minus horizontal velocity x lag.
-local function inReach(origin, pos, look, cosCone)
-    local d = pos - origin
-    if d.Magnitude > chomp.REACH then return false, d.Magnitude, 1 end
-    local flat = Vector3.new(d.X, 0, d.Z)
-    local fm = flat.Magnitude
-    local dot = fm > 0.001 and look:Dot(flat / fm) or 1
-    return fm <= chomp.CLOSE or dot >= cosCone, d.Magnitude, dot
-end
-
--- Returns ok, dist, dot (client-origin geometry, for logging), why (rejection cause)
-function chomp.canTarget(node, id, rootPos, now)
-    if not id or not node or typeof(node) ~= "Instance" or not node.Parent then return false, 0, 1, "invalid" end
-    local until_ = chomp.skip[id]
-    if until_ then
-        if now < until_ then return false, 0, 1, "skip" end
-        chomp.skip[id] = nil
+do
+    local function inReach(origin, pos, look, cosCone)
+        local d = pos - origin
+        if d.Magnitude > chomp.REACH then return false, d.Magnitude, 1 end
+        local flat = Vector3.new(d.X, 0, d.Z)
+        local fm = flat.Magnitude
+        local dot = fm > 0.001 and look:Dot(flat / fm) or 1
+        return fm <= chomp.CLOSE or dot >= cosCone, d.Magnitude, dot
     end
-    local avail = node:GetAttribute("Available")
-    if avail == nil and node:IsA("Model") and node.PrimaryPart then avail = node.PrimaryPart:GetAttribute("Available") end
-    if avail ~= nil and avail ~= true then return false, 0, 1, "avail" end
-    -- Same exclusions as the game's target scan
-    if node:GetAttribute("CowBiteTargetId") ~= nil or node:GetAttribute("CowPrivatePenHaySharedHidden") == true then return false, 0, 1, "excluded" end
-    local owner = node:GetAttribute("CowMountainsideOwner")
-    if owner ~= nil and owner ~= plr.UserId then return false, 0, 1, "excluded" end
-    if not root then return false, 0, 1, "noroot" end
-    local lv = root.CFrame.LookVector
-    local look = Vector3.new(lv.X, 0, lv.Z)
-    if look.Magnitude < 0.001 then return false, 0, 1, "noroot" end
-    look = look.Unit
-    local rest = node:GetAttribute("RestCFrame")
-    local pos = typeof(rest) == "CFrame" and rest.Position or cache.getNodePosition(node)
-    if not pos then return false, 0, 1, "invalid" end
-    local cone = (tonumber(plr:GetAttribute("GrazeConeDegrees")) or 100) - chomp.CONE_MARGIN
-    local cosCone = math.cos(math.rad(cone * 0.5))
-    local _, dist, dot = inReach(rootPos, pos, look, cosCone)
-    local v = root.AssemblyLinearVelocity
-    local lag = math.clamp(chomp.rtt * 0.5, 0.05, 0.3)
-    local ok, sDist = inReach(rootPos - Vector3.new(v.X, 0, v.Z) * lag, pos, look, cosCone)
-    if not ok then return false, dist, dot, sDist > chomp.REACH and "range" or "cone" end
-    return true, dist, dot
+
+    -- Returns ok, dist, dot (client-origin geometry, for logging), why (rejection cause)
+    function chomp.canTarget(node, id, rootPos, now)
+        if not id or not node or typeof(node) ~= "Instance" or not node.Parent then return false, 0, 1, "invalid" end
+        local until_ = chomp.skip[id]
+        if until_ then
+            if now < until_ then return false, 0, 1, "skip" end
+            chomp.skip[id] = nil
+        end
+        local avail = node:GetAttribute("Available")
+        if avail == nil and node:IsA("Model") and node.PrimaryPart then avail = node.PrimaryPart:GetAttribute("Available") end
+        if avail ~= nil and avail ~= true then return false, 0, 1, "avail" end
+        -- Same exclusions as the game's target scan
+        if node:GetAttribute("CowBiteTargetId") ~= nil or node:GetAttribute("CowPrivatePenHaySharedHidden") == true then return false, 0, 1, "excluded" end
+        local owner = node:GetAttribute("CowMountainsideOwner")
+        if owner ~= nil and owner ~= plr.UserId then return false, 0, 1, "excluded" end
+        if not root then return false, 0, 1, "noroot" end
+        local lv = root.CFrame.LookVector
+        local look = Vector3.new(lv.X, 0, lv.Z)
+        if look.Magnitude < 0.001 then return false, 0, 1, "noroot" end
+        look = look.Unit
+        local rest = node:GetAttribute("RestCFrame")
+        local pos = typeof(rest) == "CFrame" and rest.Position or cache.getNodePosition(node)
+        if not pos then return false, 0, 1, "invalid" end
+        local cone = (tonumber(plr:GetAttribute("GrazeConeDegrees")) or 100) - chomp.CONE_MARGIN
+        local cosCone = math.cos(math.rad(cone * 0.5))
+        local _, dist, dot = inReach(rootPos, pos, look, cosCone)
+        local v = root.AssemblyLinearVelocity
+        local lag = math.clamp(chomp.rtt * 0.5, 0.05, 0.3)
+        local ok, sDist = inReach(rootPos - Vector3.new(v.X, 0, v.Z) * lag, pos, look, cosCone)
+        if not ok then return false, dist, dot, sDist > chomp.REACH and "range" or "cone" end
+        return true, dist, dot
+    end
 end
 
 -- Single grass ChompRequest call site; wire shape matches InputController (nodeId, nil, serial)
@@ -2458,108 +2478,110 @@ function cache.getSpotPosition(spot)
     return pos
 end
 
-local function isValidGrassNodeID(id)
-    if type(id) ~= "string" or id == "" then return false end
-    if string.find(id, "Floor", 1, true) then return false end
-    return string.match(id, ".*Grass.*_[np%-]?%d+$") ~= nil
-end
-cache.isValidNodeID = isValidGrassNodeID
+do
+    local function isValidGrassNodeID(id)
+        if type(id) ~= "string" or id == "" then return false end
+        if string.find(id, "Floor", 1, true) then return false end
+        return string.match(id, ".*Grass.*_[np%-]?%d+$") ~= nil
+    end
+    cache.isValidNodeID = isValidGrassNodeID
 
-function cache.resolveGrassNode(inst)
-    if not inst then return nil end
-    local folder = cache.grassFolder or findGrassFolder()
-    if not folder or inst == folder then return nil end
+    function cache.resolveGrassNode(inst)
+        if not inst then return nil end
+        local folder = cache.grassFolder or findGrassFolder()
+        if not folder or inst == folder then return nil end
 
-    -- Must strictly be within the CowVirtualGrass folder
-    if not inst:IsDescendantOf(folder) then
+        -- Must strictly be within the CowVirtualGrass folder
+        if not inst:IsDescendantOf(folder) then
+            return nil
+        end
+
+        local curr = inst
+        while curr and curr.Parent and curr.Parent ~= folder do
+            curr = curr.Parent
+        end
+        if not curr or curr.Parent ~= folder then
+            return nil
+        end
+
+        local nodeId = cache.getNodeID(curr)
+        if nodeId and isValidGrassNodeID(nodeId) then
+            return curr
+        end
+
         return nil
     end
 
-    local curr = inst
-    while curr and curr.Parent and curr.Parent ~= folder do
-        curr = curr.Parent
-    end
-    if not curr or curr.Parent ~= folder then
-        return nil
-    end
+    function cache.getNodeID(node)
+        if not node or not node.Parent then return nil end
+        -- Pooled visuals are renamed GrassVisual_<id> on reuse, so a cached ID is valid only while the name matches
+        local name = node.Name
+        local cached = cache.nodeIDs[node]
+        if cached ~= nil and cached.name == name then return cached.id or nil end
 
-    local nodeId = cache.getNodeID(curr)
-    if nodeId and isValidGrassNodeID(nodeId) then
-        return curr
-    end
+        -- Must be strictly in CowVirtualGrass
+        local folder = cache.grassFolder or findGrassFolder()
+        if folder and not node:IsDescendantOf(folder) then
+            cache.nodeIDs[node] = { name = name, id = false }
+            return nil
+        end
 
-    return nil
-end
+        local attrId = node:GetAttribute("nodeID")
+        if attrId == nil then attrId = node:GetAttribute("NodeID") end
+        if attrId == nil then attrId = node:GetAttribute("nodeId") end
+        if attrId == nil then attrId = node:GetAttribute("NodeId") end
 
-function cache.getNodeID(node)
-    if not node or not node.Parent then return nil end
-    -- Pooled visuals are renamed GrassVisual_<id> on reuse, so a cached ID is valid only while the name matches
-    local name = node.Name
-    local cached = cache.nodeIDs[node]
-    if cached ~= nil and cached.name == name then return cached.id or nil end
+        if attrId == nil and node.Parent and node.Parent ~= folder and node.Parent ~= workspace then
+            attrId = node.Parent:GetAttribute("nodeID")
+            if attrId == nil then attrId = node.Parent:GetAttribute("NodeID") end
+            if attrId == nil then attrId = node.Parent:GetAttribute("nodeId") end
+            if attrId == nil then attrId = node.Parent:GetAttribute("NodeId") end
+        end
 
-    -- Must be strictly in CowVirtualGrass
-    local folder = cache.grassFolder or findGrassFolder()
-    if folder and not node:IsDescendantOf(folder) then
+        if attrId and attrId ~= "" then
+            local cleanId = tostring(attrId)
+            if string.find(cleanId, "GrassVisual", 1, true) then
+                cleanId = string.gsub(cleanId, "GrassVisual", "")
+                cleanId = string.gsub(cleanId, "^_+", "")
+                cleanId = string.gsub(cleanId, "_+$", "")
+            end
+            if isValidGrassNodeID(cleanId) then
+                cache.nodeIDs[node] = { name = name, id = cleanId }
+                return cleanId
+            end
+        end
+
+        -- Fallback: legacy name cleaning if attribute is absent
+        local fallback = cache.getCleanGrassName(node.Name)
+        if fallback and isValidGrassNodeID(fallback) then
+            cache.nodeIDs[node] = { name = name, id = fallback }
+            return fallback
+        end
+
         cache.nodeIDs[node] = { name = name, id = false }
         return nil
     end
 
-    local attrId = node:GetAttribute("nodeID")
-    if attrId == nil then attrId = node:GetAttribute("NodeID") end
-    if attrId == nil then attrId = node:GetAttribute("nodeId") end
-    if attrId == nil then attrId = node:GetAttribute("NodeId") end
+    function cache.getCleanGrassName(nodeName)
+        local cached = cache.nodeCleanNames[nodeName]
+        if cached ~= nil then return cached or nil end
 
-    if attrId == nil and node.Parent and node.Parent ~= folder and node.Parent ~= workspace then
-        attrId = node.Parent:GetAttribute("nodeID")
-        if attrId == nil then attrId = node.Parent:GetAttribute("NodeID") end
-        if attrId == nil then attrId = node.Parent:GetAttribute("nodeId") end
-        if attrId == nil then attrId = node.Parent:GetAttribute("NodeId") end
-    end
-
-    if attrId and attrId ~= "" then
-        local cleanId = tostring(attrId)
-        if string.find(cleanId, "GrassVisual", 1, true) then
-            cleanId = string.gsub(cleanId, "GrassVisual", "")
-            cleanId = string.gsub(cleanId, "^_+", "")
-            cleanId = string.gsub(cleanId, "_+$", "")
+        if string.find(nodeName, "Floor", 1, true) then
+            cache.nodeCleanNames[nodeName] = false
+            return nil
         end
-        if isValidGrassNodeID(cleanId) then
-            cache.nodeIDs[node] = { name = name, id = cleanId }
-            return cleanId
+
+        local cleanName = string.gsub(nodeName, "GrassVisual", "")
+        cleanName = string.gsub(cleanName, "^_+", "")
+        cleanName = string.gsub(cleanName, "_+$", "")
+
+        if isValidGrassNodeID(cleanName) then
+            cache.nodeCleanNames[nodeName] = cleanName
+            return cleanName
+        else
+            cache.nodeCleanNames[nodeName] = false
+            return nil
         end
-    end
-
-    -- Fallback: legacy name cleaning if attribute is absent
-    local fallback = cache.getCleanGrassName(node.Name)
-    if fallback and isValidGrassNodeID(fallback) then
-        cache.nodeIDs[node] = { name = name, id = fallback }
-        return fallback
-    end
-
-    cache.nodeIDs[node] = { name = name, id = false }
-    return nil
-end
-
-function cache.getCleanGrassName(nodeName)
-    local cached = cache.nodeCleanNames[nodeName]
-    if cached ~= nil then return cached or nil end
-
-    if string.find(nodeName, "Floor", 1, true) then
-        cache.nodeCleanNames[nodeName] = false
-        return nil
-    end
-
-    local cleanName = string.gsub(nodeName, "GrassVisual", "")
-    cleanName = string.gsub(cleanName, "^_+", "")
-    cleanName = string.gsub(cleanName, "_+$", "")
-
-    if isValidGrassNodeID(cleanName) then
-        cache.nodeCleanNames[nodeName] = cleanName
-        return cleanName
-    else
-        cache.nodeCleanNames[nodeName] = false
-        return nil
     end
 end
 
@@ -2829,398 +2851,401 @@ function manatite.getGrazeTargetYield(target, model)
     return 0, false
 end
 
-local function isOreAvailable(targetPart, model, checkYield)
-    if not targetPart or not targetPart.Parent then return false end
-    if model and not model.Parent then return false end
+local isPositionNearThreatMob
+do
+    local function isOreAvailable(targetPart, model, checkYield)
+        if not targetPart or not targetPart.Parent then return false end
+        if model and not model.Parent then return false end
 
-    local attr = targetPart:GetAttribute("Available")
-    if attr == nil then
-        attr = targetPart:GetAttribute("available")
-    end
-    if attr == nil and model then
-        attr = model:GetAttribute("Available")
+        local attr = targetPart:GetAttribute("Available")
         if attr == nil then
-            attr = model:GetAttribute("available")
+            attr = targetPart:GetAttribute("available")
         end
+        if attr == nil and model then
+            attr = model:GetAttribute("Available")
+            if attr == nil then
+                attr = model:GetAttribute("available")
+            end
+        end
+
+        if attr ~= nil then
+            if not (attr == true or attr == "true" or attr == 1) then
+                return false
+            end
+        end
+
+        if checkYield then
+            local yieldVal, hasYield = manatite.getGrazeTargetYield(targetPart, model)
+            if hasYield and yieldVal <= 0 then
+                return false
+            end
+        end
+
+        return true
     end
 
-    if attr ~= nil then
-        if not (attr == true or attr == "true" or attr == 1) then
-            return false
-        end
+    function manatite.isAvailable(target, model)
+        return isOreAvailable(target, model, true)
     end
 
-    if checkYield then
-        local yieldVal, hasYield = manatite.getGrazeTargetYield(targetPart, model)
-        if hasYield and yieldVal <= 0 then
-            return false
-        end
-    end
+    function manatite.getPayload(modelName)
+        local cached = manatite.payloadCache[modelName]
+        if cached then return cached end
 
-    return true
-end
-
-function manatite.isAvailable(target, model)
-    return isOreAvailable(target, model, true)
-end
-
-function manatite.getPayload(modelName)
-    local cached = manatite.payloadCache[modelName]
-    if cached then return cached end
-
-    local payload
-    if string.find(modelName, "^Manatite_SeaMaze_") then
-        payload = modelName
-    else
-        local suffix = string.match(modelName, "^Manatite_(.+)$")
-        if suffix then
-            payload = "Manatite_SeaMaze_" .. suffix
+        local payload
+        if string.find(modelName, "^Manatite_SeaMaze_") then
+            payload = modelName
         else
-            local tag = string.match(modelName, "^Manatite[_-]?(.*)$")
-            if tag and tag ~= "" then
-                payload = "Manatite_SeaMaze_" .. tag
+            local suffix = string.match(modelName, "^Manatite_(.+)$")
+            if suffix then
+                payload = "Manatite_SeaMaze_" .. suffix
             else
-                payload = "Manatite_SeaMaze_" .. modelName
+                local tag = string.match(modelName, "^Manatite[_-]?(.*)$")
+                if tag and tag ~= "" then
+                    payload = "Manatite_SeaMaze_" .. tag
+                else
+                    payload = "Manatite_SeaMaze_" .. modelName
+                end
             end
         end
+
+        manatite.payloadCache[modelName] = payload
+        return payload
     end
 
-    manatite.payloadCache[modelName] = payload
-    return payload
-end
-
-local function cleanupOreBlacklist(oreState, now)
-    if now - oreState.lastBlacklistCleanup > 10 then
-        oreState.lastBlacklistCleanup = now
-        for model, timestamp in pairs(oreState.blacklist) do
-            if not model or not model.Parent or (now - timestamp > 20) then
-                oreState.blacklist[model] = nil
-            end
-        end
-    end
-end
-
-function manatite.cleanupBlacklist(now)
-    cleanupOreBlacklist(manatite, now)
-end
-
-local function isPositionNearThreatMob(pos, distSq)
-    if not pos then return false end
-    distSq = distSq or (dodge.manatiteThreatRadiusSq or 225)
-    for _, mob in ipairs(cache.activeAuraMobs) do
-        if mob.Parent and dodge.isMobAlive(mob) then
-            local mobPos = dodge.getMobAttackOrigin(mob)
-            if mobPos and get3DDistanceSq(pos, mobPos) <= distSq then
-                return true
-            end
-        end
-    end
-    return false
-end
-
-manatite.isPositionNearMob = isPositionNearThreatMob
-
-local function findNextOreCandidate(oreState, getTargetFn, checkYield, searchOrigin, avoidMobs)
-    local models = oreState.getModels()
-    if not models or #models == 0 then return nil, nil end
-
-    local now = os.clock()
-    local origin = searchOrigin or getRootPos(root) or Vector3.zero
-    local requireSafe = (avoidMobs == true) or (avoidMobs == nil and dodge.retreatOnThreat)
-
-    local safeCandidates = {}
-    local allCandidates = {}
-
-    for _, model in ipairs(models) do
-        if model.Parent then
-            local blacklistedAt = oreState.blacklist[model]
-            if not blacklistedAt or (now - blacklistedAt > 20) then
-                local target = getTargetFn(model)
-                if target and oreState.isAvailable(target, model) then
-                    local isNear = isPositionNearThreatMob(target.Position, dodge.manatiteThreatRadiusSq or 225)
-                    local item = {
-                        model = model,
-                        target = target,
-                        isNearMob = isNear,
-                        distSq = get3DDistanceSq(origin, target.Position),
-                        yield = (checkYield and oreState.order == "Largest Crystal Yield") and oreState.getGrazeTargetYield(target, model) or 0
-                    }
-                    table.insert(allCandidates, item)
-                    if not isNear then
-                        table.insert(safeCandidates, item)
-                    end
+    local function cleanupOreBlacklist(oreState, now)
+        if now - oreState.lastBlacklistCleanup > 10 then
+            oreState.lastBlacklistCleanup = now
+            for model, timestamp in pairs(oreState.blacklist) do
+                if not model or not model.Parent or (now - timestamp > 20) then
+                    oreState.blacklist[model] = nil
                 end
             end
         end
     end
 
-    local pool = (requireSafe and #safeCandidates > 0) and safeCandidates or allCandidates
-    if #pool == 0 then return nil, nil end
-
-    if oreState.order == "Alphabetical (A-Z)" then
-        table.sort(pool, function(a, b) return a.model.Name < b.model.Name end)
-        return pool[1].model, pool[1].target
-    elseif checkYield and oreState.order == "Largest Crystal Yield" then
-        table.sort(pool, function(a, b)
-            if a.yield ~= b.yield then return a.yield > b.yield end
-            if a.distSq ~= b.distSq then return a.distSq < b.distSq end
-            return a.model.Name < b.model.Name
-        end)
-        return pool[1].model, pool[1].target
-    else
-        table.sort(pool, function(a, b)
-            return a.distSq < b.distSq
-        end)
-        return pool[1].model, pool[1].target
-    end
-end
-
-function manatite.findNext(searchOrigin, avoidMobs)
-    return findNextOreCandidate(manatite, manatite.getGrazeTarget, true, searchOrigin, avoidMobs)
-end
-
-local function teleportToOreNode(oreState, targetPart, model)
-    if not root or not char or not targetPart or not targetPart.Parent then return end
-
-    local targetPos = targetPart.Position + Vector3.new(0, oreState.heightOffset, 0)
-    local modelPos = model and model:GetPivot().Position or targetPart.Position
-    local lookDir = Vector3.new(modelPos.X - targetPos.X, 0, modelPos.Z - targetPos.Z)
-    local targetCFrame = (lookDir.Magnitude > 0.5) and CFrame.lookAt(targetPos, targetPos + lookDir.Unit) or CFrame.new(targetPos)
-
-    char:PivotTo(targetCFrame)
-    root.CFrame = targetCFrame
-    stopCharacterVelocity()
-
-    for _, part in ipairs(charBaseParts) do
-        part.AssemblyLinearVelocity = Vector3.zero
-        part.AssemblyAngularVelocity = Vector3.zero
+    function manatite.cleanupBlacklist(now)
+        cleanupOreBlacklist(manatite, now)
     end
 
-    if humanoid then
-        humanoid:Move(Vector3.zero, false)
+    function isPositionNearThreatMob(pos, distSq)
+        if not pos then return false end
+        distSq = distSq or (dodge.manatiteThreatRadiusSq or 225)
+        for _, mob in ipairs(cache.activeAuraMobs) do
+            if mob.Parent and dodge.isMobAlive(mob) then
+                local mobPos = dodge.getMobAttackOrigin(mob)
+                if mobPos and get3DDistanceSq(pos, mobPos) <= distSq then
+                    return true
+                end
+            end
+        end
+        return false
     end
 
-    if oreState.anchor then
-        pcall(function() root.Anchored = true end)
-    end
-end
+    manatite.isPositionNearMob = isPositionNearThreatMob
 
-function manatite.teleport(grazeTarget, model)
-    teleportToOreNode(manatite, grazeTarget, model)
-end
+    local function findNextOreCandidate(oreState, getTargetFn, checkYield, searchOrigin, avoidMobs)
+        local models = oreState.getModels()
+        if not models or #models == 0 then return nil, nil end
 
-local function retreatOreNode(oreState, isMithril, title, content, now, rootPos)
-    local currentModel = oreState.model
-    if currentModel then
-        oreState.blacklist[currentModel] = now
-    end
+        local now = os.clock()
+        local origin = searchOrigin or getRootPos(root) or Vector3.zero
+        local requireSafe = (avoidMobs == true) or (avoidMobs == nil and dodge.retreatOnThreat)
 
-    oreState.model = nil
-    if isMithril then
-        oreState.orePart = nil
-    else
-        oreState.target = nil
-    end
-    oreState.payload = nil
+        local safeCandidates = {}
+        local allCandidates = {}
 
-    if root then
-        pcall(function() root.Anchored = false end)
-    end
+        for _, model in ipairs(models) do
+            if model.Parent then
+                local blacklistedAt = oreState.blacklist[model]
+                if not blacklistedAt or (now - blacklistedAt > 20) then
+                    local target = getTargetFn(model)
+                    if target and oreState.isAvailable(target, model) then
+                        local isNear = isPositionNearThreatMob(target.Position, dodge.manatiteThreatRadiusSq or 225)
+                        local item = {
+                            model = model,
+                            target = target,
+                            isNearMob = isNear,
+                            distSq = get3DDistanceSq(origin, target.Position),
+                            yield = (checkYield and oreState.order == "Largest Crystal Yield") and oreState.getGrazeTargetYield(target, model) or 0
+                        }
+                        table.insert(allCandidates, item)
+                        if not isNear then
+                            table.insert(safeCandidates, item)
+                        end
+                    end
+                end
+            end
+        end
 
-    local nextModel, nextPart = oreState.findNext(rootPos or getRootPos(root), true)
-    if nextModel and nextPart then
-        oreState.model = nextModel
-        if isMithril then
-            oreState.orePart = nextPart
+        local pool = (requireSafe and #safeCandidates > 0) and safeCandidates or allCandidates
+        if #pool == 0 then return nil, nil end
+
+        if oreState.order == "Alphabetical (A-Z)" then
+            table.sort(pool, function(a, b) return a.model.Name < b.model.Name end)
+            return pool[1].model, pool[1].target
+        elseif checkYield and oreState.order == "Largest Crystal Yield" then
+            table.sort(pool, function(a, b)
+                if a.yield ~= b.yield then return a.yield > b.yield end
+                if a.distSq ~= b.distSq then return a.distSq < b.distSq end
+                return a.model.Name < b.model.Name
+            end)
+            return pool[1].model, pool[1].target
         else
-            oreState.target = nextPart
-        end
-        oreState.payload = oreState.getPayload(nextModel.Name)
-        oreState.startTime = now
-        oreState.teleport(nextPart, nextModel)
-        oreState.lastTeleportTime = now
-        oreState.lastChompTime = 0
-        oreState.lastSearchTime = now
-
-        if dodge.notifyOnDodge and Window and Window.Notify then
-            Window:Notify({
-                Title = title,
-                Content = content,
-                Duration = 2,
-            })
-        end
-        return true
-    end
-    return false
-end
-
-function manatite.retreatToSafeCrystal(now, rootPos)
-    return retreatOreNode(manatite, false, "Manatite Retreat", "Spiders nearby! Relocated to a safe crystal.", now, rootPos)
-end
-
--- Mithril Ore Farm Helpers (Crystal Geode Ores)
-function mithril.getFolder()
-    if mithril.cachedFolder and mithril.cachedFolder.Parent then
-        return mithril.cachedFolder
-    end
-
-    -- 1. Direct path: resources.CrystalGeodeOres (O(1))
-    local res = getResourcesFolder()
-    if res then
-        local geode = res:FindFirstChild("CrystalGeodeOres")
-        if geode then
-            mithril.cachedFolder = geode
-            return geode
+            table.sort(pool, function(a, b)
+                return a.distSq < b.distSq
+            end)
+            return pool[1].model, pool[1].target
         end
     end
 
-    -- 2. Direct path via CowWorld (O(1))
-    local cowWorld = cache.cowWorldRef
-    if not cowWorld or not cowWorld.Parent then
-        cowWorld = workspace:FindFirstChild("CowWorld")
-        cache.cowWorldRef = cowWorld
+    function manatite.findNext(searchOrigin, avoidMobs)
+        return findNextOreCandidate(manatite, manatite.getGrazeTarget, true, searchOrigin, avoidMobs)
     end
-    if cowWorld then
-        local rafting = cowWorld:FindFirstChild("FjordRafting")
-        if rafting then
-            local geode = rafting:FindFirstChild("CrystalGeodeOres")
-            if geode then
-                mithril.cachedFolder = geode
-                return geode
+
+    local function teleportToOreNode(oreState, targetPart, model)
+        if not root or not char or not targetPart or not targetPart.Parent then return end
+
+        local targetPos = targetPart.Position + Vector3.new(0, oreState.heightOffset, 0)
+        local modelPos = model and model:GetPivot().Position or targetPart.Position
+        local lookDir = Vector3.new(modelPos.X - targetPos.X, 0, modelPos.Z - targetPos.Z)
+        local targetCFrame = (lookDir.Magnitude > 0.5) and CFrame.lookAt(targetPos, targetPos + lookDir.Unit) or CFrame.new(targetPos)
+
+        char:PivotTo(targetCFrame)
+        root.CFrame = targetCFrame
+        stopCharacterVelocity()
+
+        for _, part in ipairs(charBaseParts) do
+            part.AssemblyLinearVelocity = Vector3.zero
+            part.AssemblyAngularVelocity = Vector3.zero
+        end
+
+        if humanoid then
+            humanoid:Move(Vector3.zero, false)
+        end
+
+        if oreState.anchor then
+            pcall(function() root.Anchored = true end)
+        end
+    end
+
+    function manatite.teleport(grazeTarget, model)
+        teleportToOreNode(manatite, grazeTarget, model)
+    end
+
+    local function retreatOreNode(oreState, isMithril, title, content, now, rootPos)
+        local currentModel = oreState.model
+        if currentModel then
+            oreState.blacklist[currentModel] = now
+        end
+
+        oreState.model = nil
+        if isMithril then
+            oreState.orePart = nil
+        else
+            oreState.target = nil
+        end
+        oreState.payload = nil
+
+        if root then
+            pcall(function() root.Anchored = false end)
+        end
+
+        local nextModel, nextPart = oreState.findNext(rootPos or getRootPos(root), true)
+        if nextModel and nextPart then
+            oreState.model = nextModel
+            if isMithril then
+                oreState.orePart = nextPart
+            else
+                oreState.target = nextPart
             end
+            oreState.payload = oreState.getPayload(nextModel.Name)
+            oreState.startTime = now
+            oreState.teleport(nextPart, nextModel)
+            oreState.lastTeleportTime = now
+            oreState.lastChompTime = 0
+            oreState.lastSearchTime = now
+
+            if dodge.notifyOnDodge and Window and Window.Notify then
+                Window:Notify({
+                    Title = title,
+                    Content = content,
+                    Duration = 2,
+                })
+            end
+            return true
         end
-        local directGeode = cowWorld:FindFirstChild("CrystalGeodeOres")
-        if directGeode then
-            mithril.cachedFolder = directGeode
-            return directGeode
-        end
+        return false
     end
 
-    local topGeode = workspace:FindFirstChild("CrystalGeodeOres")
-    if topGeode then
-        mithril.cachedFolder = topGeode
-        return topGeode
+    function manatite.retreatToSafeCrystal(now, rootPos)
+        return retreatOreNode(manatite, false, "Manatite Retreat", "Spiders nearby! Relocated to a safe crystal.", now, rootPos)
     end
 
-    -- 3. Throttled deep search (at most once every 2.0s to avoid frame freezing)
-    local now = os.clock()
-    if not mithril.lastFolderSearch or (now - mithril.lastFolderSearch >= 2.0) then
-        mithril.lastFolderSearch = now
+    -- Mithril Ore Farm Helpers (Crystal Geode Ores)
+    function mithril.getFolder()
+        if mithril.cachedFolder and mithril.cachedFolder.Parent then
+            return mithril.cachedFolder
+        end
+
+        -- 1. Direct path: resources.CrystalGeodeOres (O(1))
+        local res = getResourcesFolder()
         if res then
-            local geode = res:FindFirstChild("CrystalGeodeOres", true)
+            local geode = res:FindFirstChild("CrystalGeodeOres")
             if geode then
                 mithril.cachedFolder = geode
                 return geode
             end
+        end
+
+        -- 2. Direct path via CowWorld (O(1))
+        local cowWorld = cache.cowWorldRef
+        if not cowWorld or not cowWorld.Parent then
+            cowWorld = workspace:FindFirstChild("CowWorld")
+            cache.cowWorldRef = cowWorld
         end
         if cowWorld then
-            local rafting = cowWorld:FindFirstChild("FjordRafting", true)
+            local rafting = cowWorld:FindFirstChild("FjordRafting")
             if rafting then
-                local geode = rafting:FindFirstChild("CrystalGeodeOres", true)
+                local geode = rafting:FindFirstChild("CrystalGeodeOres")
                 if geode then
                     mithril.cachedFolder = geode
                     return geode
                 end
             end
-            local directGeode = cowWorld:FindFirstChild("CrystalGeodeOres", true)
+            local directGeode = cowWorld:FindFirstChild("CrystalGeodeOres")
             if directGeode then
                 mithril.cachedFolder = directGeode
                 return directGeode
             end
         end
-        local geode = workspace:FindFirstChild("CrystalGeodeOres", true)
-        if geode then
-            mithril.cachedFolder = geode
-            return geode
+
+        local topGeode = workspace:FindFirstChild("CrystalGeodeOres")
+        if topGeode then
+            mithril.cachedFolder = topGeode
+            return topGeode
         end
-    end
 
-    return nil
-end
-
-function mithril.getModels()
-    local now = os.clock()
-    local folder = mithril.getFolder()
-    if folder and (now - mithril.lastCacheTime > 2 or #mithril.cachedModels == 0) then
-        mithril.lastCacheTime = now
-        local rawChildren = folder:GetChildren()
-        local list = {}
-        for _, child in ipairs(rawChildren) do
-            if string.find(string.lower(child.Name), "mithril") then
-                table.insert(list, child)
+        -- 3. Throttled deep search (at most once every 2.0s to avoid frame freezing)
+        local now = os.clock()
+        if not mithril.lastFolderSearch or (now - mithril.lastFolderSearch >= 2.0) then
+            mithril.lastFolderSearch = now
+            if res then
+                local geode = res:FindFirstChild("CrystalGeodeOres", true)
+                if geode then
+                    mithril.cachedFolder = geode
+                    return geode
+                end
+            end
+            if cowWorld then
+                local rafting = cowWorld:FindFirstChild("FjordRafting", true)
+                if rafting then
+                    local geode = rafting:FindFirstChild("CrystalGeodeOres", true)
+                    if geode then
+                        mithril.cachedFolder = geode
+                        return geode
+                    end
+                end
+                local directGeode = cowWorld:FindFirstChild("CrystalGeodeOres", true)
+                if directGeode then
+                    mithril.cachedFolder = directGeode
+                    return directGeode
+                end
+            end
+            local geode = workspace:FindFirstChild("CrystalGeodeOres", true)
+            if geode then
+                mithril.cachedFolder = geode
+                return geode
             end
         end
-        if #list == 0 and #rawChildren > 0 then
-            mithril.cachedModels = rawChildren
-        else
-            mithril.cachedModels = list
-        end
-    end
-    return mithril.cachedModels
-end
 
-function mithril.getOrePart(model)
-    if not model or not model.Parent then return nil end
-    local ore = model:FindFirstChild("Ore")
-    if ore and ore:IsA("BasePart") then
-        return ore
+        return nil
     end
-    local recursiveOre = model:FindFirstChild("Ore", true)
-    if recursiveOre and recursiveOre:IsA("BasePart") then
-        return recursiveOre
-    end
-    if model:IsA("BasePart") then
-        return model
-    end
-    return model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
-end
 
-function mithril.isAvailable(orePart, model)
-    return isOreAvailable(orePart, model, false)
-end
-
-function mithril.getPayload(modelName)
-    local cached = mithril.payloadCache[modelName]
-    if cached then return cached end
-
-    local payload
-    if string.find(modelName, "^Cavern_Ore_") then
-        payload = modelName
-    else
-        local oreType, id = string.match(modelName, "^(MithrilOre)_?(%d+)$")
-        if oreType and id then
-            payload = "Cavern_Ore_" .. oreType .. "_" .. id
-        else
-            local prefix, numId = string.match(modelName, "^(.-)(%d+)$")
-            if prefix and numId and prefix ~= "" then
-                prefix = string.gsub(prefix, "_$", "")
-                payload = "Cavern_Ore_" .. prefix .. "_" .. numId
+    function mithril.getModels()
+        local now = os.clock()
+        local folder = mithril.getFolder()
+        if folder and (now - mithril.lastCacheTime > 2 or #mithril.cachedModels == 0) then
+            mithril.lastCacheTime = now
+            local rawChildren = folder:GetChildren()
+            local list = {}
+            for _, child in ipairs(rawChildren) do
+                if string.find(string.lower(child.Name), "mithril") then
+                    table.insert(list, child)
+                end
+            end
+            if #list == 0 and #rawChildren > 0 then
+                mithril.cachedModels = rawChildren
             else
-                payload = "Cavern_Ore_" .. modelName
+                mithril.cachedModels = list
             end
         end
+        return mithril.cachedModels
     end
 
-    mithril.payloadCache[modelName] = payload
-    return payload
-end
+    function mithril.getOrePart(model)
+        if not model or not model.Parent then return nil end
+        local ore = model:FindFirstChild("Ore")
+        if ore and ore:IsA("BasePart") then
+            return ore
+        end
+        local recursiveOre = model:FindFirstChild("Ore", true)
+        if recursiveOre and recursiveOre:IsA("BasePart") then
+            return recursiveOre
+        end
+        if model:IsA("BasePart") then
+            return model
+        end
+        return model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+    end
 
-function mithril.cleanupBlacklist(now)
-    cleanupOreBlacklist(mithril, now)
-end
+    function mithril.isAvailable(orePart, model)
+        return isOreAvailable(orePart, model, false)
+    end
 
-mithril.isPositionNearMob = isPositionNearThreatMob
+    function mithril.getPayload(modelName)
+        local cached = mithril.payloadCache[modelName]
+        if cached then return cached end
 
-function mithril.findNext(searchOrigin, avoidMobs)
-    return findNextOreCandidate(mithril, mithril.getOrePart, false, searchOrigin, avoidMobs)
-end
+        local payload
+        if string.find(modelName, "^Cavern_Ore_") then
+            payload = modelName
+        else
+            local oreType, id = string.match(modelName, "^(MithrilOre)_?(%d+)$")
+            if oreType and id then
+                payload = "Cavern_Ore_" .. oreType .. "_" .. id
+            else
+                local prefix, numId = string.match(modelName, "^(.-)(%d+)$")
+                if prefix and numId and prefix ~= "" then
+                    prefix = string.gsub(prefix, "_$", "")
+                    payload = "Cavern_Ore_" .. prefix .. "_" .. numId
+                else
+                    payload = "Cavern_Ore_" .. modelName
+                end
+            end
+        end
 
-function mithril.retreatToSafeOre(now, rootPos)
-    return retreatOreNode(mithril, true, "Mithril Retreat", "Spiders nearby! Relocated to safe ore.", now, rootPos)
-end
+        mithril.payloadCache[modelName] = payload
+        return payload
+    end
 
-function mithril.teleport(orePart, model)
-    teleportToOreNode(mithril, orePart, model)
+    function mithril.cleanupBlacklist(now)
+        cleanupOreBlacklist(mithril, now)
+    end
+
+    mithril.isPositionNearMob = isPositionNearThreatMob
+
+    function mithril.findNext(searchOrigin, avoidMobs)
+        return findNextOreCandidate(mithril, mithril.getOrePart, false, searchOrigin, avoidMobs)
+    end
+
+    function mithril.retreatToSafeOre(now, rootPos)
+        return retreatOreNode(mithril, true, "Mithril Retreat", "Spiders nearby! Relocated to safe ore.", now, rootPos)
+    end
+
+    function mithril.teleport(orePart, model)
+        teleportToOreNode(mithril, orePart, model)
+    end
 end
 
 -- Gets the cached attacking part (Head for snakes, CavernBodyVisual for spiders)
@@ -4101,193 +4126,203 @@ function penESP.update()
 end
 
 -- Helper to identify team chest models
-local function isTeamChest(inst)
-    if not inst then return false end
-    if not (inst:IsA("Model") or inst:IsA("BasePart")) then return false end
-    local parent = inst.Parent
-    if parent and parent:IsA("Model") then
-        local pLower = string.lower(parent.Name)
-        if string.find(pLower, "teamchest", 1, true) or string.find(pLower, "team_chest", 1, true) then
-            return false
-        end
-    end
-    local lowerName = string.lower(inst.Name)
-    return string.find(lowerName, "teamchest", 1, true) ~= nil or string.find(lowerName, "team_chest", 1, true) ~= nil
-end
-
--- Remove a specific chest ESP visual
-function chestESP.removeVisual(model)
-    local visual = chestESP.visuals[model]
-    if not visual then return end
-    if visual.ancestryConn then
-        pcall(function() visual.ancestryConn:Disconnect() end)
-    end
-    if visual.highlight then
-        pcall(function() visual.highlight:Destroy() end)
-    end
-    if visual.billboard then
-        pcall(function() visual.billboard:Destroy() end)
-    end
-    chestESP.visuals[model] = nil
-end
-
--- Cleanup all chest ESP instances
-function chestESP.cleanup()
-    if chestESP.espConn then
-        pcall(function() chestESP.espConn:Disconnect() end)
-        chestESP.espConn = nil
-    end
-    for model in pairs(chestESP.visuals) do
-        chestESP.removeVisual(model)
-    end
-    table.clear(chestESP.visuals)
-end
-
--- Attach ESP to a loaded chest model/part
-function chestESP.attach(trackedChest)
-    if not chestESP.show or not trackedChest or not trackedChest.Parent then return end
-    if chestESP.visuals[trackedChest] then return end
-
-    local chestPart = trackedChest:IsA("Model") and (trackedChest.PrimaryPart or trackedChest:FindFirstChildWhichIsA("BasePart")) or (trackedChest:IsA("BasePart") and trackedChest)
-    if not chestPart then
-        chestPart = trackedChest:FindFirstChildWhichIsA("BasePart", true)
-    end
-    if not chestPart then return end
-
-    local highlight = Instance.new("Highlight")
-    highlight.Name = "ChestHighlight"
-    highlight.Adornee = trackedChest
-    highlight.FillColor = Color3.fromRGB(255, 215, 0)
-    highlight.FillTransparency = 0.5
-    highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-    highlight.OutlineTransparency = 0
-    highlight.Parent = trackedChest
-
-    local billboard = Instance.new("BillboardGui")
-    billboard.Name = "ChestESPText"
-    billboard.Adornee = chestPart
-    billboard.Size = UDim2.new(0, 150, 0, 50)
-    billboard.StudsOffset = Vector3.new(0, 3, 0)
-    billboard.AlwaysOnTop = true
-
-    local textLabel = Instance.new("TextLabel")
-    textLabel.Name = "Label"
-    textLabel.Size = UDim2.new(1, 0, 1, 0)
-    textLabel.BackgroundTransparency = 1
-    textLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
-    textLabel.TextStrokeTransparency = 0
-    textLabel.TextSize = 14
-    textLabel.Font = Enum.Font.GothamBold
-    local displayName = (trackedChest.Name == "LocalTeamChest" or trackedChest.Name == "TeamChest") and "Team Chest" or trackedChest.Name
-    textLabel.Text = "📦 " .. displayName
-    textLabel.Parent = billboard
-
-    billboard.Parent = trackedChest
-
-    local visual = {
-        highlight = highlight,
-        billboard = billboard,
-        label = textLabel,
-        chestPart = chestPart,
-        displayName = displayName,
-        lastDist = -1,
-        ancestryConn = nil,
-    }
-
-    visual.ancestryConn = trackedChest.AncestryChanged:Connect(function(_, parent)
-        if not parent then
-            chestESP.removeVisual(trackedChest)
-        end
-    end)
-
-    chestESP.visuals[trackedChest] = visual
-end
-
--- Dynamic load/unload watcher for TeamChest models
-function chestESP.update()
-    if chestESP.show then
-        for _, desc in ipairs(workspace:GetDescendants()) do
-            if isTeamChest(desc) then
-                chestESP.attach(desc)
+do
+    local function isTeamChest(inst)
+        if not inst then return false end
+        if not (inst:IsA("Model") or inst:IsA("BasePart")) then return false end
+        local parent = inst.Parent
+        if parent and parent:IsA("Model") then
+            local pLower = string.lower(parent.Name)
+            if string.find(pLower, "teamchest", 1, true) or string.find(pLower, "team_chest", 1, true) then
+                return false
             end
         end
+        local lowerName = string.lower(inst.Name)
+        return string.find(lowerName, "teamchest", 1, true) ~= nil or string.find(lowerName, "team_chest", 1, true) ~= nil
+    end
 
-        if not chestESP.descendantAddedConn then
-            chestESP.descendantAddedConn = workspace.DescendantAdded:Connect(function(desc)
-                if chestESP.show and isTeamChest(desc) then
-                    task.wait(0.1)
+    -- Remove a specific chest ESP visual
+    function chestESP.removeVisual(model)
+        local visual = chestESP.visuals[model]
+        if not visual then return end
+        if visual.ancestryConn then
+            pcall(function() visual.ancestryConn:Disconnect() end)
+        end
+        if visual.highlight then
+            pcall(function() visual.highlight:Destroy() end)
+        end
+        if visual.billboard then
+            pcall(function() visual.billboard:Destroy() end)
+        end
+        chestESP.visuals[model] = nil
+    end
+
+    -- Cleanup all chest ESP instances
+    function chestESP.cleanup()
+        if chestESP.espConn then
+            pcall(function() chestESP.espConn:Disconnect() end)
+            chestESP.espConn = nil
+        end
+        for model in pairs(chestESP.visuals) do
+            chestESP.removeVisual(model)
+        end
+        table.clear(chestESP.visuals)
+        table.clear(chestESP.pending)
+    end
+
+    -- Attach ESP to a loaded chest model/part
+    function chestESP.attach(trackedChest)
+        if not chestESP.show or not trackedChest or not trackedChest.Parent then return end
+        if chestESP.visuals[trackedChest] then return end
+
+        local chestPart = trackedChest:IsA("Model") and (trackedChest.PrimaryPart or trackedChest:FindFirstChildWhichIsA("BasePart")) or (trackedChest:IsA("BasePart") and trackedChest)
+        if not chestPart then
+            chestPart = trackedChest:FindFirstChildWhichIsA("BasePart", true)
+        end
+        if not chestPart then
+            chestESP.pending[trackedChest] = true
+            return
+        end
+        chestESP.pending[trackedChest] = nil
+
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "ChestHighlight"
+        highlight.Adornee = trackedChest
+        highlight.FillColor = Color3.fromRGB(255, 215, 0)
+        highlight.FillTransparency = 0.5
+        highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+        highlight.OutlineTransparency = 0
+        highlight.Parent = trackedChest
+
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = "ChestESPText"
+        billboard.Adornee = chestPart
+        billboard.Size = UDim2.new(0, 150, 0, 50)
+        billboard.StudsOffset = Vector3.new(0, 3, 0)
+        billboard.AlwaysOnTop = true
+
+        local textLabel = Instance.new("TextLabel")
+        textLabel.Name = "Label"
+        textLabel.Size = UDim2.new(1, 0, 1, 0)
+        textLabel.BackgroundTransparency = 1
+        textLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
+        textLabel.TextStrokeTransparency = 0
+        textLabel.TextSize = 14
+        textLabel.Font = Enum.Font.GothamBold
+        local displayName = (trackedChest.Name == "LocalTeamChest" or trackedChest.Name == "TeamChest") and "Team Chest" or trackedChest.Name
+        textLabel.Text = "📦 " .. displayName
+        textLabel.Parent = billboard
+
+        billboard.Parent = trackedChest
+
+        local visual = {
+            highlight = highlight,
+            billboard = billboard,
+            label = textLabel,
+            chestPart = chestPart,
+            displayName = displayName,
+            lastDist = -1,
+            ancestryConn = nil,
+        }
+
+        visual.ancestryConn = trackedChest.AncestryChanged:Connect(function(_, parent)
+            if not parent then
+                chestESP.removeVisual(trackedChest)
+            end
+        end)
+
+        chestESP.visuals[trackedChest] = visual
+    end
+
+    -- Dynamic load/unload watcher for TeamChest models
+    function chestESP.update()
+        if chestESP.show then
+            for _, desc in ipairs(workspace:GetDescendants()) do
+                if isTeamChest(desc) then
                     chestESP.attach(desc)
                 end
-            end)
-        end
+            end
 
-        if not chestESP.descendantRemovingConn then
-            chestESP.descendantRemovingConn = workspace.DescendantRemoving:Connect(function(desc)
-                if chestESP.visuals[desc] then
-                    chestESP.removeVisual(desc)
-                end
-            end)
-        end
+            if not chestESP.descendantAddedConn then
+                chestESP.descendantAddedConn = workspace.DescendantAdded:Connect(function(desc)
+                    if chestESP.show and isTeamChest(desc) then
+                        task.wait(0.1)
+                        chestESP.attach(desc)
+                    end
+                end)
+            end
 
-        if not chestESP.espConn then
-            local lastChestUpdate = 0
-            local lastScan = 0
-            chestESP.espConn = RunService.Heartbeat:Connect(function()
-                if not chestESP.show then
-                    chestESP.cleanup()
-                    return
-                end
-                local now = os.clock()
-                if now - lastScan > 2.0 then
-                    lastScan = now
-                    for _, child in ipairs(workspace:GetChildren()) do
-                        if isTeamChest(child) and not chestESP.visuals[child] then
-                            chestESP.attach(child)
+            if not chestESP.descendantRemovingConn then
+                chestESP.descendantRemovingConn = workspace.DescendantRemoving:Connect(function(desc)
+                    if chestESP.visuals[desc] then
+                        chestESP.removeVisual(desc)
+                    end
+                end)
+            end
+
+            if not chestESP.espConn then
+                local lastChestUpdate = 0
+                local lastScan = 0
+                chestESP.espConn = RunService.Heartbeat:Connect(function()
+                    if not chestESP.show then
+                        chestESP.cleanup()
+                        return
+                    end
+                    local now = os.clock()
+                    if now - lastScan > 2.0 then
+                        lastScan = now
+                        for _, child in ipairs(workspace:GetChildren()) do
+                            if isTeamChest(child) and not chestESP.visuals[child] then
+                                chestESP.attach(child)
+                            end
+                        end
+                        for pendingChest in pairs(chestESP.pending) do
+                            if pendingChest.Parent and not chestESP.visuals[pendingChest] then
+                                chestESP.attach(pendingChest)
+                            else
+                                chestESP.pending[pendingChest] = nil
+                            end
                         end
                     end
-                    local found = workspace:FindFirstChild("LocalTeamChest", true)
-                    if found and isTeamChest(found) and not chestESP.visuals[found] then
-                        chestESP.attach(found)
-                    end
-                end
 
-                if now - lastChestUpdate > 0.1 then
-                    lastChestUpdate = now
-                    local rPos = getRootPos(root)
-                    if rPos then
-                        for trackedChest, visual in pairs(chestESP.visuals) do
-                            if not trackedChest or not trackedChest.Parent or not visual.chestPart or not visual.chestPart.Parent then
-                                chestESP.removeVisual(trackedChest)
-                            else
-                                local dist = math.floor(get2DDistance(rPos, visual.chestPart.Position))
-                                if dist ~= visual.lastDist then
-                                    visual.lastDist = dist
-                                    visual.label.Text = "📦 " .. visual.displayName .. "\n[" .. dist .. " studs]"
+                    if now - lastChestUpdate > 0.1 then
+                        lastChestUpdate = now
+                        local rPos = getRootPos(root)
+                        if rPos then
+                            for trackedChest, visual in pairs(chestESP.visuals) do
+                                if not trackedChest or not trackedChest.Parent or not visual.chestPart or not visual.chestPart.Parent then
+                                    chestESP.removeVisual(trackedChest)
+                                else
+                                    local dist = math.floor(get2DDistance(rPos, visual.chestPart.Position))
+                                    if dist ~= visual.lastDist then
+                                        visual.lastDist = dist
+                                        visual.label.Text = "📦 " .. visual.displayName .. "\n[" .. dist .. " studs]"
+                                    end
                                 end
                             end
                         end
                     end
-                end
-            end)
+                end)
+            end
+        else
+            if chestESP.descendantAddedConn then
+                pcall(function() chestESP.descendantAddedConn:Disconnect() end)
+                chestESP.descendantAddedConn = nil
+            end
+            if chestESP.descendantRemovingConn then
+                pcall(function() chestESP.descendantRemovingConn:Disconnect() end)
+                chestESP.descendantRemovingConn = nil
+            end
+            if chestESP.childAddedConn then
+                pcall(function() chestESP.childAddedConn:Disconnect() end)
+                chestESP.childAddedConn = nil
+            end
+            if chestESP.childRemovedConn then
+                pcall(function() chestESP.childRemovedConn:Disconnect() end)
+                chestESP.childRemovedConn = nil
+            end
+            chestESP.cleanup()
         end
-    else
-        if chestESP.descendantAddedConn then
-            pcall(function() chestESP.descendantAddedConn:Disconnect() end)
-            chestESP.descendantAddedConn = nil
-        end
-        if chestESP.descendantRemovingConn then
-            pcall(function() chestESP.descendantRemovingConn:Disconnect() end)
-            chestESP.descendantRemovingConn = nil
-        end
-        if chestESP.childAddedConn then
-            pcall(function() chestESP.childAddedConn:Disconnect() end)
-            chestESP.childAddedConn = nil
-        end
-        if chestESP.childRemovedConn then
-            pcall(function() chestESP.childRemovedConn:Disconnect() end)
-            chestESP.childRemovedConn = nil
-        end
-        chestESP.cleanup()
     end
 end
 
@@ -5355,59 +5390,61 @@ function farm.checkForwardWall(rootPos, moveDir, checkDist)
     return nil, false
 end
 
-local ESCAPE_ANGLES = {
-    0,
-    math.pi * 0.25,
-    math.pi * 0.5,
-    math.pi * 0.75,
-    math.pi,
-    -math.pi * 0.75,
-    -math.pi * 0.5,
-    -math.pi * 0.25
-}
+do
+    local ESCAPE_ANGLES = {
+        0,
+        math.pi * 0.25,
+        math.pi * 0.5,
+        math.pi * 0.75,
+        math.pi,
+        -math.pi * 0.75,
+        -math.pi * 0.5,
+        -math.pi * 0.25
+    }
 
--- Scans 8 radial directions around the player to locate the clearest escape route
-function farm.findClearEscapeDirection(rootPos)
-    local bestDir = nil
-    local bestScore = -math.huge
-    local rayOrigin = rootPos + ELEVATED_OFFSET
-    local scanDist = 16.0
+    -- Scans 8 radial directions around the player to locate the clearest escape route
+    function farm.findClearEscapeDirection(rootPos)
+        local bestDir = nil
+        local bestScore = -math.huge
+        local rayOrigin = rootPos + ELEVATED_OFFSET
+        local scanDist = 16.0
 
-    for _, angle in ipairs(ESCAPE_ANGLES) do
-        local dir = Vector3.new(math.cos(angle), 0, math.sin(angle))
-        local hit = workspace:Raycast(rayOrigin, dir * scanDist, wallRaycastParams)
-        local clearDist = scanDist
-        if hit and farm.isSolidObstacle(hit.Instance) and (hit.Normal.Y <= 0.65) then
-            clearDist = (hit.Position - rayOrigin).Magnitude
-        end
+        for _, angle in ipairs(ESCAPE_ANGLES) do
+            local dir = Vector3.new(math.cos(angle), 0, math.sin(angle))
+            local hit = workspace:Raycast(rayOrigin, dir * scanDist, wallRaycastParams)
+            local clearDist = scanDist
+            if hit and farm.isSolidObstacle(hit.Instance) and (hit.Normal.Y <= 0.65) then
+                clearDist = (hit.Position - rayOrigin).Magnitude
+            end
 
-        local score = clearDist
-        if farm.isWaterAt(rootPos + dir * 8.0) then
-            score = score - 20.0
-        end
-        if farm.anchorPos then
-            local testPos = rootPos + (dir * 8.0)
-            local distFromAnchorSq = get2DDistanceSq(farm.anchorPos, testPos)
-            if distFromAnchorSq > farm.radiusSq then
-                score = score - 8.0
-            else
-                score = score + 4.0
+            local score = clearDist
+            if farm.isWaterAt(rootPos + dir * 8.0) then
+                score = score - 20.0
+            end
+            if farm.anchorPos then
+                local testPos = rootPos + (dir * 8.0)
+                local distFromAnchorSq = get2DDistanceSq(farm.anchorPos, testPos)
+                if distFromAnchorSq > farm.radiusSq then
+                    score = score - 8.0
+                else
+                    score = score + 4.0
+                end
+            end
+
+            if score > bestScore then
+                bestScore = score
+                bestDir = dir
             end
         end
 
-        if score > bestScore then
-            bestScore = score
-            bestDir = dir
+        if not bestDir then
+            local rootCF = getRootCFrame(root)
+            local look = rootCF and rootCF.LookVector or Vector3.new(0, 0, -1)
+            bestDir = -Vector3.new(look.X, 0, look.Z).Unit
         end
-    end
 
-    if not bestDir then
-        local rootCF = getRootCFrame(root)
-        local look = rootCF and rootCF.LookVector or Vector3.new(0, 0, -1)
-        bestDir = -Vector3.new(look.X, 0, look.Z).Unit
+        return bestDir
     end
-
-    return bestDir
 end
 
 -- Edible by the server's rule: Available == true (grass is edible again while still Growing).
@@ -5443,46 +5480,48 @@ end
 
 -- Grazing bait drops live in Workspace.GrazingBaitFind: a Folder of drops, or the drop itself.
 -- Position as in bait_drop_esp.lua: PrimaryPart, else the first BasePart.
-local function baitPosition(inst)
-    if inst:IsA("BasePart") then return inst.Position end
-    if inst:IsA("Model") then
-        local part = inst.PrimaryPart or inst:FindFirstChildWhichIsA("BasePart", true)
-        return part and part.Position or nil
+do
+    local function baitPosition(inst)
+        if inst:IsA("BasePart") then return inst.Position end
+        if inst:IsA("Model") then
+            local part = inst.PrimaryPart or inst:FindFirstChildWhichIsA("BasePart", true)
+            return part and part.Position or nil
+        end
+        return nil
     end
-    return nil
-end
 
--- Closest bait drop inside the farm radius, not over water and not skipped
-function farm.findBait(rootPos, now)
-    if now - farm.lastBaitScan >= 0.5 then
-        farm.lastBaitScan = now
-        table.clear(farm.baits)
-        for _, child in ipairs(workspace:GetChildren()) do
-            if child.Name == "GrazingBaitFind" then
-                if child:IsA("Folder") then
-                    for _, drop in ipairs(child:GetChildren()) do
-                        if drop.Name ~= "AnimalTamingMeal" then table.insert(farm.baits, drop) end
+    -- Closest bait drop inside the farm radius, not over water and not skipped
+    function farm.findBait(rootPos, now)
+        if now - farm.lastBaitScan >= 0.5 then
+            farm.lastBaitScan = now
+            table.clear(farm.baits)
+            for _, child in ipairs(workspace:GetChildren()) do
+                if child.Name == "GrazingBaitFind" then
+                    if child:IsA("Folder") then
+                        for _, drop in ipairs(child:GetChildren()) do
+                            if drop.Name ~= "AnimalTamingMeal" then table.insert(farm.baits, drop) end
+                        end
+                    else
+                        table.insert(farm.baits, child)
                     end
-                else
-                    table.insert(farm.baits, child)
                 end
             end
         end
-    end
-    local best, bestPos, bestSq = nil, nil, math.huge
-    for _, drop in ipairs(farm.baits) do
-        local skipUntil = farm.baitSkip[drop]
-        if drop.Parent and not (skipUntil and now < skipUntil) then
-            local pos = baitPosition(drop)
-            if pos and get2DDistanceSq(farm.anchorPos, pos) <= farm.radiusSq and not farm.isWaterAt(pos) then
-                local dSq = get2DDistanceSq(rootPos, pos)
-                if dSq < bestSq then
-                    best, bestPos, bestSq = drop, pos, dSq
+        local best, bestPos, bestSq = nil, nil, math.huge
+        for _, drop in ipairs(farm.baits) do
+            local skipUntil = farm.baitSkip[drop]
+            if drop.Parent and not (skipUntil and now < skipUntil) then
+                local pos = baitPosition(drop)
+                if pos and get2DDistanceSq(farm.anchorPos, pos) <= farm.radiusSq and not farm.isWaterAt(pos) then
+                    local dSq = get2DDistanceSq(rootPos, pos)
+                    if dSq < bestSq then
+                        best, bestPos, bestSq = drop, pos, dSq
+                    end
                 end
             end
         end
+        return best, bestPos
     end
-    return best, bestPos
 end
 
 function farm.processMovement(dt, now, rootPos)
@@ -5982,90 +6021,92 @@ function farm.processFishing(now, rootPos)
     end
 end
 
-local function processOreFarm(oreState, isMithril, now, rootPos)
-    oreState.cleanupBlacklist(now)
+do
+    local function processOreFarm(oreState, isMithril, now, rootPos)
+        oreState.cleanupBlacklist(now)
 
-    local targetPart = isMithril and oreState.orePart or oreState.target
-    local targetValid = oreState.model
-        and targetPart
-        and oreState.model.Parent
-        and targetPart.Parent
-        and oreState.isAvailable(targetPart, oreState.model)
-        and (now - oreState.startTime <= 15)
+        local targetPart = isMithril and oreState.orePart or oreState.target
+        local targetValid = oreState.model
+            and targetPart
+            and oreState.model.Parent
+            and targetPart.Parent
+            and oreState.isAvailable(targetPart, oreState.model)
+            and (now - oreState.startTime <= 15)
 
-    if not targetValid then
-        if oreState.model and (now - oreState.startTime > 15) then
-            oreState.blacklist[oreState.model] = now
-        end
-
-        oreState.model = nil
-        if isMithril then
-            oreState.orePart = nil
-        else
-            oreState.target = nil
-        end
-        oreState.payload = nil
-
-        if oreState.anchor and root then
-            pcall(function() root.Anchored = false end)
-        end
-
-        if (now - oreState.lastSearchTime > 0.1) then
-            oreState.lastSearchTime = now
-            local nextModel, nextPart = oreState.findNext(rootPos)
-            if nextModel and nextPart then
-                oreState.model = nextModel
-                if isMithril then
-                    oreState.orePart = nextPart
-                else
-                    oreState.target = nextPart
-                end
-                oreState.payload = oreState.getPayload(nextModel.Name)
-                oreState.startTime = now
-                oreState.teleport(nextPart, nextModel)
-                oreState.lastTeleportTime = now
-                oreState.lastChompTime = 0
+        if not targetValid then
+            if oreState.model and (now - oreState.startTime > 15) then
+                oreState.blacklist[oreState.model] = now
             end
-        end
-    else
-        local targetPos = targetPart.Position + Vector3.new(0, oreState.heightOffset, 0)
 
-        if dodge.retreatOnThreat and (now - oreState.lastSearchTime > 0.25) then
-            local checkPos = targetPart.Position
-            if isPositionNearThreatMob(checkPos, dodge.manatiteThreatRadiusSq) or isPositionNearThreatMob(rootPos, dodge.manatiteThreatRadiusSq) then
-                if isMithril then
-                    oreState.retreatToSafeOre(now, rootPos)
-                else
-                    oreState.retreatToSafeCrystal(now, rootPos)
-                end
-                return
+            oreState.model = nil
+            if isMithril then
+                oreState.orePart = nil
+            else
+                oreState.target = nil
             end
-        end
+            oreState.payload = nil
 
-        if get3DDistanceSq(rootPos, targetPos) > 36 then
-            if (now - oreState.lastTeleportTime > 0.4) then
-                oreState.teleport(targetPart, oreState.model)
-                oreState.lastTeleportTime = now
+            if oreState.anchor and root then
+                pcall(function() root.Anchored = false end)
+            end
+
+            if (now - oreState.lastSearchTime > 0.1) then
+                oreState.lastSearchTime = now
+                local nextModel, nextPart = oreState.findNext(rootPos)
+                if nextModel and nextPart then
+                    oreState.model = nextModel
+                    if isMithril then
+                        oreState.orePart = nextPart
+                    else
+                        oreState.target = nextPart
+                    end
+                    oreState.payload = oreState.getPayload(nextModel.Name)
+                    oreState.startTime = now
+                    oreState.teleport(nextPart, nextModel)
+                    oreState.lastTeleportTime = now
+                    oreState.lastChompTime = 0
+                end
             end
         else
-            if oreState.anchor and not root.Anchored and not dodge.isDodging and not dodge.isUnderground and not dodge.hasNearbyThreat then
-                pcall(function() root.Anchored = true end)
-            end
-        end
+            local targetPos = targetPart.Position + Vector3.new(0, oreState.heightOffset, 0)
 
-        if (now - oreState.lastChompTime >= oreState.delay) then
-            oreState.lastChompTime = now
-            chompEvent:FireServer(oreState.payload)
+            if dodge.retreatOnThreat and (now - oreState.lastSearchTime > 0.25) then
+                local checkPos = targetPart.Position
+                if isPositionNearThreatMob(checkPos, dodge.manatiteThreatRadiusSq) or isPositionNearThreatMob(rootPos, dodge.manatiteThreatRadiusSq) then
+                    if isMithril then
+                        oreState.retreatToSafeOre(now, rootPos)
+                    else
+                        oreState.retreatToSafeCrystal(now, rootPos)
+                    end
+                    return
+                end
+            end
+
+            if get3DDistanceSq(rootPos, targetPos) > 36 then
+                if (now - oreState.lastTeleportTime > 0.4) then
+                    oreState.teleport(targetPart, oreState.model)
+                    oreState.lastTeleportTime = now
+                end
+            else
+                if oreState.anchor and not root.Anchored and not dodge.isDodging and not dodge.isUnderground and not dodge.hasNearbyThreat then
+                    pcall(function() root.Anchored = true end)
+                end
+            end
+
+            if (now - oreState.lastChompTime >= oreState.delay) then
+                oreState.lastChompTime = now
+                chompEvent:FireServer(oreState.payload)
+            end
         end
     end
-end
 
-function manatite.process(now, rootPos)
-    processOreFarm(manatite, false, now, rootPos)
-end
+    function manatite.process(now, rootPos)
+        processOreFarm(manatite, false, now, rootPos)
+    end
 
-function mithril.process(now, rootPos)
-    processOreFarm(mithril, true, now, rootPos)
+    function mithril.process(now, rootPos)
+        processOreFarm(mithril, true, now, rootPos)
+    end
 end
 
 -- ==========================
@@ -6241,1418 +6282,1412 @@ end
 -- ==========================
 -- UI SETUP: Main Farming Tab
 -- ==========================
-local MainTab = Window:CreateTab({ Name = "Autofarm", Icon = 4483362458 })
+do
+    local MainTab = Window:CreateTab({ Name = "Autofarm", Icon = 4483362458 })
 
-MainTab:CreateSection({ Name = "Main Toggles" })
+    MainTab:CreateSection({ Name = "Main Toggles" })
 
-MainTab:CreateToggle({
-    Name = "Enable Autofarm (Movement)",
-    CurrentValue = false,
-    Flag = "Toggle_Farm",
-    Callback = function(Value)
-        farm.on = Value
-        farm.patternTimer = 0
-        farm.nextRandomPos = nil
-        farm.currentTargetNode = nil
-        farm.currentNodeStartTime = 0
-        farm.isUnsticking = false
-        farm.unstickTargetPos = nil
-        farm.stuckCounter = 0
-        farm.lastStuckCheckPos = nil
-        farm.lastStuckCheckTime = 0
-        farm.lastNodeSearchTime = 0
-
-        if Value then
-            farm.collisionDetection = true
+    MainTab:CreateToggle({
+        Name = "Enable Autofarm (Movement)",
+        CurrentValue = false,
+        Flag = "Toggle_Farm",
+        Callback = function(Value)
+            farm.on = Value
+            farm.patternTimer = 0
+            farm.nextRandomPos = nil
+            farm.currentTargetNode = nil
+            farm.currentNodeStartTime = 0
             farm.isUnsticking = false
             farm.unstickTargetPos = nil
             farm.stuckCounter = 0
-            farm.anchorPos = getRootPos(root) or Vector3.zero
+            farm.lastStuckCheckPos = nil
+            farm.lastStuckCheckTime = 0
+            farm.lastNodeSearchTime = 0
 
-            Window:Notify({
-                Title = "Autofarm Enabled",
-                Content = "Absolute static home base set. Walking started with anti-stuck enabled.",
-                Duration = 3,
-                Image = 4483362458,
-            })
+            if Value then
+                farm.collisionDetection = true
+                farm.isUnsticking = false
+                farm.unstickTargetPos = nil
+                farm.stuckCounter = 0
+                farm.anchorPos = getRootPos(root) or Vector3.zero
+
+                Window:Notify({
+                    Title = "Autofarm Enabled",
+                    Content = "Absolute static home base set. Walking started with anti-stuck enabled.",
+                    Duration = 3,
+                    Image = 4483362458,
+                })
+            end
+
+            penESP.update()
+            updateHeartbeatConnection()
+        end,
+    })
+
+    MainTab:CreateToggle({
+        Name = "Enable Auto-Chomper (Grass)",
+        CurrentValue = false,
+        Flag = "Toggle_Chomp",
+        Callback = function(Value)
+            farm.autoChomp = Value
+            if not Value and chomp.mode == "Natural" then
+                chomp.stopNatural()
+            end
+            if Value then
+                chomp.resetCalories()
+            end
+            chomp.log("toggle", { autoChomp = Value, mode = chomp.mode })
+            updateHeartbeatConnection()
+        end,
+    })
+
+
+    MainTab:CreateToggle({
+        Name = "Enable Mob Aura (Priority)",
+        CurrentValue = false,
+        Flag = "Toggle_MobAura",
+        Callback = function(Value)
+            farm.autoChompMobs = Value
+            updateHeartbeatConnection()
+        end,
+    })
+
+    MainTab:CreateToggle({
+        Name = "Enable Auto-Fishing",
+        CurrentValue = false,
+        Flag = "Toggle_Fish",
+        Callback = function(Value)
+            farm.autoFish = Value
+            if Value then
+                cache.initRippleTracking()
+            else
+                cache.cleanupRippleTracking()
+            end
+            updateHeartbeatConnection()
+        end,
+    })
+
+    MainTab:CreateToggle({
+        Name = "Enable Mob Attack Dodge",
+        CurrentValue = false,
+        Flag = "Toggle_AutoDodge",
+        Callback = function(Value)
+            dodge.auto = Value
+            if not Value then
+                if dodge.isUnderground and root and dodge.lastSurfaceCFrame then
+                    setRootCFrame(dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0))
+                    pcall(function() root.Anchored = false end)
+                    pcall(function()
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        root.AssemblyAngularVelocity = Vector3.zero
+                    end)
+                    for _, part in ipairs(charBaseParts) do
+                        if part.Name == "HumanoidRootPart" or part.Name == "UpperTorso" or part.Name == "Torso" then
+                            part.CanCollide = true
+                        end
+                    end
+                    dodge.isUnderground = false
+                    dodge.lastSurfaceCFrame = nil
+                    dodge.lastSurfacePos = nil
+                    dodge.undergroundCFrame = nil
+                end
+                if dodge.isDodging then
+                    if humanoid then humanoid.WalkSpeed = dodge.originalWalkSpeed or 16 end
+                    dodge.isDodging = false
+                    dodge.currentAttackingMob = nil
+                    dodge.preDodgePos = nil
+                    dodge.preDodgeCFrame = nil
+                    if not farm.on and humanoid then humanoid:Move(Vector3.zero, false) end
+                end
+            end
+            updateHeartbeatConnection()
+        end,
+    })
+
+
+    MainTab:CreateSection({ Name = "Aura & Pattern Configuration" })
+
+    MainTab:CreateDropdown({
+        Name = "Chomp Mode",
+        Options = { "Remote (Auto Max)", "Natural (E Key)" },
+        CurrentOption = { "Remote (Auto Max)" },
+        MultipleOptions = false,
+        Flag = "Dropdown_ChompMode",
+        Callback = function(Option)
+            local selection = tostring(type(Option) == "table" and Option[1] or Option)
+            local newMode = string.find(selection, "Natural", 1, true) and "Natural" or "Remote"
+            if newMode == chomp.mode then return end
+            if chomp.mode == "Natural" then chomp.stopNatural() end
+            chomp.mode = newMode
+            chomp.log("mode", { mode = newMode })
+        end,
+    })
+
+    MainTab:CreateToggle({
+        Name = "Auto Max Chomp Speed (Server Limit)",
+        CurrentValue = true,
+        Flag = "Toggle_ChompAutoMax",
+        Callback = function(Value)
+            chomp.autoMax = Value
+            chomp.log("autoMax", { on = Value })
+        end,
+    })
+
+    MainTab:CreateDropdown({
+        Name = "Manual Chomp Speed (when Auto Max off)",
+        Options = { "0.4s", "0.5s", "0.6s", "0.7s (Game Base)", "1.0s", "1.5s" },
+        CurrentOption = { "0.4s" },
+        MultipleOptions = false,
+        Flag = "Dropdown_GrassSpeed",
+        Callback = function(Option)
+            local selection = tostring(type(Option) == "table" and Option[1] or Option)
+            chomp.manualDelay = math.max(chomp.MIN, tonumber(string.match(selection, "(%d+%.?%d*)")) or chomp.MIN)
+        end,
+    })
+
+    MainTab:CreateToggle({
+        Name = "Chomp Debug Log (cowhub/chomplogs)",
+        CurrentValue = false,
+        Flag = "Toggle_ChompDebugLog",
+        Callback = function(Value)
+            if Value then
+                chomp.debug = true
+                chomp.logPath = nil
+                chomp.log("start", {
+                    placeId = game.PlaceId, jobId = game.JobId, mode = chomp.mode, autoMax = chomp.autoMax,
+                    manualDelay = chomp.manualDelay, toggleSetting = plr:GetAttribute("CowGrazeToggle") == true,
+                    chewCooldown = plr:GetAttribute("ChewCooldown"), mult = plr:GetAttribute("CowGrazingSpeedMultiplier"),
+                    statsBefore = chomp.stats,
+                })
+                chomp.flushLog(true)
+                chomp.watchStats(true)
+                safeNotify({ Title = "Chomp Debug Log", Content = "Writing to " .. tostring(chomp.logPath), Duration = 6 })
+            else
+                chomp.log("stop", { stats = chomp.stats })
+                chomp.watchStats(false)
+                chomp.flushLog(true)
+                chomp.debug = false
+            end
+        end,
+    })
+
+    do
+        local title, body = "Chomp: --", "Interval: --"
+        if MainTab.CreateText then
+            pcall(function() chomp.statusCard = MainTab:CreateText({ name = title, text = body }) end)
         end
-
-        penESP.update()
-        updateHeartbeatConnection()
-    end,
-})
-
-MainTab:CreateToggle({
-    Name = "Enable Auto-Chomper (Grass)",
-    CurrentValue = false,
-    Flag = "Toggle_Chomp",
-    Callback = function(Value)
-        farm.autoChomp = Value
-        if not Value and chomp.mode == "Natural" then
-            chomp.stopNatural()
+        if not chomp.statusCard and MainTab.CreateParagraph then
+            pcall(function() chomp.statusCard = MainTab:CreateParagraph({ Title = title, Content = body }) end)
         end
-        if Value then
-            chomp.resetCalories()
-        end
-        chomp.log("toggle", { autoChomp = Value, mode = chomp.mode })
-        updateHeartbeatConnection()
-    end,
-})
+        task.spawn(function()
+            while chomp.statusCard and _G.CowHubConnections == scriptConnections do
+                task.wait(1)
+                if farm.autoChomp then
+                    chomp.updateCalories()
+                    local now = os.clock()
+                    local cal = chomp.calories
+                    if cal.lastTimestamp == 0 then cal.lastTimestamp = now end
+                    local dt = now - cal.lastTimestamp
+                    cal.lastTimestamp = now
+                    if not farm.botCheckActive and dt > 0 and dt < 5 then
+                        cal.activeDuration = cal.activeDuration + dt
+                    end
 
+                    if cal.activeDuration >= 3 and cal.sessionGained > 0 then
+                        cal.ratePerHour = (cal.sessionGained / cal.activeDuration) * 3600
+                    end
 
-MainTab:CreateToggle({
-    Name = "Enable Mob Aura (Priority)",
-    CurrentValue = false,
-    Flag = "Toggle_MobAura",
-    Callback = function(Value)
-        farm.autoChompMobs = Value
-        updateHeartbeatConnection()
-    end,
-})
+                    local calRateStr = "--"
+                    if cal.activeDuration >= 3 and cal.ratePerHour > 0 then
+                        calRateStr = string.format("%s/hr (%s)", formatCompact(cal.ratePerHour), formatNumber(math.floor(cal.ratePerHour)))
+                    elseif cal.activeDuration < 3 then
+                        calRateStr = "Calculating..."
+                    end
 
-MainTab:CreateToggle({
-    Name = "Enable Auto-Fishing",
-    CurrentValue = false,
-    Flag = "Toggle_Fish",
-    Callback = function(Value)
-        farm.autoFish = Value
-        if Value then
-            cache.initRippleTracking()
-        else
-            cache.cleanupRippleTracking()
-        end
-        updateHeartbeatConnection()
-    end,
-})
+                    local st = chomp.stats
+                    local t = string.format("Chomp: %s%s", chomp.mode, farm.botCheckActive and " | PAUSED (bot check)" or "")
+                    local reasons = {}
+                    for r, c in pairs(st.reasons) do table.insert(reasons, { r, c }) end
+                    table.sort(reasons, function(a, b) return a[2] > b[2] end)
+                    for i, rc in ipairs(reasons) do reasons[i] = rc[1] .. " " .. rc[2] end
+                    local b = string.format("Interval: %.3fs (server %.3fs + margin %.3fs) | RTT %dms\nSent %d | OK %d | Rejected %d (%.0f%%)\nRejects: %s\nGrazing: %s\nAvg Calories/hr: %s",
+                        chomp.getInterval(), chomp.serverInterval(), chomp.margin, math.floor(chomp.rtt * 1000),
+                        st.sent, st.accepted, st.rejected, st.sent > 0 and st.rejected / st.sent * 100 or 0,
+                        #reasons > 0 and table.concat(reasons, ", ") or "none",
+                        tostring(chomp.isGrazing()), calRateStr)
+                    pcall(function()
+                        if chomp.statusCard.SetTitle then
+                            chomp.statusCard:SetTitle(t)
+                            chomp.statusCard:Set(b)
+                        elseif chomp.statusCard.Set then
+                            chomp.statusCard:Set({ Title = t, Content = b })
+                        end
+                    end)
+                end
+            end
+        end)
+    end
 
-MainTab:CreateToggle({
-    Name = "Enable Mob Attack Dodge",
-    CurrentValue = false,
-    Flag = "Toggle_AutoDodge",
-    Callback = function(Value)
-        dodge.auto = Value
-        if not Value then
-            if dodge.isUnderground and root and dodge.lastSurfaceCFrame then
+    MainTab:CreateToggle({
+        Name = "Chomp Only While Moving",
+        CurrentValue = true,
+        Flag = "Toggle_ChompOnlyMoving",
+        Callback = function(Value)
+            farm.chompOnlyWhileMoving = Value
+        end,
+    })
+
+    MainTab:CreateDropdown({
+        Name = "Mob Aura Speed",
+        Options = {"Slow (1.0s)", "Normal (0.5s)", "Fast (0.1s)"},
+        CurrentOption = {"Fast (0.1s)"},
+        MultipleOptions = false,
+        Flag = "Dropdown_MobSpeed",
+        Callback = function(Option)
+            local selection = type(Option) == "table" and Option[1] or Option
+            if selection == "Slow (1.0s)" then farm.mobAuraDelay = 1.0
+            elseif selection == "Normal (0.5s)" then farm.mobAuraDelay = 0.5
+            elseif selection == "Fast (0.1s)" then farm.mobAuraDelay = 0.1
+            end
+        end,
+    })
+
+    MainTab:CreateDropdown({
+        Name = "Walking Pattern",
+        Options = {"Guided Zigzag (Nodes)", "Circle", "Square", "Zigzag", "Random"},
+        CurrentOption = {"Guided Zigzag (Nodes)"},
+        MultipleOptions = false,
+        Flag = "Dropdown_Pattern",
+        Callback = function(Option) farm.pattern = type(Option) == "table" and Option[1] or Option end,
+    })
+
+    MainTab:CreateToggle({
+        Name = "Focus Only Mature Grass",
+        CurrentValue = true,
+        Flag = "Toggle_OnlyMatureGrass",
+        Callback = function(Value)
+            farm.onlyMatureGrass = Value
+        end,
+    })
+
+    MainTab:CreateToggle({
+        Name = "Collect Grazing Bait Drops",
+        CurrentValue = false,
+        Flag = "Toggle_CollectBait",
+        Callback = function(Value)
+            farm.collectBait = Value
+            farm.baitTarget = nil
+        end,
+    })
+
+    MainTab:CreateDropdown({
+        Name = "Walking Speed",
+        Options = {"Very Slow (0.4x)", "Slow (0.6x)", "Normal (1.0x)", "Fast (1.6x)"},
+        CurrentOption = {"Normal (1.0x)"},
+        MultipleOptions = false,
+        Flag = "Dropdown_Speed",
+        Callback = function(Option)
+            local selection = type(Option) == "table" and Option[1] or Option
+            if selection == "Very Slow (0.4x)" then farm.patternSpeed = 0.4
+            elseif selection == "Slow (0.6x)" then farm.patternSpeed = 0.6
+            elseif selection == "Normal (1.0x)" then farm.patternSpeed = 1.0
+            elseif selection == "Fast (1.6x)" then farm.patternSpeed = 1.6
+            end
+        end,
+    })
+
+    MainTab:CreateSlider({
+        Name = "Farm Radius (Studs)",
+        Range = {10, 300},
+        Increment = 1,
+        Suffix = "Studs",
+        CurrentValue = 75,
+        Flag = "Slider_Radius",
+        Callback = function(Value)
+            farm.radius = Value
+            farm.radiusSq = farm.radius * farm.radius
+            if penESP and penESP.update then
+                pcall(penESP.update)
+            end
+        end,
+    })
+
+    MainTab:CreateSection({ Name = "Mob Attack Dodge Configuration" })
+
+    MainTab:CreateDropdown({
+        Name = "Dodge Method",
+        Options = {"Underground", "Run Away (Surface)", "Teleport Away (Surface)"},
+        CurrentOption = {"Teleport Away (Surface)"},
+        MultipleOptions = false,
+        Flag = "Dropdown_DodgeMethod",
+        Callback = function(Option)
+            dodge.method = type(Option) == "table" and Option[1] or Option
+            if dodge.method ~= "Underground" and dodge.isUnderground and root and dodge.lastSurfaceCFrame then
                 setRootCFrame(dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0))
                 pcall(function() root.Anchored = false end)
-                pcall(function()
-                    root.AssemblyLinearVelocity = Vector3.zero
-                    root.AssemblyAngularVelocity = Vector3.zero
-                end)
-                for _, part in ipairs(charBaseParts) do
-                    if part.Name == "HumanoidRootPart" or part.Name == "UpperTorso" or part.Name == "Torso" then
-                        part.CanCollide = true
-                    end
-                end
                 dodge.isUnderground = false
-                dodge.lastSurfaceCFrame = nil
-                dodge.lastSurfacePos = nil
-                dodge.undergroundCFrame = nil
             end
-            if dodge.isDodging then
-                if humanoid then humanoid.WalkSpeed = dodge.originalWalkSpeed or 16 end
-                dodge.isDodging = false
-                dodge.currentAttackingMob = nil
-                dodge.preDodgePos = nil
-                dodge.preDodgeCFrame = nil
-                if not farm.on and humanoid then humanoid:Move(Vector3.zero, false) end
-            end
-        end
-        updateHeartbeatConnection()
-    end,
-})
+        end,
+    })
 
+    MainTab:CreateToggle({
+        Name = "Notify on Attack Dodge",
+        CurrentValue = false,
+        Flag = "Toggle_DodgeNotify",
+        Callback = function(Value)
+            dodge.notifyOnDodge = Value
+        end,
+    })
 
-MainTab:CreateButton({
-    Name = "Teleport to Farming Area",
-    Callback = function()
-        if not root or not char then return end
-        local target = CFrame.new(6269, 706, -185)
-        char:PivotTo(target)
-        root.CFrame = target
-        stopCharacterVelocity()
-        for _, part in ipairs(charBaseParts) do
-            part.AssemblyLinearVelocity = Vector3.zero
-            part.AssemblyAngularVelocity = Vector3.zero
-        end
-        -- Re-home the autofarm so it doesn't walk back to the old anchor
-        if farm.on then
-            farm.anchorPos = target.Position
-            farm.currentTargetNode = nil
-            farm.currentNodeStartTime = 0
-            farm.nextRandomPos = nil
-        end
-    end,
-})
+    MainTab:CreateToggle({
+        Name = "Retreat on Armor / Hearts Decreased",
+        CurrentValue = true,
+        Flag = "Toggle_DodgeHearts",
+        Callback = function(Value)
+            dodge.dodgeOnHeartsDecreased = Value
+        end,
+    })
 
-MainTab:CreateSection({ Name = "Aura & Pattern Configuration" })
+    MainTab:CreateSlider({
+        Name = "Dodge Detection Range (Studs)",
+        Range = {10, 50},
+        Increment = 1,
+        Suffix = "Studs",
+        CurrentValue = 15,
+        Flag = "Slider_DodgeRange",
+        Callback = function(Value)
+            dodge.detectionRadius = Value
+            dodge.detectionRadiusSq = Value * Value
+        end,
+    })
 
-MainTab:CreateDropdown({
-    Name = "Chomp Mode",
-    Options = { "Remote (Auto Max)", "Natural (E Key)" },
-    CurrentOption = { "Remote (Auto Max)" },
-    MultipleOptions = false,
-    Flag = "Dropdown_ChompMode",
-    Callback = function(Option)
-        local selection = tostring(type(Option) == "table" and Option[1] or Option)
-        local newMode = string.find(selection, "Natural", 1, true) and "Natural" or "Remote"
-        if newMode == chomp.mode then return end
-        if chomp.mode == "Natural" then chomp.stopNatural() end
-        chomp.mode = newMode
-        chomp.log("mode", { mode = newMode })
-    end,
-})
+    MainTab:CreateSlider({
+        Name = "Retreat Distance (Studs)",
+        Range = {10, 60},
+        Increment = 1,
+        Suffix = "Studs",
+        CurrentValue = 25,
+        Flag = "Slider_DodgeRetreat",
+        Callback = function(Value)
+            dodge.retreatDistance = Value
+        end,
+    })
 
-MainTab:CreateToggle({
-    Name = "Auto Max Chomp Speed (Server Limit)",
-    CurrentValue = true,
-    Flag = "Toggle_ChompAutoMax",
-    Callback = function(Value)
-        chomp.autoMax = Value
-        chomp.log("autoMax", { on = Value })
-    end,
-})
+    MainTab:CreateSlider({
+        Name = "Retreat Angle (Degrees)",
+        Range = {0, 90},
+        Increment = 5,
+        Suffix = "°",
+        CurrentValue = 45,
+        Flag = "Slider_DodgeAngle",
+        Callback = function(Value)
+            dodge.retreatAngle = Value
+        end,
+    })
 
-MainTab:CreateDropdown({
-    Name = "Manual Chomp Speed (when Auto Max off)",
-    Options = { "0.4s", "0.5s", "0.6s", "0.7s (Game Base)", "1.0s", "1.5s" },
-    CurrentOption = { "0.4s" },
-    MultipleOptions = false,
-    Flag = "Dropdown_GrassSpeed",
-    Callback = function(Option)
-        local selection = tostring(type(Option) == "table" and Option[1] or Option)
-        chomp.manualDelay = math.max(chomp.MIN, tonumber(string.match(selection, "(%d+%.?%d*)")) or chomp.MIN)
-    end,
-})
+    MainTab:CreateSlider({
+        Name = "Retreat Walk Speed",
+        Range = {16, 50},
+        Increment = 1,
+        Suffix = "studs/s",
+        CurrentValue = 26,
+        Flag = "Slider_DodgeSpeed",
+        Callback = function(Value)
+            dodge.walkSpeed = Value
+        end,
+    })
 
-MainTab:CreateToggle({
-    Name = "Chomp Debug Log (cowhub/chomplogs)",
-    CurrentValue = false,
-    Flag = "Toggle_ChompDebugLog",
-    Callback = function(Value)
-        if Value then
-            chomp.debug = true
-            chomp.logPath = nil
-            chomp.log("start", {
-                placeId = game.PlaceId, jobId = game.JobId, mode = chomp.mode, autoMax = chomp.autoMax,
-                manualDelay = chomp.manualDelay, toggleSetting = plr:GetAttribute("CowGrazeToggle") == true,
-                chewCooldown = plr:GetAttribute("ChewCooldown"), mult = plr:GetAttribute("CowGrazingSpeedMultiplier"),
-                statsBefore = chomp.stats,
-            })
-            chomp.flushLog(true)
-            chomp.watchStats(true)
-            safeNotify({ Title = "Chomp Debug Log", Content = "Writing to " .. tostring(chomp.logPath), Duration = 6 })
-        else
-            chomp.log("stop", { stats = chomp.stats })
-            chomp.watchStats(false)
-            chomp.flushLog(true)
-            chomp.debug = false
-        end
-    end,
-})
+    MainTab:CreateSlider({
+        Name = "Underground Depth (Studs)",
+        Range = {0, 50},
+        Increment = 1,
+        Suffix = "Studs",
+        CurrentValue = 20,
+        Flag = "Slider_DodgeDepth",
+        Callback = function(Value)
+            dodge.undergroundDepth = Value
+        end,
+    })
 
-do
-    local title, body = "Chomp: --", "Interval: --"
-    if MainTab.CreateText then
-        pcall(function() chomp.statusCard = MainTab:CreateText({ name = title, text = body }) end)
-    end
-    if not chomp.statusCard and MainTab.CreateParagraph then
-        pcall(function() chomp.statusCard = MainTab:CreateParagraph({ Title = title, Content = body }) end)
-    end
-    task.spawn(function()
-        while chomp.statusCard and _G.CowHubConnections == scriptConnections do
-            task.wait(1)
-            if farm.autoChomp then
-                chomp.updateCalories()
-                local now = os.clock()
-                local cal = chomp.calories
-                if cal.lastTimestamp == 0 then cal.lastTimestamp = now end
-                local dt = now - cal.lastTimestamp
-                cal.lastTimestamp = now
-                if not farm.botCheckActive and dt > 0 and dt < 5 then
-                    cal.activeDuration = cal.activeDuration + dt
-                end
+    MainTab:CreateSlider({
+        Name = "Dodge Return Delay (Seconds)",
+        Range = {0.05, 2.5},
+        Increment = 0.05,
+        Suffix = "s",
+        CurrentValue = 0.6,
+        Flag = "Slider_DodgeLinger",
+        Callback = function(Value)
+            dodge.lingerDelay = Value
+        end,
+    })
 
-                if cal.activeDuration >= 3 and cal.sessionGained > 0 then
-                    cal.ratePerHour = (cal.sessionGained / cal.activeDuration) * 3600
-                end
+    MainTab:CreateSection({ Name = "Visuals / ESP" })
 
-                local calRateStr = "--"
-                if cal.activeDuration >= 3 and cal.ratePerHour > 0 then
-                    calRateStr = string.format("%s/hr (%s)", formatCompact(cal.ratePerHour), formatNumber(math.floor(cal.ratePerHour)))
-                elseif cal.activeDuration < 3 then
-                    calRateStr = "Calculating..."
-                end
+    MainTab:CreateToggle({
+        Name = "Show Pen Boundary (ESP)",
+        CurrentValue = false,
+        Flag = "Toggle_PenESP",
+        Callback = function(Value)
+            penESP.show = Value
+            penESP.update()
+        end,
+    })
 
-                local st = chomp.stats
-                local t = string.format("Chomp: %s%s", chomp.mode, farm.botCheckActive and " | PAUSED (bot check)" or "")
-                local reasons = {}
-                for r, c in pairs(st.reasons) do table.insert(reasons, { r, c }) end
-                table.sort(reasons, function(a, b) return a[2] > b[2] end)
-                for i, rc in ipairs(reasons) do reasons[i] = rc[1] .. " " .. rc[2] end
-                local b = string.format("Interval: %.3fs (server %.3fs + margin %.3fs) | RTT %dms\nSent %d | OK %d | Rejected %d (%.0f%%)\nRejects: %s\nGrazing: %s\nAvg Calories/hr: %s",
-                    chomp.getInterval(), chomp.serverInterval(), chomp.margin, math.floor(chomp.rtt * 1000),
-                    st.sent, st.accepted, st.rejected, st.sent > 0 and st.rejected / st.sent * 100 or 0,
-                    #reasons > 0 and table.concat(reasons, ", ") or "none",
-                    tostring(chomp.isGrazing()), calRateStr)
-                pcall(function()
-                    if chomp.statusCard.SetTitle then
-                        chomp.statusCard:SetTitle(t)
-                        chomp.statusCard:Set(b)
-                    elseif chomp.statusCard.Set then
-                        chomp.statusCard:Set({ Title = t, Content = b })
-                    end
-                end)
-            end
-        end
-    end)
+    MainTab:CreateToggle({
+        Name = "Show Team Chest ESP (Dynamic)",
+        CurrentValue = false,
+        Flag = "Toggle_ChestESP",
+        Callback = function(Value)
+            chestESP.show = Value
+            chestESP.update()
+        end,
+    })
+
+    MainTab:CreateSection({ Name = "Virtual Input Spammer (0.05s CD)" })
+
+    MainTab:CreateToggle({
+        Name = "Spam [E] Key",
+        CurrentValue = false,
+        Flag = "Toggle_Spam_E",
+        Callback = function(Value) HandleSpam("E", Value, 0.05) end,
+    })
+
+    MainTab:CreateToggle({
+        Name = "Spam [Q] Key",
+        CurrentValue = false,
+        Flag = "Toggle_Spam_Q",
+        Callback = function(Value) HandleSpam("Q", Value, 0.05) end,
+    })
 end
 
-MainTab:CreateToggle({
-    Name = "Chomp Only While Moving",
-    CurrentValue = true,
-    Flag = "Toggle_ChompOnlyMoving",
-    Callback = function(Value)
-        farm.chompOnlyWhileMoving = Value
-    end,
-})
-
-MainTab:CreateDropdown({
-    Name = "Mob Aura Speed",
-    Options = {"Slow (1.0s)", "Normal (0.5s)", "Fast (0.1s)"},
-    CurrentOption = {"Fast (0.1s)"},
-    MultipleOptions = false,
-    Flag = "Dropdown_MobSpeed",
-    Callback = function(Option)
-        local selection = type(Option) == "table" and Option[1] or Option
-        if selection == "Slow (1.0s)" then farm.mobAuraDelay = 1.0
-        elseif selection == "Normal (0.5s)" then farm.mobAuraDelay = 0.5
-        elseif selection == "Fast (0.1s)" then farm.mobAuraDelay = 0.1
-        end
-    end,
-})
-
-MainTab:CreateDropdown({
-    Name = "Walking Pattern",
-    Options = {"Guided Zigzag (Nodes)", "Circle", "Square", "Zigzag", "Random"},
-    CurrentOption = {"Guided Zigzag (Nodes)"},
-    MultipleOptions = false,
-    Flag = "Dropdown_Pattern",
-    Callback = function(Option) farm.pattern = type(Option) == "table" and Option[1] or Option end,
-})
-
-MainTab:CreateToggle({
-    Name = "Focus Only Mature Grass",
-    CurrentValue = true,
-    Flag = "Toggle_OnlyMatureGrass",
-    Callback = function(Value)
-        farm.onlyMatureGrass = Value
-    end,
-})
-
-MainTab:CreateToggle({
-    Name = "Collect Grazing Bait Drops",
-    CurrentValue = false,
-    Flag = "Toggle_CollectBait",
-    Callback = function(Value)
-        farm.collectBait = Value
-        farm.baitTarget = nil
-    end,
-})
-
-MainTab:CreateDropdown({
-    Name = "Walking Speed",
-    Options = {"Very Slow (0.4x)", "Slow (0.6x)", "Normal (1.0x)", "Fast (1.6x)"},
-    CurrentOption = {"Normal (1.0x)"},
-    MultipleOptions = false,
-    Flag = "Dropdown_Speed",
-    Callback = function(Option)
-        local selection = type(Option) == "table" and Option[1] or Option
-        if selection == "Very Slow (0.4x)" then farm.patternSpeed = 0.4
-        elseif selection == "Slow (0.6x)" then farm.patternSpeed = 0.6
-        elseif selection == "Normal (1.0x)" then farm.patternSpeed = 1.0
-        elseif selection == "Fast (1.6x)" then farm.patternSpeed = 1.6
-        end
-    end,
-})
-
-MainTab:CreateSlider({
-    Name = "Farm Radius (Studs)",
-    Range = {10, 300},
-    Increment = 1,
-    Suffix = "Studs",
-    CurrentValue = 75,
-    Flag = "Slider_Radius",
-    Callback = function(Value)
-        farm.radius = Value
-        farm.radiusSq = farm.radius * farm.radius
-        if penESP and penESP.update then
-            pcall(penESP.update)
-        end
-    end,
-})
-
-MainTab:CreateSection({ Name = "Mob Attack Dodge Configuration" })
-
-MainTab:CreateDropdown({
-    Name = "Dodge Method",
-    Options = {"Underground", "Run Away (Surface)", "Teleport Away (Surface)"},
-    CurrentOption = {"Teleport Away (Surface)"},
-    MultipleOptions = false,
-    Flag = "Dropdown_DodgeMethod",
-    Callback = function(Option)
-        dodge.method = type(Option) == "table" and Option[1] or Option
-        if dodge.method ~= "Underground" and dodge.isUnderground and root and dodge.lastSurfaceCFrame then
-            setRootCFrame(dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0))
-            pcall(function() root.Anchored = false end)
-            dodge.isUnderground = false
-        end
-    end,
-})
-
-MainTab:CreateToggle({
-    Name = "Notify on Attack Dodge",
-    CurrentValue = false,
-    Flag = "Toggle_DodgeNotify",
-    Callback = function(Value)
-        dodge.notifyOnDodge = Value
-    end,
-})
-
-MainTab:CreateToggle({
-    Name = "Retreat on Armor / Hearts Decreased",
-    CurrentValue = true,
-    Flag = "Toggle_DodgeHearts",
-    Callback = function(Value)
-        dodge.dodgeOnHeartsDecreased = Value
-    end,
-})
-
-MainTab:CreateSlider({
-    Name = "Dodge Detection Range (Studs)",
-    Range = {10, 50},
-    Increment = 1,
-    Suffix = "Studs",
-    CurrentValue = 15,
-    Flag = "Slider_DodgeRange",
-    Callback = function(Value)
-        dodge.detectionRadius = Value
-        dodge.detectionRadiusSq = Value * Value
-    end,
-})
-
-MainTab:CreateSlider({
-    Name = "Retreat Distance (Studs)",
-    Range = {10, 60},
-    Increment = 1,
-    Suffix = "Studs",
-    CurrentValue = 25,
-    Flag = "Slider_DodgeRetreat",
-    Callback = function(Value)
-        dodge.retreatDistance = Value
-    end,
-})
-
-MainTab:CreateSlider({
-    Name = "Retreat Angle (Degrees)",
-    Range = {0, 90},
-    Increment = 5,
-    Suffix = "°",
-    CurrentValue = 45,
-    Flag = "Slider_DodgeAngle",
-    Callback = function(Value)
-        dodge.retreatAngle = Value
-    end,
-})
-
-MainTab:CreateSlider({
-    Name = "Retreat Walk Speed",
-    Range = {16, 50},
-    Increment = 1,
-    Suffix = "studs/s",
-    CurrentValue = 26,
-    Flag = "Slider_DodgeSpeed",
-    Callback = function(Value)
-        dodge.walkSpeed = Value
-    end,
-})
-
-MainTab:CreateSlider({
-    Name = "Underground Depth (Studs)",
-    Range = {0, 50},
-    Increment = 1,
-    Suffix = "Studs",
-    CurrentValue = 20,
-    Flag = "Slider_DodgeDepth",
-    Callback = function(Value)
-        dodge.undergroundDepth = Value
-    end,
-})
-
-MainTab:CreateSlider({
-    Name = "Dodge Return Delay (Seconds)",
-    Range = {0.05, 2.5},
-    Increment = 0.05,
-    Suffix = "s",
-    CurrentValue = 0.6,
-    Flag = "Slider_DodgeLinger",
-    Callback = function(Value)
-        dodge.lingerDelay = Value
-    end,
-})
-
-MainTab:CreateSection({ Name = "Visuals / ESP" })
-
-MainTab:CreateToggle({
-    Name = "Show Pen Boundary (ESP)",
-    CurrentValue = false,
-    Flag = "Toggle_PenESP",
-    Callback = function(Value)
-        penESP.show = Value
-        penESP.update()
-    end,
-})
-
-MainTab:CreateToggle({
-    Name = "Show Team Chest ESP (Dynamic)",
-    CurrentValue = false,
-    Flag = "Toggle_ChestESP",
-    Callback = function(Value)
-        chestESP.show = Value
-        chestESP.update()
-    end,
-})
-
-MainTab:CreateSection({ Name = "Virtual Input Spammer (0.05s CD)" })
-
-MainTab:CreateToggle({
-    Name = "Spam [E] Key",
-    CurrentValue = false,
-    Flag = "Toggle_Spam_E",
-    Callback = function(Value) HandleSpam("E", Value, 0.05) end,
-})
-
-MainTab:CreateToggle({
-    Name = "Spam [Q] Key",
-    CurrentValue = false,
-    Flag = "Toggle_Spam_Q",
-    Callback = function(Value) HandleSpam("Q", Value, 0.05) end,
-})
+-- Teleports get their own tab, second in the bar. Its buttons are added near the end of the script,
+-- once rafting, townAuction and caravan exist.
+local TeleportsTab = Window:CreateTab({ Name = "Teleports", Icon = 4483362458 })
 
 -- ==========================
 -- UI SETUP: Manatite & Mithril Tab
 -- ==========================
-local MiningTab = Window:CreateTab({ Name = "Manatite & Mithril", Icon = 4483362458 })
+do
+    local MiningTab = Window:CreateTab({ Name = "Manatite & Mithril", Icon = 4483362458 })
 
-MiningTab:CreateSection({ Name = "Manatite Farm (Sea Maze)" })
+    MiningTab:CreateSection({ Name = "Manatite Farm (Sea Maze)" })
 
-MiningTab:CreateToggle({
-    Name = "Enable Manatite Farm (Sea Maze)",
-    CurrentValue = false,
-    Flag = "Toggle_ManatiteFarm",
-    Callback = function(Value)
-        manatite.auto = Value
-        if Value then
-            if root then
-                manatite.preCFrame = root.CFrame
+    MiningTab:CreateToggle({
+        Name = "Enable Manatite Farm (Sea Maze)",
+        CurrentValue = false,
+        Flag = "Toggle_ManatiteFarm",
+        Callback = function(Value)
+            manatite.auto = Value
+            if Value then
+                if root then
+                    manatite.preCFrame = root.CFrame
+                end
+                manatite.model = nil
+                manatite.target = nil
+                manatite.payload = nil
+                manatite.lastSearchTime = 0
+
+                Window:Notify({
+                    Title = "Manatite Farm Enabled",
+                    Content = "Teleporting to Sea Maze Manatite clusters & chomping...",
+                    Duration = 3,
+                    Image = 4483362458,
+                })
+            else
+                if manatite.anchor and root then
+                    pcall(function() root.Anchored = false end)
+                end
+                if manatite.returnOnDisable and manatite.preCFrame and root and char then
+                    char:PivotTo(manatite.preCFrame)
+                    root.CFrame = manatite.preCFrame
+                    for _, part in ipairs(charBaseParts) do
+                        part.AssemblyLinearVelocity = Vector3.zero
+                        part.AssemblyAngularVelocity = Vector3.zero
+                    end
+                end
+                manatite.model = nil
+                manatite.target = nil
+                manatite.payload = nil
             end
-            manatite.model = nil
-            manatite.target = nil
-            manatite.payload = nil
-            manatite.lastSearchTime = 0
+            updateHeartbeatConnection()
+        end,
+    })
 
-            Window:Notify({
-                Title = "Manatite Farm Enabled",
-                Content = "Teleporting to Sea Maze Manatite clusters & chomping...",
-                Duration = 3,
-                Image = 4483362458,
-            })
-        else
-            if manatite.anchor and root then
+    MiningTab:CreateToggle({
+        Name = "Show Manatite ESP (Sea Maze)",
+        CurrentValue = false,
+        Flag = "Toggle_ManatiteESP",
+        Callback = function(Value)
+            manatite.showESP = Value
+            manatite.updateESP()
+        end,
+    })
+
+    MiningTab:CreateDropdown({
+        Name = "Cluster Selection Order",
+        Options = {"Nearest Available", "Alphabetical (A-Z)", "Largest Crystal Yield"},
+        CurrentOption = {"Largest Crystal Yield"},
+        MultipleOptions = false,
+        Flag = "Dropdown_ManatiteOrder",
+        Callback = function(Option)
+            local selection = type(Option) == "table" and Option[1] or Option
+            if selection == "Alphabetical (A-Z)" then
+                manatite.order = "Alphabetical (A-Z)"
+            elseif selection == "Largest Crystal Yield" or string.find(tostring(selection), "Yield") or string.find(tostring(selection), "yield") then
+                manatite.order = "Largest Crystal Yield"
+            else
+                manatite.order = "Nearest Available"
+            end
+        end,
+    })
+
+    MiningTab:CreateToggle({
+        Name = "Anchor Root While Chomping",
+        CurrentValue = false,
+        Flag = "Toggle_ManatiteAnchor",
+        Callback = function(Value)
+            manatite.anchor = Value
+            if not Value and root and not dodge.isUnderground then
                 pcall(function() root.Anchored = false end)
             end
-            if manatite.returnOnDisable and manatite.preCFrame and root and char then
-                char:PivotTo(manatite.preCFrame)
-                root.CFrame = manatite.preCFrame
-                for _, part in ipairs(charBaseParts) do
-                    part.AssemblyLinearVelocity = Vector3.zero
-                    part.AssemblyAngularVelocity = Vector3.zero
+        end,
+    })
+
+    MiningTab:CreateToggle({
+        Name = "Return to Pre-Farm Pos on Disable",
+        CurrentValue = false,
+        Flag = "Toggle_ManatiteReturn",
+        Callback = function(Value)
+            manatite.returnOnDisable = Value
+        end,
+    })
+
+    MiningTab:CreateToggle({
+        Name = "Retreat to Safe Crystal on Spider Threat",
+        CurrentValue = true,
+        Flag = "Toggle_RetreatSafeCrystal",
+        Callback = function(Value)
+            dodge.retreatOnThreat = Value
+            dodge.prioritizeMobsOverManatite = not Value
+        end,
+    })
+
+    MiningTab:CreateSlider({
+        Name = "Manatite Chomp Delay",
+        Range = {0.05, 0.5},
+        Increment = 0.01,
+        Suffix = "s",
+        CurrentValue = 0.1,
+        Flag = "Slider_ManatiteDelay",
+        Callback = function(Value)
+            manatite.delay = Value
+        end,
+    })
+
+    MiningTab:CreateSlider({
+        Name = "Manatite Teleport Height Offset",
+        Range = {0, 8},
+        Increment = 0.5,
+        Suffix = "Studs",
+        CurrentValue = 2.5,
+        Flag = "Slider_ManatiteHeight",
+        Callback = function(Value)
+            manatite.heightOffset = Value
+        end,
+    })
+
+    MiningTab:CreateSection({ Name = "Mithril Farm (Crystal Geode)" })
+
+    MiningTab:CreateToggle({
+        Name = "Enable Mithril Farm (Crystal Geode)",
+        CurrentValue = false,
+        Flag = "Toggle_MithrilFarm",
+        Callback = function(Value)
+            mithril.auto = Value
+            if Value then
+                if root then
+                    mithril.preCFrame = root.CFrame
                 end
+                mithril.model = nil
+                mithril.orePart = nil
+                mithril.payload = nil
+                mithril.lastSearchTime = 0
+
+                Window:Notify({
+                    Title = "Mithril Farm Enabled",
+                    Content = "Teleporting to Crystal Geode Mithril ores & chomping...",
+                    Duration = 3,
+                    Image = 4483362458,
+                })
+            else
+                if mithril.anchor and root then
+                    pcall(function() root.Anchored = false end)
+                end
+                if mithril.returnOnDisable and mithril.preCFrame and root and char then
+                    char:PivotTo(mithril.preCFrame)
+                    root.CFrame = mithril.preCFrame
+                    for _, part in ipairs(charBaseParts) do
+                        part.AssemblyLinearVelocity = Vector3.zero
+                        part.AssemblyAngularVelocity = Vector3.zero
+                    end
+                end
+                mithril.model = nil
+                mithril.orePart = nil
+                mithril.payload = nil
             end
-            manatite.model = nil
-            manatite.target = nil
-            manatite.payload = nil
-        end
-        updateHeartbeatConnection()
-    end,
-})
+            updateHeartbeatConnection()
+        end,
+    })
 
-MiningTab:CreateToggle({
-    Name = "Show Manatite ESP (Sea Maze)",
-    CurrentValue = false,
-    Flag = "Toggle_ManatiteESP",
-    Callback = function(Value)
-        manatite.showESP = Value
-        manatite.updateESP()
-    end,
-})
+    MiningTab:CreateToggle({
+        Name = "Show Mithril ESP (Crystal Geode)",
+        CurrentValue = false,
+        Flag = "Toggle_MithrilESP",
+        Callback = function(Value)
+            mithril.showESP = Value
+            mithril.updateESP()
+        end,
+    })
 
-MiningTab:CreateDropdown({
-    Name = "Cluster Selection Order",
-    Options = {"Nearest Available", "Alphabetical (A-Z)", "Largest Crystal Yield"},
-    CurrentOption = {"Largest Crystal Yield"},
-    MultipleOptions = false,
-    Flag = "Dropdown_ManatiteOrder",
-    Callback = function(Option)
-        local selection = type(Option) == "table" and Option[1] or Option
-        if selection == "Alphabetical (A-Z)" then
-            manatite.order = "Alphabetical (A-Z)"
-        elseif selection == "Largest Crystal Yield" or string.find(tostring(selection), "Yield") or string.find(tostring(selection), "yield") then
-            manatite.order = "Largest Crystal Yield"
-        else
-            manatite.order = "Nearest Available"
-        end
-    end,
-})
-
-MiningTab:CreateToggle({
-    Name = "Anchor Root While Chomping",
-    CurrentValue = false,
-    Flag = "Toggle_ManatiteAnchor",
-    Callback = function(Value)
-        manatite.anchor = Value
-        if not Value and root and not dodge.isUnderground then
-            pcall(function() root.Anchored = false end)
-        end
-    end,
-})
-
-MiningTab:CreateToggle({
-    Name = "Return to Pre-Farm Pos on Disable",
-    CurrentValue = false,
-    Flag = "Toggle_ManatiteReturn",
-    Callback = function(Value)
-        manatite.returnOnDisable = Value
-    end,
-})
-
-MiningTab:CreateToggle({
-    Name = "Retreat to Safe Crystal on Spider Threat",
-    CurrentValue = true,
-    Flag = "Toggle_RetreatSafeCrystal",
-    Callback = function(Value)
-        dodge.retreatOnThreat = Value
-        dodge.prioritizeMobsOverManatite = not Value
-    end,
-})
-
-MiningTab:CreateSlider({
-    Name = "Manatite Chomp Delay",
-    Range = {0.05, 0.5},
-    Increment = 0.01,
-    Suffix = "s",
-    CurrentValue = 0.1,
-    Flag = "Slider_ManatiteDelay",
-    Callback = function(Value)
-        manatite.delay = Value
-    end,
-})
-
-MiningTab:CreateSlider({
-    Name = "Manatite Teleport Height Offset",
-    Range = {0, 8},
-    Increment = 0.5,
-    Suffix = "Studs",
-    CurrentValue = 2.5,
-    Flag = "Slider_ManatiteHeight",
-    Callback = function(Value)
-        manatite.heightOffset = Value
-    end,
-})
-
-MiningTab:CreateSection({ Name = "Mithril Farm (Crystal Geode)" })
-
-MiningTab:CreateToggle({
-    Name = "Enable Mithril Farm (Crystal Geode)",
-    CurrentValue = false,
-    Flag = "Toggle_MithrilFarm",
-    Callback = function(Value)
-        mithril.auto = Value
-        if Value then
-            if root then
-                mithril.preCFrame = root.CFrame
+    MiningTab:CreateDropdown({
+        Name = "Mithril Selection Order",
+        Options = {"Nearest Available", "Alphabetical (A-Z)"},
+        CurrentOption = {"Nearest Available"},
+        MultipleOptions = false,
+        Flag = "Dropdown_MithrilOrder",
+        Callback = function(Option)
+            local selection = type(Option) == "table" and Option[1] or Option
+            if selection == "Alphabetical (A-Z)" then
+                mithril.order = "Alphabetical (A-Z)"
+            else
+                mithril.order = "Nearest Available"
             end
-            mithril.model = nil
-            mithril.orePart = nil
-            mithril.payload = nil
-            mithril.lastSearchTime = 0
+        end,
+    })
 
-            Window:Notify({
-                Title = "Mithril Farm Enabled",
-                Content = "Teleporting to Crystal Geode Mithril ores & chomping...",
-                Duration = 3,
-                Image = 4483362458,
-            })
-        else
-            if mithril.anchor and root then
+    MiningTab:CreateToggle({
+        Name = "Anchor Root While Mining",
+        CurrentValue = false,
+        Flag = "Toggle_MithrilAnchor",
+        Callback = function(Value)
+            mithril.anchor = Value
+            if not Value and root and not dodge.isUnderground then
                 pcall(function() root.Anchored = false end)
             end
-            if mithril.returnOnDisable and mithril.preCFrame and root and char then
-                char:PivotTo(mithril.preCFrame)
-                root.CFrame = mithril.preCFrame
-                for _, part in ipairs(charBaseParts) do
-                    part.AssemblyLinearVelocity = Vector3.zero
-                    part.AssemblyAngularVelocity = Vector3.zero
-                end
-            end
-            mithril.model = nil
-            mithril.orePart = nil
-            mithril.payload = nil
-        end
-        updateHeartbeatConnection()
-    end,
-})
+        end,
+    })
 
-MiningTab:CreateToggle({
-    Name = "Show Mithril ESP (Crystal Geode)",
-    CurrentValue = false,
-    Flag = "Toggle_MithrilESP",
-    Callback = function(Value)
-        mithril.showESP = Value
-        mithril.updateESP()
-    end,
-})
+    MiningTab:CreateToggle({
+        Name = "Return to Pre-Farm Pos on Disable (Mithril)",
+        CurrentValue = false,
+        Flag = "Toggle_MithrilReturn",
+        Callback = function(Value)
+            mithril.returnOnDisable = Value
+        end,
+    })
 
-MiningTab:CreateDropdown({
-    Name = "Mithril Selection Order",
-    Options = {"Nearest Available", "Alphabetical (A-Z)"},
-    CurrentOption = {"Nearest Available"},
-    MultipleOptions = false,
-    Flag = "Dropdown_MithrilOrder",
-    Callback = function(Option)
-        local selection = type(Option) == "table" and Option[1] or Option
-        if selection == "Alphabetical (A-Z)" then
-            mithril.order = "Alphabetical (A-Z)"
-        else
-            mithril.order = "Nearest Available"
-        end
-    end,
-})
+    MiningTab:CreateSlider({
+        Name = "Mithril Chomp Delay",
+        Range = {0.05, 0.5},
+        Increment = 0.01,
+        Suffix = "s",
+        CurrentValue = 0.1,
+        Flag = "Slider_MithrilDelay",
+        Callback = function(Value)
+            mithril.delay = Value
+        end,
+    })
 
-MiningTab:CreateToggle({
-    Name = "Anchor Root While Mining",
-    CurrentValue = false,
-    Flag = "Toggle_MithrilAnchor",
-    Callback = function(Value)
-        mithril.anchor = Value
-        if not Value and root and not dodge.isUnderground then
-            pcall(function() root.Anchored = false end)
-        end
-    end,
-})
-
-MiningTab:CreateToggle({
-    Name = "Return to Pre-Farm Pos on Disable (Mithril)",
-    CurrentValue = false,
-    Flag = "Toggle_MithrilReturn",
-    Callback = function(Value)
-        mithril.returnOnDisable = Value
-    end,
-})
-
-MiningTab:CreateSlider({
-    Name = "Mithril Chomp Delay",
-    Range = {0.05, 0.5},
-    Increment = 0.01,
-    Suffix = "s",
-    CurrentValue = 0.1,
-    Flag = "Slider_MithrilDelay",
-    Callback = function(Value)
-        mithril.delay = Value
-    end,
-})
-
-MiningTab:CreateSlider({
-    Name = "Mithril Teleport Height Offset",
-    Range = {0, 8},
-    Increment = 0.5,
-    Suffix = "Studs",
-    CurrentValue = 2.5,
-    Flag = "Slider_MithrilHeight",
-    Callback = function(Value)
-        mithril.heightOffset = Value
-    end,
-})
+    MiningTab:CreateSlider({
+        Name = "Mithril Teleport Height Offset",
+        Range = {0, 8},
+        Increment = 0.5,
+        Suffix = "Studs",
+        CurrentValue = 2.5,
+        Flag = "Slider_MithrilHeight",
+        Callback = function(Value)
+            mithril.heightOffset = Value
+        end,
+    })
+end
 
 -- ==========================
 -- UI SETUP: Scanner Tab
 -- ==========================
-local ScannerTab = Window:CreateTab({ Name = "Auction Scanner", Icon = 4483362458 })
-
-ScannerTab:CreateSection({ Name = "Discord Webhook Integration" })
-
-ScannerTab:CreateInput({
-    Name = "Discord Webhook URL",
-    Placeholder = WEBHOOK_URL ~= "" and "Saved webhook loaded! Paste to overwrite." or "Paste your Webhook URL here",
-    RemoveTextAfterFocusLost = false,
-    Flag = "Input_DiscordWebhook",
-    Callback = function(Text)
-        if Text:match("discord%.com/api/webhooks") then
-            WEBHOOK_URL = Text
-            saveWebhook(Text)
-            Window:Notify({ Title = "Webhook Saved", Content = "Your Webhook URL has been saved locally.", Duration = 3 })
-        else
-            Window:Notify({ Title = "Invalid URL", Content = "Please enter a valid Discord webhook URL.", Duration = 3 })
-        end
-    end,
-})
-
-ScannerTab:CreateToggle({
-    Name = "Enable Discord Webhook",
-    CurrentValue = true,
-    Flag = "ScannerToggle",
-    Callback = function(Value)
-        auction.scannerRunning = Value
-
-        if auction.scannerRunning then
-            if not httpRequest then
-                Window:Notify({ Title = "Unsupported", Content = "Your executor does not support HTTP requests.", Duration = 4 })
-                auction.scannerRunning = false
-                return
-            elseif WEBHOOK_URL == "" then
-                Window:Notify({ Title = "No Webhook", Content = "Please enter a valid Discord Webhook URL first.", Duration = 4 })
-                auction.scannerRunning = false
-                return
-            end
-
-            for _, lotName in ipairs(auction.lotNames) do
-                local lot = skinAuction:FindFirstChild(lotName)
-                if lot then
-                    local conn = lot:GetAttributeChangedSignal("SkinId"):Connect(function()
-                        task.wait(1)
-                        if auction.scannerRunning then auction.debouncedCheckLots() end
-                    end)
-                    table.insert(auction.connections, conn)
-                end
-            end
-
-            auction.debouncedCheckLots()
-        else
-            for _, conn in ipairs(auction.connections) do conn:Disconnect() end
-            table.clear(auction.connections)
-        end
-    end,
-})
-
-
--- Counts down against server time, as the game's SkinAuctionController does
-function auction.formatRemainingTime(endsAt)
-    if not endsAt or type(endsAt) ~= "number" then return "N/A" end
-    local remaining = math.max(0, math.floor(endsAt - workspace:GetServerTimeNow()))
-    if remaining <= 0 then
-        return "Ended / Rotating"
-    end
-    return string.format("%dm %02ds", math.floor(remaining / 60), remaining % 60)
-end
-
-
-local function ownedMark(owned)
-    if owned == true then return "✅" elseif owned == false then return "❌" end
-    return "?"
-end
-
-function auction.getLotDisplayInfo(lotName)
-    local info, why = auction.readLot(lotName)
-    if not info then
-        if why == "missing" then
-            return lotName .. ": [Not Found]", "Lot folder does not exist in ReplicatedStorage."
-        end
-        return lotName .. ": [Empty / Inactive]", "No skin currently on auction in this lot."
-    end
-
-    local leaderStatus
-    if not info.LeaderName then
-        leaderStatus = "None (No bids yet)"
-    elseif info.Leading then
-        leaderStatus = "⭐ YOU (" .. tostring(info.LeaderName) .. ") - Leading"
-    else
-        leaderStatus = "👤 " .. tostring(info.LeaderName) .. " (Outbid)"
-    end
-
-    local title = string.format("%s: %s [%s]", lotName, tostring(info.SkinName), tostring(info.Rarity))
-    local body = string.format("Current Bid: 🪙 %s | Next Min: 🪙 %s\nLeader: %s\nRound: %s | Ends In: %s\nOwned: %s",
-        formatNumber(info.Bid),
-        formatNumber(info.MinimumBid),
-        leaderStatus,
-        tostring(info.Round or "N/A"),
-        auction.formatRemainingTime(info.EndsAt),
-        ownedMark(info.Owned)
-    )
-
-    return title, body
-end
-
--- All lots on one live card for the "Live Auction House Display" section
-function auction.getOverviewInfo()
-    local lines, active = {}, 0
-    for _, lotName in ipairs(auction.lotNames) do
-        local info = auction.readLot(lotName)
-        if info then
-            active += 1
-            local leader = info.Leading and "⭐ You" or (info.LeaderName and ("👤 " .. info.LeaderName)) or "—"
-            table.insert(lines, string.format("%s: %s [%s] · %s · Min 🪙 %s · %s · %s",
-                lotName, tostring(info.SkinName), tostring(info.Rarity), ownedMark(info.Owned),
-                formatNumber(info.MinimumBid), leader, auction.formatRemainingTime(info.EndsAt)))
-        else
-            table.insert(lines, lotName .. ": Empty")
-        end
-    end
-    return string.format("Live Auction House · %d active lots", active), table.concat(lines, "\n")
-end
-
-local function setCard(card, title, body)
-    if not card then return end
-    pcall(function()
-        if card.SetTitle then
-            card:SetTitle(title)
-            card:Set(body)
-        elseif card.Set then
-            card:Set({ Title = title, Content = body })
-        end
-    end)
-end
-
-function auction.updateLotDisplay(lotName)
-    local card = auction.cards[lotName]
-    if not card then return end
-    setCard(card, auction.getLotDisplayInfo(lotName))
-end
-
-function auction.updateAllLotDisplays()
-    for _, lotName in ipairs(auction.lotNames) do
-        auction.updateLotDisplay(lotName)
-    end
-    setCard(auction.overviewCard, auction.getOverviewInfo())
-end
-
-ScannerTab:CreateSection({ Name = "Live Auction House Display" })
-
 do
-    local title, body = auction.getOverviewInfo()
-    if ScannerTab.CreateText then
-        pcall(function() auction.overviewCard = ScannerTab:CreateText({ name = title, text = body }) end)
-    end
-    if not auction.overviewCard and ScannerTab.CreateParagraph then
-        pcall(function() auction.overviewCard = ScannerTab:CreateParagraph({ Title = title, Content = body }) end)
-    end
-end
+    local ScannerTab = Window:CreateTab({ Name = "Auction Scanner", Icon = 4483362458 })
 
-ScannerTab:CreateSection({ Name = "Auction House Tools" })
+    ScannerTab:CreateSection({ Name = "Discord Webhook Integration" })
 
-ScannerTab:CreateButton({
-    Name = "Refresh Auction Display",
-    Callback = function()
-        auction.updateAllLotDisplays()
-        Window:Notify({ Title = "Refreshed", Content = "Auction lot displays updated.", Duration = 2 })
-    end,
-})
+    ScannerTab:CreateInput({
+        Name = "Discord Webhook URL",
+        Placeholder = WEBHOOK_URL ~= "" and "Saved webhook loaded! Paste to overwrite." or "Paste your Webhook URL here",
+        RemoveTextAfterFocusLost = false,
+        Flag = "Input_DiscordWebhook",
+        Callback = function(Text)
+            if Text:match("discord%.com/api/webhooks") then
+                WEBHOOK_URL = Text
+                saveWebhook(Text)
+                Window:Notify({ Title = "Webhook Saved", Content = "Your Webhook URL has been saved locally.", Duration = 3 })
+            else
+                Window:Notify({ Title = "Invalid URL", Content = "Please enter a valid Discord webhook URL.", Duration = 3 })
+            end
+        end,
+    })
 
--- Single Open Auction House Proximity Prompt Button
-ScannerTab:CreateButton({
-    Name = "Open Auction House",
-    Callback = function()
-        local prompt = nil
-        pcall(function()
-            prompt = workspace.CowWorld.Decorations.SkinAuctionHall.Lot1.Pedestal.CowAuctionBid
-        end)
+    ScannerTab:CreateToggle({
+        Name = "Enable Discord Webhook",
+        CurrentValue = true,
+        Flag = "ScannerToggle",
+        Callback = function(Value)
+            auction.scannerRunning = Value
 
-        if not prompt then
-            pcall(function()
-                local pedestal = workspace:FindFirstChild("CowWorld")
-                    and workspace.CowWorld:FindFirstChild("Decorations")
-                    and workspace.CowWorld.Decorations:FindFirstChild("SkinAuctionHall")
-                    and workspace.CowWorld.Decorations.SkinAuctionHall:FindFirstChild("Lot1")
-                    and workspace.CowWorld.Decorations.SkinAuctionHall.Lot1:FindFirstChild("Pedestal")
-                if pedestal then
-                    prompt = pedestal:FindFirstChild("CowAuctionBid")
-                        or pedestal:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if auction.scannerRunning then
+                if not httpRequest then
+                    Window:Notify({ Title = "Unsupported", Content = "Your executor does not support HTTP requests.", Duration = 4 })
+                    auction.scannerRunning = false
+                    return
+                elseif WEBHOOK_URL == "" then
+                    Window:Notify({ Title = "No Webhook", Content = "Please enter a valid Discord Webhook URL first.", Duration = 4 })
+                    auction.scannerRunning = false
+                    return
                 end
-            end)
-        end
 
-        if not prompt then
-            pcall(function()
-                local hall = workspace:FindFirstChild("CowWorld")
-                    and workspace.CowWorld:FindFirstChild("Decorations")
-                    and workspace.CowWorld.Decorations:FindFirstChild("SkinAuctionHall")
-                if hall then
-                    prompt = hall:FindFirstChild("CowAuctionBid", true)
-                        or hall:FindFirstChildWhichIsA("ProximityPrompt", true)
+                for _, lotName in ipairs(auction.lotNames) do
+                    local lot = skinAuction:FindFirstChild(lotName)
+                    if lot then
+                        local conn = lot:GetAttributeChangedSignal("SkinId"):Connect(function()
+                            task.wait(1)
+                            if auction.scannerRunning then auction.debouncedCheckLots() end
+                        end)
+                        table.insert(auction.connections, conn)
+                    end
                 end
-            end)
+
+                auction.debouncedCheckLots()
+            else
+                for _, conn in ipairs(auction.connections) do conn:Disconnect() end
+                table.clear(auction.connections)
+            end
+        end,
+    })
+
+
+    -- Counts down against server time, as the game's SkinAuctionController does
+    function auction.formatRemainingTime(endsAt)
+        if not endsAt or type(endsAt) ~= "number" then return "N/A" end
+        local remaining = math.max(0, math.floor(endsAt - workspace:GetServerTimeNow()))
+        if remaining <= 0 then
+            return "Ended / Rotating"
+        end
+        return string.format("%dm %02ds", math.floor(remaining / 60), remaining % 60)
+    end
+
+
+    local function ownedMark(owned)
+        if owned == true then return "✅" elseif owned == false then return "❌" end
+        return "?"
+    end
+
+    function auction.getLotDisplayInfo(lotName)
+        local info, why = auction.readLot(lotName)
+        if not info then
+            if why == "missing" then
+                return lotName .. ": [Not Found]", "Lot folder does not exist in ReplicatedStorage."
+            end
+            return lotName .. ": [Empty / Inactive]", "No skin currently on auction in this lot."
         end
 
-        if not prompt then
-            Window:Notify({ Title = "Error", Content = "Auction House proximity prompt (CowAuctionBid) not found.", Duration = 4 })
-            return
-        end
-
-        local fired = false
-        if fireproximityprompt then
-            pcall(function()
-                fireproximityprompt(prompt)
-                fired = true
-            end)
-        end
-
-        if not fired then
-            pcall(function()
-                prompt:InputHoldBegin()
-                task.wait(prompt.HoldDuration + 0.05)
-                prompt:InputHoldEnd()
-                fired = true
-            end)
-        end
-
-        if fired then
-            Window:Notify({ Title = "Prompt Fired", Content = "Auction House prompt opened.", Duration = 3 })
+        local leaderStatus
+        if not info.LeaderName then
+            leaderStatus = "None (No bids yet)"
+        elseif info.Leading then
+            leaderStatus = "⭐ YOU (" .. tostring(info.LeaderName) .. ") - Leading"
         else
-            Window:Notify({ Title = "Error", Content = "Failed to fire auction prompt.", Duration = 4 })
+            leaderStatus = "👤 " .. tostring(info.LeaderName) .. " (Outbid)"
         end
-    end,
-})
 
-function auction.executeBid(lotName, customAmount, isManual)
-    if type(customAmount) == "boolean" and isManual == nil then
-        isManual = customAmount
-        customAmount = nil
+        local title = string.format("%s: %s [%s]", lotName, tostring(info.SkinName), tostring(info.Rarity))
+        local body = string.format("Current Bid: 🪙 %s | Next Min: 🪙 %s\nLeader: %s\nRound: %s | Ends In: %s\nOwned: %s",
+            formatNumber(info.Bid),
+            formatNumber(info.MinimumBid),
+            leaderStatus,
+            tostring(info.Round or "N/A"),
+            auction.formatRemainingTime(info.EndsAt),
+            ownedMark(info.Owned)
+        )
+
+        return title, body
     end
 
-    if not auction.remote then
-        auction.remote = cowRemotes:FindFirstChild("SkinAuctionRequest")
+    -- All lots on one live card for the "Live Auction House Display" section
+    function auction.getOverviewInfo()
+        local lines, active = {}, 0
+        for _, lotName in ipairs(auction.lotNames) do
+            local info = auction.readLot(lotName)
+            if info then
+                active += 1
+                local leader = info.Leading and "⭐ You" or (info.LeaderName and ("👤 " .. info.LeaderName)) or "—"
+                table.insert(lines, string.format("%s: %s [%s] · %s · Min 🪙 %s · %s · %s",
+                    lotName, tostring(info.SkinName), tostring(info.Rarity), ownedMark(info.Owned),
+                    formatNumber(info.MinimumBid), leader, auction.formatRemainingTime(info.EndsAt)))
+            else
+                table.insert(lines, lotName .. ": Empty")
+            end
+        end
+        return string.format("Live Auction House · %d active lots", active), table.concat(lines, "\n")
+    end
+
+    local function setCard(card, title, body)
+        if not card then return end
+        pcall(function()
+            if card.SetTitle then
+                card:SetTitle(title)
+                card:Set(body)
+            elseif card.Set then
+                card:Set({ Title = title, Content = body })
+            end
+        end)
+    end
+
+    function auction.updateLotDisplay(lotName)
+        local card = auction.cards[lotName]
+        if not card then return end
+        setCard(card, auction.getLotDisplayInfo(lotName))
+    end
+
+    function auction.updateAllLotDisplays()
+        for _, lotName in ipairs(auction.lotNames) do
+            auction.updateLotDisplay(lotName)
+        end
+        setCard(auction.overviewCard, auction.getOverviewInfo())
+    end
+
+    ScannerTab:CreateSection({ Name = "Live Auction House Display" })
+
+    do
+        local title, body = auction.getOverviewInfo()
+        if ScannerTab.CreateText then
+            pcall(function() auction.overviewCard = ScannerTab:CreateText({ name = title, text = body }) end)
+        end
+        if not auction.overviewCard and ScannerTab.CreateParagraph then
+            pcall(function() auction.overviewCard = ScannerTab:CreateParagraph({ Title = title, Content = body }) end)
+        end
+    end
+
+    ScannerTab:CreateSection({ Name = "Auction House Tools" })
+
+    do
+        local row = ScannerTab:CreateGroup()
+        row:CreateButton({
+            Name = "Refresh Auction Display",
+            Callback = function()
+                auction.updateAllLotDisplays()
+                Window:Notify({ Title = "Refreshed", Content = "Auction lot displays updated.", Duration = 2 })
+            end,
+        })
+
+        -- Single Open Auction House Proximity Prompt Button
+        row:CreateButton({
+            Name = "Open Auction House",
+            Callback = function()
+                local prompt = nil
+                pcall(function()
+                    prompt = workspace.CowWorld.Decorations.SkinAuctionHall.Lot1.Pedestal.CowAuctionBid
+                end)
+
+                if not prompt then
+                    pcall(function()
+                        local pedestal = workspace:FindFirstChild("CowWorld")
+                            and workspace.CowWorld:FindFirstChild("Decorations")
+                            and workspace.CowWorld.Decorations:FindFirstChild("SkinAuctionHall")
+                            and workspace.CowWorld.Decorations.SkinAuctionHall:FindFirstChild("Lot1")
+                            and workspace.CowWorld.Decorations.SkinAuctionHall.Lot1:FindFirstChild("Pedestal")
+                        if pedestal then
+                            prompt = pedestal:FindFirstChild("CowAuctionBid")
+                                or pedestal:FindFirstChildWhichIsA("ProximityPrompt", true)
+                        end
+                    end)
+                end
+
+                if not prompt then
+                    pcall(function()
+                        local hall = workspace:FindFirstChild("CowWorld")
+                            and workspace.CowWorld:FindFirstChild("Decorations")
+                            and workspace.CowWorld.Decorations:FindFirstChild("SkinAuctionHall")
+                        if hall then
+                            prompt = hall:FindFirstChild("CowAuctionBid", true)
+                                or hall:FindFirstChildWhichIsA("ProximityPrompt", true)
+                        end
+                    end)
+                end
+
+                if not prompt then
+                    Window:Notify({ Title = "Error", Content = "Auction House proximity prompt (CowAuctionBid) not found.", Duration = 4 })
+                    return
+                end
+
+                local fired = false
+                if fireproximityprompt then
+                    pcall(function()
+                        fireproximityprompt(prompt)
+                        fired = true
+                    end)
+                end
+
+                if not fired then
+                    pcall(function()
+                        prompt:InputHoldBegin()
+                        task.wait(prompt.HoldDuration + 0.05)
+                        prompt:InputHoldEnd()
+                        fired = true
+                    end)
+                end
+
+                if fired then
+                    Window:Notify({ Title = "Prompt Fired", Content = "Auction House prompt opened.", Duration = 3 })
+                else
+                    Window:Notify({ Title = "Error", Content = "Failed to fire auction prompt.", Duration = 4 })
+                end
+            end,
+        })
+    end
+
+    function auction.executeBid(lotName, customAmount, isManual)
+        if type(customAmount) == "boolean" and isManual == nil then
+            isManual = customAmount
+            customAmount = nil
+        end
+
         if not auction.remote then
+            auction.remote = cowRemotes:FindFirstChild("SkinAuctionRequest")
+            if not auction.remote then
+                if isManual then
+                    Window:Notify({ Title = "Error", Content = "SkinAuctionRequest remote not found.", Duration = 4 })
+                end
+                return false
+            end
+        end
+
+        local lot = skinAuction:FindFirstChild(lotName)
+        if not lot then
             if isManual then
-                Window:Notify({ Title = "Error", Content = "SkinAuctionRequest remote not found.", Duration = 4 })
+                Window:Notify({ Title = "Error", Content = lotName .. " not found in SkinAuction.", Duration = 4 })
             end
             return false
         end
-    end
 
-    local lot = skinAuction:FindFirstChild(lotName)
-    if not lot then
-        if isManual then
-            Window:Notify({ Title = "Error", Content = lotName .. " not found in SkinAuction.", Duration = 4 })
-        end
-        return false
-    end
-
-    local skinId = lot:GetAttribute("SkinId")
-    if not skinId or skinId == "" or skinId == "None" then
-        if isManual then
-            Window:Notify({ Title = "Error", Content = lotName .. " has no active skin.", Duration = 4 })
-        end
-        return false
-    end
-
-    local round = lot:GetAttribute("Round")
-    local slot = lot:GetAttribute("Slot") or tonumber(lotName:match("%d+")) or 1
-    local minBid = lot:GetAttribute("MinimumBid")
-
-    if not round or not minBid or type(minBid) ~= "number" or minBid <= 0 then
-        if isManual then
-            Window:Notify({ Title = "Error", Content = lotName .. " missing valid Round/MinimumBid.", Duration = 4 })
-        end
-        return false
-    end
-
-    local amount = tonumber(customAmount) or tonumber(auction.customBidAmounts[lotName]) or tonumber(minBid) or minBid
-
-    local success, result = pcall(function()
-        return auction.remote:InvokeServer({
-            Slot = slot,
-            Round = round,
-            Action = "Bid",
-            Amount = amount
-        })
-    end)
-
-    if success then
-        local skinName = lot:GetAttribute("SkinName") or skinId
-        Window:Notify({
-            Title = isManual and "Manual Bid Placed" or "Auto Bid Placed!",
-            Content = string.format("%s (%s)\nAmount: 🪙 %s", lotName, tostring(skinName), formatNumber(amount)),
-            Duration = 4
-        })
-        task.spawn(function()
-            task.wait(0.5)
-            auction.updateLotDisplay(lotName)
-        end)
-        return true
-    else
-        if isManual then
-            Window:Notify({
-                Title = "Bid Failed",
-                Content = lotName .. ": " .. tostring(result),
-                Duration = 4
-            })
-        end
-        return false
-    end
-end
-
-function auction.parseAmount(input)
-    if not input then return nil end
-    local str = type(input) == "table" and (input.CurrentValue or input.Text or input[1]) or tostring(input)
-    str = str:gsub("%$", ""):gsub(",", ""):gsub("_", ""):gsub("%s+", "")
-    if str == "" then return nil end
-
-    local mult = 1
-    local lower = str:lower()
-    if lower:sub(-1) == "k" then
-        mult = 1000
-        str = str:sub(1, -2)
-    elseif lower:sub(-1) == "m" then
-        mult = 1000000
-        str = str:sub(1, -2)
-    elseif lower:sub(-1) == "b" then
-        mult = 1000000000
-        str = str:sub(1, -2)
-    end
-
-    local num = tonumber(str)
-    if num and num > 0 then
-        return math.floor(num * mult)
-    end
-    return nil
-end
-
-function auction.findTextBox(lotName)
-    local parent = nil
-    if gethui then
-        pcall(function() parent = gethui() end)
-    end
-    if not parent then
-        pcall(function() parent = game:GetService("CoreGui") end)
-    end
-    if not parent and plr then
-        pcall(function() parent = plr:FindFirstChild("PlayerGui") end)
-    end
-    if not parent then return nil end
-
-    local searchPattern = "Bid Amount (" .. lotName .. ")"
-    for _, desc in ipairs(parent:GetDescendants()) do
-        if desc:IsA("TextBox") then
-            local p = desc.Parent
-            while p and p ~= parent do
-                local title = p:FindFirstChild("Title")
-                if title and title:IsA("TextLabel") and title.Text == searchPattern then
-                    return desc
-                end
-                p = p.Parent
+        local skinId = lot:GetAttribute("SkinId")
+        if not skinId or skinId == "" or skinId == "None" then
+            if isManual then
+                Window:Notify({ Title = "Error", Content = lotName .. " has no active skin.", Duration = 4 })
             end
+            return false
         end
-    end
-    return nil
-end
 
-function auction.resolveCustomAmount(lotName)
-    local val = auction.customBidAmounts[lotName]
-    if val and val > 0 then return val end
+        local round = lot:GetAttribute("Round")
+        local slot = lot:GetAttribute("Slot") or tonumber(lotName:match("%d+")) or 1
+        local minBid = lot:GetAttribute("MinimumBid")
 
-    local flagName = "Input_SkinBid_" .. lotName
-    if Window and Window.Flags and Window.Flags[flagName] ~= nil then
-        val = auction.parseAmount(Window.Flags[flagName])
-        if val and val > 0 then
-            auction.customBidAmounts[lotName] = val
-            return val
-        end
-    end
-
-    if Rayfield and Rayfield.Flags and Rayfield.Flags[flagName] ~= nil then
-        val = auction.parseAmount(Rayfield.Flags[flagName])
-        if val and val > 0 then
-            auction.customBidAmounts[lotName] = val
-            return val
-        end
-    end
-
-    local tb = auction.findTextBox(lotName)
-    if tb and tb.Text and tb.Text ~= "" then
-        val = auction.parseAmount(tb.Text)
-        if val and val > 0 then
-            auction.customBidAmounts[lotName] = val
-            return val
-        end
-    end
-
-    return nil
-end
-
-function auction.setupLotUI(tab, lotName)
-    tab:CreateSection({ Name = "Skin Lot: " .. lotName })
-
-    local initialTitle, initialBody = auction.getLotDisplayInfo(lotName)
-    local card = nil
-    if tab.CreateText then
-        pcall(function()
-            card = tab:CreateText({
-                name = initialTitle,
-                text = initialBody
-            })
-        end)
-    end
-    if not card and tab.CreateParagraph then
-        pcall(function()
-            card = tab:CreateParagraph({
-                Title = initialTitle,
-                Content = initialBody
-            })
-        end)
-    end
-    auction.cards[lotName] = card
-
-    tab:CreateInput({
-        Name = "Bid Amount (" .. lotName .. ")",
-        CurrentValue = "",
-        PlaceholderText = "Enter custom amount (e.g. 50000 or 50k)",
-        RemoveTextAfterFocusLost = false,
-        Flag = "Input_SkinBid_" .. lotName,
-        Callback = function(Text)
-            local num = auction.parseAmount(Text)
-            if num and num > 0 then
-                auction.customBidAmounts[lotName] = num
-            else
-                auction.customBidAmounts[lotName] = nil
+        if not round or not minBid or type(minBid) ~= "number" or minBid <= 0 then
+            if isManual then
+                Window:Notify({ Title = "Error", Content = lotName .. " missing valid Round/MinimumBid.", Duration = 4 })
             end
-        end,
-    })
-
-    task.spawn(function()
-        task.wait(0.2)
-        local tb = auction.findTextBox(lotName)
-        if tb then
-            tb:GetPropertyChangedSignal("Text"):Connect(function()
-                local num = auction.parseAmount(tb.Text)
-                if num and num > 0 then
-                    auction.customBidAmounts[lotName] = num
-                end
-            end)
+            return false
         end
-    end)
 
-    tab:CreateButton({
-        Name = "Bid Minimum / Next " .. lotName,
-        Callback = function()
-            auction.executeBid(lotName, nil, true)
-        end,
-    })
+        local amount = tonumber(customAmount) or tonumber(auction.customBidAmounts[lotName]) or tonumber(minBid) or minBid
 
-    tab:CreateButton({
-        Name = "Bid Custom Amount (" .. lotName .. ")",
-        Callback = function()
-            local custom = auction.resolveCustomAmount(lotName)
-            if not custom then
-                Window:Notify({ Title = "No Amount", Content = "Please enter an amount in the input above first.", Duration = 3 })
-                return
-            end
-            auction.executeBid(lotName, custom, true)
-        end,
-    })
-end
-
-for _, lotName in ipairs(auction.lotNames) do
-    auction.setupLotUI(ScannerTab, lotName)
-end
-
--- ==========================
--- AUTO OUTBID SYSTEM
--- ==========================
-
--- Lot is a candidate: toggled per lot / all, or unowned mode (ownership checked in checkAndAutoBidLot)
-function auction.lotAutoBidEnabled(lotName)
-    return auction.autoBidAll or auction.autoBidActive[lotName] == true or auction.autoBidUnowned
-end
-
-function auction.hasAnyAutoBidActive()
-    if auction.autoBidAll or auction.autoBidUnowned then return true end
-    for _, active in pairs(auction.autoBidActive) do
-        if active then return true end
-    end
-    return false
-end
-
-function auction.checkAndAutoBidLot(lotName)
-    local toggled = auction.autoBidAll or auction.autoBidActive[lotName] == true
-    if not (toggled or auction.autoBidUnowned) then return end
-    if not auction.remote then
-        auction.remote = cowRemotes:FindFirstChild("SkinAuctionRequest")
-        if not auction.remote then return end
-    end
-
-    local lot = skinAuction:FindFirstChild(lotName)
-    if not lot then return end
-
-    local skinId = lot:GetAttribute("SkinId")
-    if not skinId or skinId == "" or skinId == "None" then return end
-    -- Unowned mode bids only when the game confirms the skin isn't owned (unknown never bids)
-    if not toggled and cosmetics.isOwned(skinId) ~= false then return end
-
-    local round = lot:GetAttribute("Round")
-    local slot = lot:GetAttribute("Slot") or tonumber(lotName:match("%d+")) or 1
-    local minBid = lot:GetAttribute("MinimumBid")
-    if not round or not minBid or type(minBid) ~= "number" or minBid <= 0 then return end
-
-    if auction.maxAutoBidLimit > 0 and minBid > auction.maxAutoBidLimit then
-        return
-    end
-
-    local leaderName = lot:GetAttribute("LeaderName")
-
-    -- Already leading: by LeaderId, as the game decides (readLot)
-    local info = auction.readLot(lotName)
-    if info and info.Leading then
-        return
-    end
-
-    -- Throttle to avoid duplicate rapid requests
-    local now = os.clock()
-    if auction.isAutoBiddingLot[lotName] then return end
-    if auction.lastAutoBidTime[lotName] and (now - auction.lastAutoBidTime[lotName] < 1.5) then return end
-
-    auction.isAutoBiddingLot[lotName] = true
-    auction.lastAutoBidTime[lotName] = now
-
-    task.spawn(function()
         local success, result = pcall(function()
             return auction.remote:InvokeServer({
                 Slot = slot,
                 Round = round,
                 Action = "Bid",
-                Amount = minBid
+                Amount = amount
             })
         end)
-
-        auction.isAutoBiddingLot[lotName] = false
 
         if success then
             local skinName = lot:GetAttribute("SkinName") or skinId
             Window:Notify({
-                Title = "Auto Outbid Placed!",
-                Content = lotName .. " (" .. tostring(skinName) .. ")\nAmount: " .. formatNumber(minBid) .. "\nOutbidding: " .. tostring(leaderName or "None"),
+                Title = isManual and "Manual Bid Placed" or "Auto Bid Placed!",
+                Content = string.format("%s (%s)\nAmount: 🪙 %s", lotName, tostring(skinName), formatNumber(amount)),
                 Duration = 4
             })
             task.spawn(function()
                 task.wait(0.5)
                 auction.updateLotDisplay(lotName)
             end)
+            return true
+        else
+            if isManual then
+                Window:Notify({
+                    Title = "Bid Failed",
+                    Content = lotName .. ": " .. tostring(result),
+                    Duration = 4
+                })
+            end
+            return false
         end
-    end)
-end
+    end
 
--- Hook attribute changes for instant reaction & live display updates
-for _, lotName in ipairs(auction.lotNames) do
-    local lot = skinAuction:FindFirstChild(lotName)
-    if lot then
-        local function onLotAttributeChanged()
-            auction.updateLotDisplay(lotName)
-            if auction.lotAutoBidEnabled(lotName) then
-                auction.checkAndAutoBidLot(lotName)
+    function auction.parseAmount(input)
+        if not input then return nil end
+        local str = type(input) == "table" and (input.CurrentValue or input.Text or input[1]) or tostring(input)
+        str = str:gsub("%$", ""):gsub(",", ""):gsub("_", ""):gsub("%s+", "")
+        if str == "" then return nil end
+
+        local mult = 1
+        local lower = str:lower()
+        if lower:sub(-1) == "k" then
+            mult = 1000
+            str = str:sub(1, -2)
+        elseif lower:sub(-1) == "m" then
+            mult = 1000000
+            str = str:sub(1, -2)
+        elseif lower:sub(-1) == "b" then
+            mult = 1000000000
+            str = str:sub(1, -2)
+        end
+
+        local num = tonumber(str)
+        if num and num > 0 then
+            return math.floor(num * mult)
+        end
+        return nil
+    end
+
+    function auction.findTextBox(lotName)
+        local parent = nil
+        if gethui then
+            pcall(function() parent = gethui() end)
+        end
+        if not parent then
+            pcall(function() parent = game:GetService("CoreGui") end)
+        end
+        if not parent and plr then
+            pcall(function() parent = plr:FindFirstChild("PlayerGui") end)
+        end
+        if not parent then return nil end
+
+        local searchPattern = "Bid Amount (" .. lotName .. ")"
+        for _, desc in ipairs(parent:GetDescendants()) do
+            if desc:IsA("TextBox") then
+                local p = desc.Parent
+                while p and p ~= parent do
+                    local title = p:FindFirstChild("Title")
+                    if title and title:IsA("TextLabel") and title.Text == searchPattern then
+                        return desc
+                    end
+                    p = p.Parent
+                end
+            end
+        end
+        return nil
+    end
+
+    function auction.resolveCustomAmount(lotName)
+        local val = auction.customBidAmounts[lotName]
+        if val and val > 0 then return val end
+
+        local flagName = "Input_SkinBid_" .. lotName
+        if Window and Window.Flags and Window.Flags[flagName] ~= nil then
+            val = auction.parseAmount(Window.Flags[flagName])
+            if val and val > 0 then
+                auction.customBidAmounts[lotName] = val
+                return val
             end
         end
 
-        local c1 = lot:GetAttributeChangedSignal("LeaderName"):Connect(onLotAttributeChanged)
-        local c2 = lot:GetAttributeChangedSignal("MinimumBid"):Connect(onLotAttributeChanged)
-        local c3 = lot:GetAttributeChangedSignal("Bid"):Connect(function() auction.updateLotDisplay(lotName) end)
-        local c4 = lot:GetAttributeChangedSignal("Round"):Connect(onLotAttributeChanged)
-        local c5 = lot:GetAttributeChangedSignal("SkinId"):Connect(onLotAttributeChanged)
-        local c6 = lot:GetAttributeChangedSignal("SkinName"):Connect(function() auction.updateLotDisplay(lotName) end)
-        local c7 = lot:GetAttributeChangedSignal("EndsAt"):Connect(function() auction.updateLotDisplay(lotName) end)
+        if Rayfield and Rayfield.Flags and Rayfield.Flags[flagName] ~= nil then
+            val = auction.parseAmount(Rayfield.Flags[flagName])
+            if val and val > 0 then
+                auction.customBidAmounts[lotName] = val
+                return val
+            end
+        end
 
-        table.insert(auction.autoBidConnections, c1)
-        table.insert(auction.autoBidConnections, c2)
-        table.insert(auction.autoBidConnections, c3)
-        table.insert(auction.autoBidConnections, c4)
-        table.insert(auction.autoBidConnections, c5)
-        table.insert(auction.autoBidConnections, c6)
-        table.insert(auction.autoBidConnections, c7)
+        local tb = auction.findTextBox(lotName)
+        if tb and tb.Text and tb.Text ~= "" then
+            val = auction.parseAmount(tb.Text)
+            if val and val > 0 then
+                auction.customBidAmounts[lotName] = val
+                return val
+            end
+        end
+
+        return nil
     end
-end
 
--- 1-second live countdown ticker and periodic outbid check
-task.spawn(function()
-    while auction.autoBidLoopRunning do
-        task.wait(1)
-        auction.updateAllLotDisplays()
-        if auction.hasAnyAutoBidActive() then
-            for _, lotName in ipairs(auction.lotNames) do
+    function auction.setupLotUI(tab, lotName)
+        tab:CreateSection({ Name = "Skin Lot: " .. lotName })
+
+        local initialTitle, initialBody = auction.getLotDisplayInfo(lotName)
+        local card = nil
+        if tab.CreateText then
+            pcall(function()
+                card = tab:CreateText({
+                    name = initialTitle,
+                    text = initialBody
+                })
+            end)
+        end
+        if not card and tab.CreateParagraph then
+            pcall(function()
+                card = tab:CreateParagraph({
+                    Title = initialTitle,
+                    Content = initialBody
+                })
+            end)
+        end
+        auction.cards[lotName] = card
+
+        tab:CreateInput({
+            Name = "Bid Amount (" .. lotName .. ")",
+            CurrentValue = "",
+            PlaceholderText = "Enter custom amount (e.g. 50000 or 50k)",
+            RemoveTextAfterFocusLost = false,
+            Flag = "Input_SkinBid_" .. lotName,
+            Callback = function(Text)
+                local num = auction.parseAmount(Text)
+                if num and num > 0 then
+                    auction.customBidAmounts[lotName] = num
+                else
+                    auction.customBidAmounts[lotName] = nil
+                end
+            end,
+        })
+
+        task.spawn(function()
+            task.wait(0.2)
+            local tb = auction.findTextBox(lotName)
+            if tb then
+                tb:GetPropertyChangedSignal("Text"):Connect(function()
+                    local num = auction.parseAmount(tb.Text)
+                    if num and num > 0 then
+                        auction.customBidAmounts[lotName] = num
+                    end
+                end)
+            end
+        end)
+
+        do
+            local row = tab:CreateGroup()
+            row:CreateButton({
+                Name = "Bid Minimum / Next " .. lotName,
+                Callback = function()
+                    auction.executeBid(lotName, nil, true)
+                end,
+            })
+
+            row:CreateButton({
+                Name = "Bid Custom Amount (" .. lotName .. ")",
+                Callback = function()
+                    local custom = auction.resolveCustomAmount(lotName)
+                    if not custom then
+                        Window:Notify({ Title = "No Amount", Content = "Please enter an amount in the input above first.", Duration = 3 })
+                        return
+                    end
+                    auction.executeBid(lotName, custom, true)
+                end,
+            })
+        end
+    end
+
+    for _, lotName in ipairs(auction.lotNames) do
+        auction.setupLotUI(ScannerTab, lotName)
+    end
+
+    -- ==========================
+    -- AUTO OUTBID SYSTEM
+    -- ==========================
+
+    -- Lot is a candidate: toggled per lot / all, or unowned mode (ownership checked in checkAndAutoBidLot)
+    function auction.lotAutoBidEnabled(lotName)
+        return auction.autoBidAll or auction.autoBidActive[lotName] == true or auction.autoBidUnowned
+    end
+
+    function auction.hasAnyAutoBidActive()
+        if auction.autoBidAll or auction.autoBidUnowned then return true end
+        for _, active in pairs(auction.autoBidActive) do
+            if active then return true end
+        end
+        return false
+    end
+
+    function auction.checkAndAutoBidLot(lotName)
+        local toggled = auction.autoBidAll or auction.autoBidActive[lotName] == true
+        if not (toggled or auction.autoBidUnowned) then return end
+        if not auction.remote then
+            auction.remote = cowRemotes:FindFirstChild("SkinAuctionRequest")
+            if not auction.remote then return end
+        end
+
+        local lot = skinAuction:FindFirstChild(lotName)
+        if not lot then return end
+
+        local skinId = lot:GetAttribute("SkinId")
+        if not skinId or skinId == "" or skinId == "None" then return end
+        -- Unowned mode bids only when the game confirms the skin isn't owned (unknown never bids)
+        if not toggled and cosmetics.isOwned(skinId) ~= false then return end
+
+        local round = lot:GetAttribute("Round")
+        local slot = lot:GetAttribute("Slot") or tonumber(lotName:match("%d+")) or 1
+        local minBid = lot:GetAttribute("MinimumBid")
+        if not round or not minBid or type(minBid) ~= "number" or minBid <= 0 then return end
+
+        if auction.maxAutoBidLimit > 0 and minBid > auction.maxAutoBidLimit then
+            return
+        end
+
+        local leaderName = lot:GetAttribute("LeaderName")
+
+        -- Already leading: by LeaderId, as the game decides (readLot)
+        local info = auction.readLot(lotName)
+        if info and info.Leading then
+            return
+        end
+
+        -- Throttle to avoid duplicate rapid requests
+        local now = os.clock()
+        if auction.isAutoBiddingLot[lotName] then return end
+        if auction.lastAutoBidTime[lotName] and (now - auction.lastAutoBidTime[lotName] < 1.5) then return end
+
+        auction.isAutoBiddingLot[lotName] = true
+        auction.lastAutoBidTime[lotName] = now
+
+        task.spawn(function()
+            local success, result = pcall(function()
+                return auction.remote:InvokeServer({
+                    Slot = slot,
+                    Round = round,
+                    Action = "Bid",
+                    Amount = minBid
+                })
+            end)
+
+            auction.isAutoBiddingLot[lotName] = false
+
+            if success then
+                local skinName = lot:GetAttribute("SkinName") or skinId
+                Window:Notify({
+                    Title = "Auto Outbid Placed!",
+                    Content = lotName .. " (" .. tostring(skinName) .. ")\nAmount: " .. formatNumber(minBid) .. "\nOutbidding: " .. tostring(leaderName or "None"),
+                    Duration = 4
+                })
+                task.spawn(function()
+                    task.wait(0.5)
+                    auction.updateLotDisplay(lotName)
+                end)
+            end
+        end)
+    end
+
+    -- Hook attribute changes for instant reaction & live display updates
+    for _, lotName in ipairs(auction.lotNames) do
+        local lot = skinAuction:FindFirstChild(lotName)
+        if lot then
+            local function onLotAttributeChanged()
+                auction.updateLotDisplay(lotName)
                 if auction.lotAutoBidEnabled(lotName) then
                     auction.checkAndAutoBidLot(lotName)
                 end
             end
+
+            local c1 = lot:GetAttributeChangedSignal("LeaderName"):Connect(onLotAttributeChanged)
+            local c2 = lot:GetAttributeChangedSignal("MinimumBid"):Connect(onLotAttributeChanged)
+            local c3 = lot:GetAttributeChangedSignal("Bid"):Connect(function() auction.updateLotDisplay(lotName) end)
+            local c4 = lot:GetAttributeChangedSignal("Round"):Connect(onLotAttributeChanged)
+            local c5 = lot:GetAttributeChangedSignal("SkinId"):Connect(onLotAttributeChanged)
+            local c6 = lot:GetAttributeChangedSignal("SkinName"):Connect(function() auction.updateLotDisplay(lotName) end)
+            local c7 = lot:GetAttributeChangedSignal("EndsAt"):Connect(function() auction.updateLotDisplay(lotName) end)
+
+            table.insert(auction.autoBidConnections, c1)
+            table.insert(auction.autoBidConnections, c2)
+            table.insert(auction.autoBidConnections, c3)
+            table.insert(auction.autoBidConnections, c4)
+            table.insert(auction.autoBidConnections, c5)
+            table.insert(auction.autoBidConnections, c6)
+            table.insert(auction.autoBidConnections, c7)
         end
     end
-end)
 
-ScannerTab:CreateSection({ Name = "Auto Outbid (When Not Leading)" })
-
-ScannerTab:CreateToggle({
-    Name = "Auto Outbid All Lots",
-    CurrentValue = false,
-    Flag = "Toggle_AutoBidAll",
-    Callback = function(Value)
-        auction.autoBidAll = Value
-        if Value then
-            for _, lotName in ipairs(auction.lotNames) do
-                task.spawn(function() auction.checkAndAutoBidLot(lotName) end)
+    -- 1-second live countdown ticker and periodic outbid check
+    task.spawn(function()
+        while auction.autoBidLoopRunning do
+            task.wait(1)
+            auction.updateAllLotDisplays()
+            if auction.hasAnyAutoBidActive() then
+                for _, lotName in ipairs(auction.lotNames) do
+                    if auction.lotAutoBidEnabled(lotName) then
+                        auction.checkAndAutoBidLot(lotName)
+                    end
+                end
             end
         end
-    end,
-})
+    end)
 
-ScannerTab:CreateToggle({
-    Name = "Auto Outbid Unowned Skins",
-    CurrentValue = false,
-    Flag = "Toggle_AuctionAutoBidUnowned",
-    Callback = function(Value)
-        auction.autoBidUnowned = Value
-        if Value then
-            for _, lotName in ipairs(auction.lotNames) do
-                task.spawn(function() auction.checkAndAutoBidLot(lotName) end)
-            end
-        end
-    end,
-})
+    ScannerTab:CreateSection({ Name = "Auto Outbid (When Not Leading)" })
 
-for _, lotName in ipairs(auction.lotNames) do
     ScannerTab:CreateToggle({
-        Name = "Auto Outbid " .. lotName,
+        Name = "Auto Outbid All Lots",
         CurrentValue = false,
-        Flag = "Toggle_AutoBid_" .. lotName,
+        Flag = "Toggle_AutoBidAll",
         Callback = function(Value)
-            auction.autoBidActive[lotName] = Value
+            auction.autoBidAll = Value
             if Value then
-                task.spawn(function() auction.checkAndAutoBidLot(lotName) end)
+                for _, lotName in ipairs(auction.lotNames) do
+                    task.spawn(function() auction.checkAndAutoBidLot(lotName) end)
+                end
             end
         end,
     })
-end
 
-ScannerTab:CreateInput({
-    Name = "Max Auto Bid Limit (0 = Unlimited)",
-    CurrentValue = "",
-    PlaceholderText = "Enter max coins (e.g. 5000000 or 5m)",
-    RemoveTextAfterFocusLost = false,
-    Flag = "Input_MaxAutoBid",
-    Callback = function(Text)
-        local num = auction.parseAmount(Text) or 0
-        auction.maxAutoBidLimit = num
-        Window:Notify({
-            Title = "Limit Updated",
-            Content = num == 0 and "Max bid limit set to Unlimited." or ("Max bid limit set to: " .. formatNumber(num)),
-            Duration = 3
+    ScannerTab:CreateToggle({
+        Name = "Auto Outbid Unowned Skins",
+        CurrentValue = false,
+        Flag = "Toggle_AuctionAutoBidUnowned",
+        Callback = function(Value)
+            auction.autoBidUnowned = Value
+            if Value then
+                for _, lotName in ipairs(auction.lotNames) do
+                    task.spawn(function() auction.checkAndAutoBidLot(lotName) end)
+                end
+            end
+        end,
+    })
+
+    for _, lotName in ipairs(auction.lotNames) do
+        ScannerTab:CreateToggle({
+            Name = "Auto Outbid " .. lotName,
+            CurrentValue = false,
+            Flag = "Toggle_AutoBid_" .. lotName,
+            Callback = function(Value)
+                auction.autoBidActive[lotName] = Value
+                if Value then
+                    task.spawn(function() auction.checkAndAutoBidLot(lotName) end)
+                end
+            end,
         })
-    end,
-})
+    end
+
+    ScannerTab:CreateInput({
+        Name = "Max Auto Bid Limit (0 = Unlimited)",
+        CurrentValue = "",
+        PlaceholderText = "Enter max coins (e.g. 5000000 or 5m)",
+        RemoveTextAfterFocusLost = false,
+        Flag = "Input_MaxAutoBid",
+        Callback = function(Text)
+            local num = auction.parseAmount(Text) or 0
+            auction.maxAutoBidLimit = num
+            Window:Notify({
+                Title = "Limit Updated",
+                Content = num == 0 and "Max bid limit set to Unlimited." or ("Max bid limit set to: " .. formatNumber(num)),
+                Duration = 3
+            })
+        end,
+    })
+end
 
 -- ==========================
 -- TOWN AUCTION LOGIC & UI SETUP
@@ -7902,284 +7937,373 @@ function townAuction.updateAllCards()
     townAuction.updateInfoCard()
 end
 
-local townAuctionResultMessages = {
-    Purchased = "Purchased! Your item is being delivered.",
-    Accepted = "Your bid is now the highest.",
-    Listed = "Your exact item copy is listed.",
-    PurchaseSaving = "Your purchase is saving. It will not charge twice if you try again.",
-    Pending = "Confirmation is pending. Your funds or item remain reserved.",
-    Saving = "Saving your reservation. Please try again shortly.",
-    SlotOccupied = "That player auction spot was taken. Your item is being returned.",
-    InventoryFull = "There is no room for another copy of this item.",
-    OfferChanged = "That offer has changed. The current offers are shown below.",
-    AlreadyLeading = "You are already the highest bidder.",
-    BidTooLow = "A higher bid is required.",
-    UnequipRequired = "Unequip this item before listing it.",
-    Cancelled = "Listing cancelled. Your exact copy returns when your inventory has room.",
-    BidsAlreadyPlaced = "This listing already has bids and must finish its auction.",
-    ListingNotFound = "That listing has already finished. Your inventory is up to date.",
-    RoundBusy = "This round is busy. Please use another auction or wait for the next offer.",
-    DuplicateRequired = "You need a duplicate. Your first copy stays in your Closet.",
-    RarityNotEligible = "Player auctions accept Super Rare and Mythic duplicates only. Your first copy cannot be sold."
-}
+do
+    local townAuctionResultMessages = {
+        Purchased = "Purchased! Your item is being delivered.",
+        Accepted = "Your bid is now the highest.",
+        Listed = "Your exact item copy is listed.",
+        PurchaseSaving = "Your purchase is saving. It will not charge twice if you try again.",
+        Pending = "Confirmation is pending. Your funds or item remain reserved.",
+        Saving = "Saving your reservation. Please try again shortly.",
+        SlotOccupied = "That player auction spot was taken. Your item is being returned.",
+        InventoryFull = "There is no room for another copy of this item.",
+        OfferChanged = "That offer has changed. The current offers are shown below.",
+        AlreadyLeading = "You are already the highest bidder.",
+        BidTooLow = "A higher bid is required.",
+        UnequipRequired = "Unequip this item before listing it.",
+        Cancelled = "Listing cancelled. Your exact copy returns when your inventory has room.",
+        BidsAlreadyPlaced = "This listing already has bids and must finish its auction.",
+        ListingNotFound = "That listing has already finished. Your inventory is up to date.",
+        RoundBusy = "This round is busy. Please use another auction or wait for the next offer.",
+        DuplicateRequired = "You need a duplicate. Your first copy stays in your Closet.",
+        RarityNotEligible = "Player auctions accept Super Rare and Mythic duplicates only. Your first copy cannot be sold."
+    }
 
-function townAuction.handleSnapshotResult(res)
-    if not res or type(res) ~= "table" or not res.Ok then return end
-    townAuction.snapshot = res
-    townAuction.lastSnapshotTime = os.time()
-    townAuction.snapshotTimestamp = os.time()
-    townAuction.serverNow = res.Now or os.time()
-    townAuction.balance = res.Balance or 0
-    townAuction.currency = res.Currency or "MooBucks"
-    townAuction.taxBasisPoints = res.PlayerTaxBasisPoints or 1000
-    townAuction.deliveryHeld = res.DeliveryHeld or 0
-    townAuction.held = res.Held or 0
+    function townAuction.handleSnapshotResult(res)
+        if not res or type(res) ~= "table" or not res.Ok then return end
+        townAuction.snapshot = res
+        townAuction.lastSnapshotTime = os.time()
+        townAuction.snapshotTimestamp = os.time()
+        townAuction.serverNow = res.Now or os.time()
+        townAuction.balance = res.Balance or 0
+        townAuction.currency = res.Currency or "MooBucks"
+        townAuction.taxBasisPoints = res.PlayerTaxBasisPoints or 1000
+        townAuction.deliveryHeld = res.DeliveryHeld or 0
+        townAuction.held = res.Held or 0
 
-    table.clear(townAuction.lotsBySlot)
-    if type(res.Lots) == "table" then
-        for _, lot in ipairs(res.Lots) do
-            if lot.Slot then
-                local slotId = tostring(lot.Slot)
-                local roundStr = tostring(lot.Round or "")
-                if slotId == "BuyNow2" or string.find(roundStr, "BuyNow2") then
-                    townAuction.lotsBySlot["BuyNow2"] = lot
-                elseif slotId == "BuyNow" or slotId == "BuyNow1" or string.find(roundStr, "BuyNow_") or string.find(roundStr, "BuyNow1") then
-                    if not townAuction.lotsBySlot["BuyNow"] then
-                        townAuction.lotsBySlot["BuyNow"] = lot
-                        townAuction.lotsBySlot["BuyNow1"] = lot
-                    else
+        table.clear(townAuction.lotsBySlot)
+        if type(res.Lots) == "table" then
+            for _, lot in ipairs(res.Lots) do
+                if lot.Slot then
+                    local slotId = tostring(lot.Slot)
+                    local roundStr = tostring(lot.Round or "")
+                    if slotId == "BuyNow2" or string.find(roundStr, "BuyNow2") then
                         townAuction.lotsBySlot["BuyNow2"] = lot
+                    elseif slotId == "BuyNow" or slotId == "BuyNow1" or string.find(roundStr, "BuyNow_") or string.find(roundStr, "BuyNow1") then
+                        if not townAuction.lotsBySlot["BuyNow"] then
+                            townAuction.lotsBySlot["BuyNow"] = lot
+                            townAuction.lotsBySlot["BuyNow1"] = lot
+                        else
+                            townAuction.lotsBySlot["BuyNow2"] = lot
+                        end
+                    else
+                        townAuction.lotsBySlot[slotId] = lot
                     end
-                else
-                    townAuction.lotsBySlot[slotId] = lot
+                end
+            end
+        end
+
+        table.clear(townAuction.ownedCopies)
+        if type(res.Copies) == "table" then
+            for _, copy in ipairs(res.Copies) do
+                if copy.Id then
+                    townAuction.ownedCopies[copy.Id] = copy.OwnedCount or 1
+                end
+            end
+        end
+
+        townAuction.updateAllCards()
+
+        if townAuction.hasAnyAutoBidActive and townAuction.hasAnyAutoBidActive() then
+            for _, slotName in ipairs(townAuction.slots) do
+                if townAuction.slotAutoBidEnabled(slotName) then
+                    task.spawn(function() townAuction.checkAndAutoBidSlot(slotName) end)
                 end
             end
         end
     end
 
-    table.clear(townAuction.ownedCopies)
-    if type(res.Copies) == "table" then
-        for _, copy in ipairs(res.Copies) do
-            if copy.Id then
-                townAuction.ownedCopies[copy.Id] = copy.OwnedCount or 1
+    function townAuction.fetchSnapshot(isManual)
+        if townAuction.isFetching then return false end
+        townAuction.isFetching = true
+        local remote = townAuction.getRemote()
+        if not remote then
+            townAuction.isFetching = false
+            if isManual then
+                Window:Notify({ Title = "Error", Content = "CowTownAuctionRequest remote not found.", Duration = 4 })
             end
+            return false
         end
-    end
 
-    townAuction.updateAllCards()
+        local success, result = pcall(function()
+            return remote:InvokeServer({ Action = "Snapshot" })
+        end)
 
-    if townAuction.hasAnyAutoBidActive and townAuction.hasAnyAutoBidActive() then
-        for _, slotName in ipairs(townAuction.slots) do
-            if townAuction.slotAutoBidEnabled(slotName) then
-                task.spawn(function() townAuction.checkAndAutoBidSlot(slotName) end)
-            end
-        end
-    end
-end
-
-function townAuction.fetchSnapshot(isManual)
-    if townAuction.isFetching then return false end
-    townAuction.isFetching = true
-    local remote = townAuction.getRemote()
-    if not remote then
         townAuction.isFetching = false
-        if isManual then
-            Window:Notify({ Title = "Error", Content = "CowTownAuctionRequest remote not found.", Duration = 4 })
+
+        if success and type(result) == "table" and result.Ok then
+            townAuction.handleSnapshotResult(result)
+            if isManual then
+                Window:Notify({
+                    Title = "Snapshot Updated",
+                    Content = string.format("Balance: %s %s | Synced %d lots.", formatNumber(townAuction.balance), townAuction.currency, #townAuction.slots),
+                    Duration = 3
+                })
+            end
+            return true
+        else
+            if isManual then
+                local err = (type(result) == "table" and (result.Error or result.Message)) or tostring(result)
+                Window:Notify({ Title = "Fetch Failed", Content = tostring(err), Duration = 4 })
+            end
+            return false
         end
-        return false
     end
 
-    local success, result = pcall(function()
-        return remote:InvokeServer({ Action = "Snapshot" })
-    end)
+    function townAuction.parseAmount(input)
+        if not input then return nil end
+        local str = type(input) == "table" and (input.CurrentValue or input.Text or input[1]) or tostring(input)
+        str = str:gsub("%$", ""):gsub(",", ""):gsub("_", ""):gsub("%s+", "")
+        if str == "" then return nil end
 
-    townAuction.isFetching = false
-
-    if success and type(result) == "table" and result.Ok then
-        townAuction.handleSnapshotResult(result)
-        if isManual then
-            Window:Notify({
-                Title = "Snapshot Updated",
-                Content = string.format("Balance: %s %s | Synced %d lots.", formatNumber(townAuction.balance), townAuction.currency, #townAuction.slots),
-                Duration = 3
-            })
+        local mult = 1
+        local lower = str:lower()
+        if lower:sub(-1) == "k" then
+            mult = 1000
+            str = str:sub(1, -2)
+        elseif lower:sub(-1) == "m" then
+            mult = 1000000
+            str = str:sub(1, -2)
+        elseif lower:sub(-1) == "b" then
+            mult = 1000000000
+            str = str:sub(1, -2)
         end
-        return true
-    else
-        if isManual then
-            local err = (type(result) == "table" and (result.Error or result.Message)) or tostring(result)
-            Window:Notify({ Title = "Fetch Failed", Content = tostring(err), Duration = 4 })
+
+        local num = tonumber(str)
+        if num and num > 0 then
+            return math.floor(num * mult)
         end
-        return false
-    end
-end
-
-function townAuction.parseAmount(input)
-    if not input then return nil end
-    local str = type(input) == "table" and (input.CurrentValue or input.Text or input[1]) or tostring(input)
-    str = str:gsub("%$", ""):gsub(",", ""):gsub("_", ""):gsub("%s+", "")
-    if str == "" then return nil end
-
-    local mult = 1
-    local lower = str:lower()
-    if lower:sub(-1) == "k" then
-        mult = 1000
-        str = str:sub(1, -2)
-    elseif lower:sub(-1) == "m" then
-        mult = 1000000
-        str = str:sub(1, -2)
-    elseif lower:sub(-1) == "b" then
-        mult = 1000000000
-        str = str:sub(1, -2)
+        return nil
     end
 
-    local num = tonumber(str)
-    if num and num > 0 then
-        return math.floor(num * mult)
-    end
-    return nil
-end
+    function townAuction.findTextBox(slotName)
+        local parent = nil
+        if gethui then
+            pcall(function() parent = gethui() end)
+        end
+        if not parent then
+            pcall(function() parent = game:GetService("CoreGui") end)
+        end
+        if not parent and plr then
+            pcall(function() parent = plr:FindFirstChild("PlayerGui") end)
+        end
+        if not parent then return nil end
 
-function townAuction.findTextBox(slotName)
-    local parent = nil
-    if gethui then
-        pcall(function() parent = gethui() end)
-    end
-    if not parent then
-        pcall(function() parent = game:GetService("CoreGui") end)
-    end
-    if not parent and plr then
-        pcall(function() parent = plr:FindFirstChild("PlayerGui") end)
-    end
-    if not parent then return nil end
-
-    local searchPattern = "Bid Amount (" .. slotName .. ")"
-    for _, desc in ipairs(parent:GetDescendants()) do
-        if desc:IsA("TextBox") then
-            local p = desc.Parent
-            while p and p ~= parent do
-                local title = p:FindFirstChild("Title")
-                if title and title:IsA("TextLabel") and title.Text == searchPattern then
-                    return desc
+        local searchPattern = "Bid Amount (" .. slotName .. ")"
+        for _, desc in ipairs(parent:GetDescendants()) do
+            if desc:IsA("TextBox") then
+                local p = desc.Parent
+                while p and p ~= parent do
+                    local title = p:FindFirstChild("Title")
+                    if title and title:IsA("TextLabel") and title.Text == searchPattern then
+                        return desc
+                    end
+                    p = p.Parent
                 end
-                p = p.Parent
             end
         end
+        return nil
     end
-    return nil
-end
 
-function townAuction.resolveCustomAmount(slotName)
-    local val = townAuction.customBidAmounts[slotName]
-    if val and val > 0 then return val end
+    function townAuction.resolveCustomAmount(slotName)
+        local val = townAuction.customBidAmounts[slotName]
+        if val and val > 0 then return val end
 
-    local flagName = "Input_TownBid_" .. slotName
-    if Window and Window.Flags and Window.Flags[flagName] ~= nil then
-        val = townAuction.parseAmount(Window.Flags[flagName])
-        if val and val > 0 then
-            townAuction.customBidAmounts[slotName] = val
-            return val
+        local flagName = "Input_TownBid_" .. slotName
+        if Window and Window.Flags and Window.Flags[flagName] ~= nil then
+            val = townAuction.parseAmount(Window.Flags[flagName])
+            if val and val > 0 then
+                townAuction.customBidAmounts[slotName] = val
+                return val
+            end
         end
-    end
 
-    if Rayfield and Rayfield.Flags and Rayfield.Flags[flagName] ~= nil then
-        val = townAuction.parseAmount(Rayfield.Flags[flagName])
-        if val and val > 0 then
-            townAuction.customBidAmounts[slotName] = val
-            return val
+        if Rayfield and Rayfield.Flags and Rayfield.Flags[flagName] ~= nil then
+            val = townAuction.parseAmount(Rayfield.Flags[flagName])
+            if val and val > 0 then
+                townAuction.customBidAmounts[slotName] = val
+                return val
+            end
         end
-    end
 
-    local tb = townAuction.findTextBox(slotName)
-    if tb and tb.Text and tb.Text ~= "" then
-        val = townAuction.parseAmount(tb.Text)
-        if val and val > 0 then
-            townAuction.customBidAmounts[slotName] = val
-            return val
+        local tb = townAuction.findTextBox(slotName)
+        if tb and tb.Text and tb.Text ~= "" then
+            val = townAuction.parseAmount(tb.Text)
+            if val and val > 0 then
+                townAuction.customBidAmounts[slotName] = val
+                return val
+            end
         end
+
+        return nil
     end
 
-    return nil
-end
-
--- Slot is a candidate: toggled per slot / all, or unowned mode (ownership checked in checkAndAutoBidSlot)
-function townAuction.slotAutoBidEnabled(slotName)
-    return townAuction.autoBidAll or townAuction.autoBidActive[slotName] == true or townAuction.autoBidUnowned
-end
-
-function townAuction.hasAnyAutoBidActive()
-    if townAuction.autoBidAll or townAuction.autoBidUnowned then return true end
-    for _, active in pairs(townAuction.autoBidActive) do
-        if active then return true end
-    end
-    return false
-end
-
-function townAuction.checkAndAutoBidSlot(slotName)
-    local toggled = townAuction.autoBidAll or townAuction.autoBidActive[slotName] == true
-    if not (toggled or townAuction.autoBidUnowned) then return end
-
-    local remote = townAuction.getRemote()
-    if not remote then return end
-
-    local lot = townAuction.lotsBySlot[slotName]
-        or (slotName == "BuyNow" and townAuction.lotsBySlot["BuyNow1"])
-        or (slotName == "BuyNow1" and townAuction.lotsBySlot["BuyNow"])
-    local fitout = townAuction.getFitoutModel()
-    local model = fitout and (fitout:FindFirstChild(slotName)
-        or (slotName == "BuyNow" and fitout:FindFirstChild("BuyNow1"))
-        or (slotName == "BuyNow1" and fitout:FindFirstChild("BuyNow")))
-
-    local isEmpty = (lot and lot.Empty == true)
-        or (model and model:GetAttribute("TownAuctionEmpty") == true)
-    if isEmpty then return end
-
-    local itemId = (lot and lot.ItemId)
-        or (model and (model:GetAttribute("TownAuctionItemID") or model:GetAttribute("ItemId")))
-    if not itemId or itemId == "" or itemId == "N/A" then return end
-    -- Unowned mode bids only when the game confirms the cosmetic isn't owned (unknown never bids)
-    if not toggled and cosmetics.isOwned(itemId) ~= false then return end
-
-    local round = (lot and lot.Round)
-        or (model and (model:GetAttribute("TownAuctionRound") or model:GetAttribute("Round")))
-    if not round or round == "" or round == "N/A" then return end
-
-    local isBuyNow = string.find(slotName, "BuyNow") ~= nil
-    local price = (lot and lot.Price)
-        or (model and (model:GetAttribute("TownAuctionPrice") or model:GetAttribute("Price")))
-    local minBid = (lot and lot.Minimum)
-        or (model and (model:GetAttribute("TownAuctionMinimum") or model:GetAttribute("Minimum")))
-        or (price or 1)
-
-    local amount = isBuyNow and (price or minBid or 1) or (minBid or 1)
-    if not amount or type(amount) ~= "number" or amount <= 0 then return end
-
-    if townAuction.maxAutoBidLimit > 0 and amount > townAuction.maxAutoBidLimit then
-        return
+    -- Slot is a candidate: toggled per slot / all, or unowned mode (ownership checked in checkAndAutoBidSlot)
+    function townAuction.slotAutoBidEnabled(slotName)
+        return townAuction.autoBidAll or townAuction.autoBidActive[slotName] == true or townAuction.autoBidUnowned
     end
 
-    -- Check if we are already leading
-    local leaderName = (lot and lot.Leader) or (model and model:GetAttribute("Leader"))
-    local leaderId = (lot and lot.LeaderId) or (model and model:GetAttribute("LeaderId"))
-    local myDisplayName = tostring(plr:GetAttribute("DisplayName") or plr.DisplayName or plr.Name)
-    local myUsername = plr.Name
-    local myUserId = plr.UserId
-
-    if (leaderId and leaderId == myUserId)
-        or (leaderName and (leaderName == myDisplayName or leaderName == myUsername or leaderName == plr.DisplayName)) then
-        return
+    function townAuction.hasAnyAutoBidActive()
+        if townAuction.autoBidAll or townAuction.autoBidUnowned then return true end
+        for _, active in pairs(townAuction.autoBidActive) do
+            if active then return true end
+        end
+        return false
     end
 
-    -- Throttle to avoid duplicate rapid requests
-    local now = os.clock()
-    if townAuction.isAutoBiddingSlot[slotName] then return end
-    if townAuction.lastAutoBidTime[slotName] and (now - townAuction.lastAutoBidTime[slotName] < 1.5) then return end
+    function townAuction.checkAndAutoBidSlot(slotName)
+        local toggled = townAuction.autoBidAll or townAuction.autoBidActive[slotName] == true
+        if not (toggled or townAuction.autoBidUnowned) then return end
 
-    townAuction.isAutoBiddingSlot[slotName] = true
-    townAuction.lastAutoBidTime[slotName] = now
+        local remote = townAuction.getRemote()
+        if not remote then return end
 
-    task.spawn(function()
+        local lot = townAuction.lotsBySlot[slotName]
+            or (slotName == "BuyNow" and townAuction.lotsBySlot["BuyNow1"])
+            or (slotName == "BuyNow1" and townAuction.lotsBySlot["BuyNow"])
+        local fitout = townAuction.getFitoutModel()
+        local model = fitout and (fitout:FindFirstChild(slotName)
+            or (slotName == "BuyNow" and fitout:FindFirstChild("BuyNow1"))
+            or (slotName == "BuyNow1" and fitout:FindFirstChild("BuyNow")))
+
+        local isEmpty = (lot and lot.Empty == true)
+            or (model and model:GetAttribute("TownAuctionEmpty") == true)
+        if isEmpty then return end
+
+        local itemId = (lot and lot.ItemId)
+            or (model and (model:GetAttribute("TownAuctionItemID") or model:GetAttribute("ItemId")))
+        if not itemId or itemId == "" or itemId == "N/A" then return end
+        -- Unowned mode bids only when the game confirms the cosmetic isn't owned (unknown never bids)
+        if not toggled and cosmetics.isOwned(itemId) ~= false then return end
+
+        local round = (lot and lot.Round)
+            or (model and (model:GetAttribute("TownAuctionRound") or model:GetAttribute("Round")))
+        if not round or round == "" or round == "N/A" then return end
+
+        local isBuyNow = string.find(slotName, "BuyNow") ~= nil
+        local price = (lot and lot.Price)
+            or (model and (model:GetAttribute("TownAuctionPrice") or model:GetAttribute("Price")))
+        local minBid = (lot and lot.Minimum)
+            or (model and (model:GetAttribute("TownAuctionMinimum") or model:GetAttribute("Minimum")))
+            or (price or 1)
+
+        local amount = isBuyNow and (price or minBid or 1) or (minBid or 1)
+        if not amount or type(amount) ~= "number" or amount <= 0 then return end
+
+        if townAuction.maxAutoBidLimit > 0 and amount > townAuction.maxAutoBidLimit then
+            return
+        end
+
+        -- Check if we are already leading
+        local leaderName = (lot and lot.Leader) or (model and model:GetAttribute("Leader"))
+        local leaderId = (lot and lot.LeaderId) or (model and model:GetAttribute("LeaderId"))
+        local myDisplayName = tostring(plr:GetAttribute("DisplayName") or plr.DisplayName or plr.Name)
+        local myUsername = plr.Name
+        local myUserId = plr.UserId
+
+        if (leaderId and leaderId == myUserId)
+            or (leaderName and (leaderName == myDisplayName or leaderName == myUsername or leaderName == plr.DisplayName)) then
+            return
+        end
+
+        -- Throttle to avoid duplicate rapid requests
+        local now = os.clock()
+        if townAuction.isAutoBiddingSlot[slotName] then return end
+        if townAuction.lastAutoBidTime[slotName] and (now - townAuction.lastAutoBidTime[slotName] < 1.5) then return end
+
+        townAuction.isAutoBiddingSlot[slotName] = true
+        townAuction.lastAutoBidTime[slotName] = now
+
+        task.spawn(function()
+            local targetSlot = slotName == "BuyNow1" and "BuyNow" or slotName
+            local success, result = pcall(function()
+                if isBuyNow then
+                    return remote:InvokeServer({
+                        Round = round,
+                        Action = "Buy",
+                        Slot = targetSlot
+                    })
+                else
+                    return remote:InvokeServer({
+                        Slot = targetSlot,
+                        Round = round,
+                        Action = "Bid",
+                        Amount = amount
+                    })
+                end
+            end)
+
+            townAuction.isAutoBiddingSlot[slotName] = false
+
+            if success then
+                local isOk = (type(result) == "table" and result.Ok ~= false) or (result == true or result == nil)
+                local code = type(result) == "table" and result.Code
+                local translatedMsg = code and (townAuctionResultMessages[code] or code)
+
+                if isOk then
+                    local itemName = (lot and lot.Name)
+                        or (model and (model:GetAttribute("TownAuctionName") or model:GetAttribute("TownAuctionItemID")))
+                        or slotName
+                    local statusLine = translatedMsg and ("\n" .. translatedMsg) or ""
+                    Window:Notify({
+                        Title = isBuyNow and "Auto Buy Placed!" or "Auto Outbid Placed!",
+                        Content = string.format("%s (%s)\nAmount: 🪙 %s %s%s",
+                            slotName,
+                            tostring(itemName),
+                            formatNumber(amount),
+                            townAuction.currency,
+                            isBuyNow and statusLine or ("\nOutbidding: " .. tostring(leaderName or "None"))),
+                        Duration = 4
+                    })
+                    task.delay(0.5, function()
+                        townAuction.fetchSnapshot(false)
+                    end)
+                end
+            end
+        end)
+    end
+
+    function townAuction.executeBid(slotName, customAmount, forcePrice)
+        local remote = townAuction.getRemote()
+        if not remote then
+            Window:Notify({ Title = "Error", Content = "CowTownAuctionRequest remote not found.", Duration = 4 })
+            return false
+        end
+
+        local lot = townAuction.lotsBySlot[slotName]
+            or (slotName == "BuyNow" and townAuction.lotsBySlot["BuyNow1"])
+            or (slotName == "BuyNow1" and townAuction.lotsBySlot["BuyNow"])
+        local fitout = townAuction.getFitoutModel()
+        local model = fitout and (fitout:FindFirstChild(slotName)
+            or (slotName == "BuyNow" and fitout:FindFirstChild("BuyNow1"))
+            or (slotName == "BuyNow1" and fitout:FindFirstChild("BuyNow")))
+
+        local round = (lot and lot.Round)
+            or (model and (model:GetAttribute("TownAuctionRound") or model:GetAttribute("Round")))
+
+        local isBuyNow = string.find(slotName, "BuyNow") ~= nil
+        local price = (lot and lot.Price)
+            or (model and (model:GetAttribute("TownAuctionPrice") or model:GetAttribute("Price")))
+        local minAmount = (lot and (lot.Minimum or lot.Price))
+            or (model and (model:GetAttribute("TownAuctionMinimum") or model:GetAttribute("TownAuctionPrice") or model:GetAttribute("Minimum") or model:GetAttribute("Price")))
+            or 1
+
+        local amount
+        if forcePrice or (isBuyNow and not customAmount) then
+            amount = tonumber(price) or tonumber(minAmount) or 1
+        elseif customAmount then
+            amount = tonumber(customAmount) or 1
+        else
+            amount = tonumber(minAmount) or 1
+        end
+
+        if not round or round == "" or round == "N/A" then
+            Window:Notify({ Title = "Error", Content = slotName .. " has no active round.", Duration = 4 })
+            return false
+        end
+
         local targetSlot = slotName == "BuyNow1" and "BuyNow" or slotName
+
         local success, result = pcall(function()
             if isBuyNow then
                 return remote:InvokeServer({
@@ -8197,131 +8321,44 @@ function townAuction.checkAndAutoBidSlot(slotName)
             end
         end)
 
-        townAuction.isAutoBiddingSlot[slotName] = false
-
         if success then
             local isOk = (type(result) == "table" and result.Ok ~= false) or (result == true or result == nil)
+            local itemName = (lot and lot.Name)
+                or (model and (model:GetAttribute("TownAuctionName") or model:GetAttribute("TownAuctionItemID")))
+                or slotName
+
             local code = type(result) == "table" and result.Code
             local translatedMsg = code and (townAuctionResultMessages[code] or code)
 
             if isOk then
-                local itemName = (lot and lot.Name)
-                    or (model and (model:GetAttribute("TownAuctionName") or model:GetAttribute("TownAuctionItemID")))
-                    or slotName
+                local actionTitle = isBuyNow and "Purchase Placed!" or "Bid Placed!"
                 local statusLine = translatedMsg and ("\n" .. translatedMsg) or ""
                 Window:Notify({
-                    Title = isBuyNow and "Auto Buy Placed!" or "Auto Outbid Placed!",
-                    Content = string.format("%s (%s)\nAmount: 🪙 %s %s%s",
-                        slotName,
-                        tostring(itemName),
-                        formatNumber(amount),
-                        townAuction.currency,
-                        isBuyNow and statusLine or ("\nOutbidding: " .. tostring(leaderName or "None"))),
+                    Title = actionTitle,
+                    Content = string.format("%s (%s)\nAmount: 🪙 %s %s%s", slotName, tostring(itemName), formatNumber(amount), townAuction.currency, statusLine),
                     Duration = 4
                 })
                 task.delay(0.5, function()
                     townAuction.fetchSnapshot(false)
                 end)
+                return true
+            else
+                local errMsg = (type(result) == "table" and (translatedMsg or result.Error or result.Message or result.Reason)) or tostring(result)
+                Window:Notify({
+                    Title = isBuyNow and "Purchase Rejected" or "Bid Rejected",
+                    Content = string.format("%s: %s", slotName, tostring(errMsg)),
+                    Duration = 4
+                })
+                return false
             end
-        end
-    end)
-end
-
-function townAuction.executeBid(slotName, customAmount, forcePrice)
-    local remote = townAuction.getRemote()
-    if not remote then
-        Window:Notify({ Title = "Error", Content = "CowTownAuctionRequest remote not found.", Duration = 4 })
-        return false
-    end
-
-    local lot = townAuction.lotsBySlot[slotName]
-        or (slotName == "BuyNow" and townAuction.lotsBySlot["BuyNow1"])
-        or (slotName == "BuyNow1" and townAuction.lotsBySlot["BuyNow"])
-    local fitout = townAuction.getFitoutModel()
-    local model = fitout and (fitout:FindFirstChild(slotName)
-        or (slotName == "BuyNow" and fitout:FindFirstChild("BuyNow1"))
-        or (slotName == "BuyNow1" and fitout:FindFirstChild("BuyNow")))
-
-    local round = (lot and lot.Round)
-        or (model and (model:GetAttribute("TownAuctionRound") or model:GetAttribute("Round")))
-
-    local isBuyNow = string.find(slotName, "BuyNow") ~= nil
-    local price = (lot and lot.Price)
-        or (model and (model:GetAttribute("TownAuctionPrice") or model:GetAttribute("Price")))
-    local minAmount = (lot and (lot.Minimum or lot.Price))
-        or (model and (model:GetAttribute("TownAuctionMinimum") or model:GetAttribute("TownAuctionPrice") or model:GetAttribute("Minimum") or model:GetAttribute("Price")))
-        or 1
-
-    local amount
-    if forcePrice or (isBuyNow and not customAmount) then
-        amount = tonumber(price) or tonumber(minAmount) or 1
-    elseif customAmount then
-        amount = tonumber(customAmount) or 1
-    else
-        amount = tonumber(minAmount) or 1
-    end
-
-    if not round or round == "" or round == "N/A" then
-        Window:Notify({ Title = "Error", Content = slotName .. " has no active round.", Duration = 4 })
-        return false
-    end
-
-    local targetSlot = slotName == "BuyNow1" and "BuyNow" or slotName
-
-    local success, result = pcall(function()
-        if isBuyNow then
-            return remote:InvokeServer({
-                Round = round,
-                Action = "Buy",
-                Slot = targetSlot
-            })
         else
-            return remote:InvokeServer({
-                Slot = targetSlot,
-                Round = round,
-                Action = "Bid",
-                Amount = amount
-            })
-        end
-    end)
-
-    if success then
-        local isOk = (type(result) == "table" and result.Ok ~= false) or (result == true or result == nil)
-        local itemName = (lot and lot.Name)
-            or (model and (model:GetAttribute("TownAuctionName") or model:GetAttribute("TownAuctionItemID")))
-            or slotName
-
-        local code = type(result) == "table" and result.Code
-        local translatedMsg = code and (townAuctionResultMessages[code] or code)
-
-        if isOk then
-            local actionTitle = isBuyNow and "Purchase Placed!" or "Bid Placed!"
-            local statusLine = translatedMsg and ("\n" .. translatedMsg) or ""
             Window:Notify({
-                Title = actionTitle,
-                Content = string.format("%s (%s)\nAmount: 🪙 %s %s%s", slotName, tostring(itemName), formatNumber(amount), townAuction.currency, statusLine),
-                Duration = 4
-            })
-            task.delay(0.5, function()
-                townAuction.fetchSnapshot(false)
-            end)
-            return true
-        else
-            local errMsg = (type(result) == "table" and (translatedMsg or result.Error or result.Message or result.Reason)) or tostring(result)
-            Window:Notify({
-                Title = isBuyNow and "Purchase Rejected" or "Bid Rejected",
-                Content = string.format("%s: %s", slotName, tostring(errMsg)),
+                Title = isBuyNow and "Purchase Failed" or "Bid Failed",
+                Content = string.format("%s: %s", slotName, tostring(result)),
                 Duration = 4
             })
             return false
         end
-    else
-        Window:Notify({
-            Title = isBuyNow and "Purchase Failed" or "Bid Failed",
-            Content = string.format("%s: %s", slotName, tostring(result)),
-            Duration = 4
-        })
-        return false
     end
 end
 
@@ -8458,157 +8495,155 @@ function townAuction.setupSlotUI(tab, slotName)
 
     local isBuyNow = string.find(slotName, "BuyNow") ~= nil
     local btnName = isBuyNow and ("Buy Now (" .. slotName .. ")") or ("Bid Minimum / Next " .. slotName)
-    tab:CreateButton({
-        Name = btnName,
-        Callback = function()
-            townAuction.executeBid(slotName, nil, isBuyNow)
-        end,
-    })
+    do
+        local row = tab:CreateGroup()
+        row:CreateButton({
+            Name = btnName,
+            Callback = function()
+                townAuction.executeBid(slotName, nil, isBuyNow)
+            end,
+        })
 
-    tab:CreateButton({
-        Name = "Bid Custom Amount (" .. slotName .. ")",
-        Callback = function()
-            local custom = townAuction.resolveCustomAmount(slotName)
-            if not custom then
-                Window:Notify({ Title = "No Amount", Content = "Please enter an amount in the input above first.", Duration = 3 })
-                return
-            end
-            townAuction.executeBid(slotName, custom)
-        end,
-    })
+        row:CreateButton({
+            Name = "Bid Custom Amount (" .. slotName .. ")",
+            Callback = function()
+                local custom = townAuction.resolveCustomAmount(slotName)
+                if not custom then
+                    Window:Notify({ Title = "No Amount", Content = "Please enter an amount in the input above first.", Duration = 3 })
+                    return
+                end
+                townAuction.executeBid(slotName, custom)
+            end,
+        })
+    end
 end
 
 -- ==========================
 -- UI SETUP: Town Auction Tab
 -- ==========================
-local TownAuctionTab = Window:CreateTab({ Name = "Town Auction", Icon = 4483362458 })
+do
+    local TownAuctionTab = Window:CreateTab({ Name = "Town Auction", Icon = 4483362458 })
 
-TownAuctionTab:CreateSection({ Name = "Town Store & Live Controls" })
+    TownAuctionTab:CreateSection({ Name = "Town Store & Live Controls" })
 
-local initialInfoTitle = string.format("Town Auction Overview | 0 %s", townAuction.currency)
-local initialInfoBody = "Snapshot not loaded yet. Click 'Fetch Snapshot Now' below."
-if TownAuctionTab.CreateText then
-    pcall(function()
-        townAuction.infoCard = TownAuctionTab:CreateText({
-            name = initialInfoTitle,
-            text = initialInfoBody
-        })
-    end)
-end
-if not townAuction.infoCard and TownAuctionTab.CreateParagraph then
-    pcall(function()
-        townAuction.infoCard = TownAuctionTab:CreateParagraph({
-            Title = initialInfoTitle,
-            Content = initialInfoBody
-        })
-    end)
-end
+    local initialInfoTitle = string.format("Town Auction Overview | 0 %s", townAuction.currency)
+    local initialInfoBody = "Snapshot not loaded yet. Click 'Fetch Snapshot Now' below."
+    if TownAuctionTab.CreateText then
+        pcall(function()
+            townAuction.infoCard = TownAuctionTab:CreateText({
+                name = initialInfoTitle,
+                text = initialInfoBody
+            })
+        end)
+    end
+    if not townAuction.infoCard and TownAuctionTab.CreateParagraph then
+        pcall(function()
+            townAuction.infoCard = TownAuctionTab:CreateParagraph({
+                Title = initialInfoTitle,
+                Content = initialInfoBody
+            })
+        end)
+    end
 
-TownAuctionTab:CreateButton({
-    Name = "Fetch Snapshot Now",
-    Callback = function()
-        townAuction.fetchSnapshot(true)
-    end,
-})
+    TownAuctionTab:CreateButton({
+        Name = "Fetch Snapshot Now",
+        Callback = function()
+            townAuction.fetchSnapshot(true)
+        end,
+    })
 
-TownAuctionTab:CreateToggle({
-    Name = "Auto-Refresh Snapshot (5s)",
-    CurrentValue = false,
-    Flag = "Toggle_TownAutoRefresh",
-    Callback = function(Value)
-        if Value then
-            townAuction.startAutoRefresh()
-        else
-            townAuction.stopAutoRefresh()
-        end
-    end,
-})
-
-TownAuctionTab:CreateButton({
-    Name = "Teleport to Town Store (Buttercup Creamery)",
-    Callback = function()
-        townAuction.teleportToStore()
-    end,
-})
-
-TownAuctionTab:CreateSection({ Name = "Auto Outbid & Auto Buy (When Not Leading)" })
-
-TownAuctionTab:CreateToggle({
-    Name = "Auto Outbid / Buy All Lots",
-    CurrentValue = false,
-    Flag = "Toggle_TownAutoBidAll",
-    Callback = function(Value)
-        townAuction.autoBidAll = Value
-        if Value then
-            for _, slotName in ipairs(townAuction.slots) do
-                task.spawn(function() townAuction.checkAndAutoBidSlot(slotName) end)
-            end
-        end
-    end,
-})
-
-TownAuctionTab:CreateToggle({
-    Name = "Auto Outbid / Buy Unowned Lots",
-    CurrentValue = false,
-    Flag = "Toggle_TownAutoBidUnowned",
-    Callback = function(Value)
-        townAuction.autoBidUnowned = Value
-        if Value then
-            for _, slotName in ipairs(townAuction.slots) do
-                task.spawn(function() townAuction.checkAndAutoBidSlot(slotName) end)
-            end
-        end
-    end,
-})
-
-for _, slotName in ipairs(townAuction.slots) do
-    local isBuyNow = string.find(slotName, "BuyNow") ~= nil
-    local toggleName = isBuyNow and ("Auto Buy Now (" .. slotName .. ")") or ("Auto Outbid " .. slotName)
     TownAuctionTab:CreateToggle({
-        Name = toggleName,
+        Name = "Auto-Refresh Snapshot (5s)",
         CurrentValue = false,
-        Flag = "Toggle_TownAutoBid_" .. slotName,
+        Flag = "Toggle_TownAutoRefresh",
         Callback = function(Value)
-            townAuction.autoBidActive[slotName] = Value
             if Value then
-                task.spawn(function() townAuction.checkAndAutoBidSlot(slotName) end)
+                townAuction.startAutoRefresh()
+            else
+                townAuction.stopAutoRefresh()
             end
         end,
     })
-end
 
-TownAuctionTab:CreateInput({
-    Name = "Max Auto Bid Limit (0 = Unlimited)",
-    CurrentValue = "",
-    PlaceholderText = "Enter max MooBucks (e.g. 5000000 or 5m)",
-    RemoveTextAfterFocusLost = false,
-    Flag = "Input_TownMaxAutoBid",
-    Callback = function(Text)
-        local num = townAuction.parseAmount(Text) or 0
-        townAuction.maxAutoBidLimit = num
-        Window:Notify({
-            Title = "Limit Updated",
-            Content = num == 0 and "Max bid limit set to Unlimited." or ("Max bid limit set to: " .. formatNumber(num) .. " " .. townAuction.currency),
-            Duration = 3
+    TownAuctionTab:CreateSection({ Name = "Auto Outbid & Auto Buy (When Not Leading)" })
+
+    TownAuctionTab:CreateToggle({
+        Name = "Auto Outbid / Buy All Lots",
+        CurrentValue = false,
+        Flag = "Toggle_TownAutoBidAll",
+        Callback = function(Value)
+            townAuction.autoBidAll = Value
+            if Value then
+                for _, slotName in ipairs(townAuction.slots) do
+                    task.spawn(function() townAuction.checkAndAutoBidSlot(slotName) end)
+                end
+            end
+        end,
+    })
+
+    TownAuctionTab:CreateToggle({
+        Name = "Auto Outbid / Buy Unowned Lots",
+        CurrentValue = false,
+        Flag = "Toggle_TownAutoBidUnowned",
+        Callback = function(Value)
+            townAuction.autoBidUnowned = Value
+            if Value then
+                for _, slotName in ipairs(townAuction.slots) do
+                    task.spawn(function() townAuction.checkAndAutoBidSlot(slotName) end)
+                end
+            end
+        end,
+    })
+
+    for _, slotName in ipairs(townAuction.slots) do
+        local isBuyNow = string.find(slotName, "BuyNow") ~= nil
+        local toggleName = isBuyNow and ("Auto Buy Now (" .. slotName .. ")") or ("Auto Outbid " .. slotName)
+        TownAuctionTab:CreateToggle({
+            Name = toggleName,
+            CurrentValue = false,
+            Flag = "Toggle_TownAutoBid_" .. slotName,
+            Callback = function(Value)
+                townAuction.autoBidActive[slotName] = Value
+                if Value then
+                    task.spawn(function() townAuction.checkAndAutoBidSlot(slotName) end)
+                end
+            end,
         })
-    end,
-})
+    end
 
-TownAuctionTab:CreateSection({ Name = "Global Auction Lots" })
-townAuction.setupSlotUI(TownAuctionTab, "Global1")
-townAuction.setupSlotUI(TownAuctionTab, "Global2")
+    TownAuctionTab:CreateInput({
+        Name = "Max Auto Bid Limit (0 = Unlimited)",
+        CurrentValue = "",
+        PlaceholderText = "Enter max MooBucks (e.g. 5000000 or 5m)",
+        RemoveTextAfterFocusLost = false,
+        Flag = "Input_TownMaxAutoBid",
+        Callback = function(Text)
+            local num = townAuction.parseAmount(Text) or 0
+            townAuction.maxAutoBidLimit = num
+            Window:Notify({
+                Title = "Limit Updated",
+                Content = num == 0 and "Max bid limit set to Unlimited." or ("Max bid limit set to: " .. formatNumber(num) .. " " .. townAuction.currency),
+                Duration = 3
+            })
+        end,
+    })
 
-TownAuctionTab:CreateSection({ Name = "Server Auction Lots" })
-townAuction.setupSlotUI(TownAuctionTab, "Server2")
-townAuction.setupSlotUI(TownAuctionTab, "Server3")
+    TownAuctionTab:CreateSection({ Name = "Global Auction Lots" })
+    townAuction.setupSlotUI(TownAuctionTab, "Global1")
+    townAuction.setupSlotUI(TownAuctionTab, "Global2")
 
-TownAuctionTab:CreateSection({ Name = "Buy Now Store Lots" })
-townAuction.setupSlotUI(TownAuctionTab, "BuyNow")
-townAuction.setupSlotUI(TownAuctionTab, "BuyNow2")
+    TownAuctionTab:CreateSection({ Name = "Server Auction Lots" })
+    townAuction.setupSlotUI(TownAuctionTab, "Server2")
+    townAuction.setupSlotUI(TownAuctionTab, "Server3")
 
-TownAuctionTab:CreateSection({ Name = "Player Consignment Lots" })
-townAuction.setupSlotUI(TownAuctionTab, "Player1")
-townAuction.setupSlotUI(TownAuctionTab, "Player2")
+    TownAuctionTab:CreateSection({ Name = "Buy Now Store Lots" })
+    townAuction.setupSlotUI(TownAuctionTab, "BuyNow")
+    townAuction.setupSlotUI(TownAuctionTab, "BuyNow2")
+
+    TownAuctionTab:CreateSection({ Name = "Player Consignment Lots" })
+    townAuction.setupSlotUI(TownAuctionTab, "Player1")
+    townAuction.setupSlotUI(TownAuctionTab, "Player2")
+end
 
 townAuction.initWorkspaceListeners()
 townAuction.initOwnershipListener()
@@ -8822,29 +8857,32 @@ function rafting.getRaftDeck()
 end
 
 local FjordZones
-local FjordContentConfig
-pcall(function()
-    local cg = game:GetService("ReplicatedStorage"):FindFirstChild("CowGame")
-    local shared = cg and cg:FindFirstChild("Shared")
-    local fzMod = shared and shared:FindFirstChild("FjordZones")
-    if fzMod and fzMod:IsA("ModuleScript") then
-        FjordZones = require(fzMod)
-    end
-    local fccMod = shared and shared:FindFirstChild("FjordContentConfig")
-    if fccMod and fccMod:IsA("ModuleScript") then
-        FjordContentConfig = require(fccMod)
-    end
-end)
+local getFjordLevel
+do
+    local FjordContentConfig
+    pcall(function()
+        local cg = game:GetService("ReplicatedStorage"):FindFirstChild("CowGame")
+        local shared = cg and cg:FindFirstChild("Shared")
+        local fzMod = shared and shared:FindFirstChild("FjordZones")
+        if fzMod and fzMod:IsA("ModuleScript") then
+            FjordZones = require(fzMod)
+        end
+        local fccMod = shared and shared:FindFirstChild("FjordContentConfig")
+        if fccMod and fccMod:IsA("ModuleScript") then
+            FjordContentConfig = require(fccMod)
+        end
+    end)
 
-local function getFjordLevel(posX)
-    if FjordContentConfig and FjordContentConfig.Level then
-        local lvl = FjordContentConfig.Level(posX)
-        if lvl then return lvl end
+    function getFjordLevel(posX)
+        if FjordContentConfig and FjordContentConfig.Level then
+            local lvl = FjordContentConfig.Level(posX)
+            if lvl then return lvl end
+        end
+        if posX < 1350 then return 1
+        elseif posX < 2650 then return 2
+        elseif posX < 4100 then return 3
+        else return 4 end
     end
-    if posX < 1350 then return 1
-    elseif posX < 2650 then return 2
-    elseif posX < 4100 then return 3
-    else return 4 end
 end
 
 local function getHarbourZ(posX)
@@ -9099,844 +9137,851 @@ getReachIndex = function(posX)
     return rd.maxReach
 end
 
-local reachChannelZ = {
-    [1] = { -37.81 },
-    [2] = { -262.81, -37.81, 187.19 },
-    [3] = { -487.81, -262.81, -37.81, 412.19 },
-    [4] = { -712.81, -487.81, -37.81, 412.19, 637.19 },
-    [5] = { -937.81, -487.81, -37.81, 187.19, 412.19, 862.19 },
-    [6] = { -1162.81, -937.81, -487.81, -37.81, 412.19, 862.19, 1087.19 },
-    [7] = { -1387.81, -937.81, -487.81, -37.81, 412.19, 862.19, 1312.19 },
-}
+local getDownstreamChannelZ, zoneSites, siteZoneMap, siteCorridors
+do
+    local reachChannelZ = {
+        [1] = { -37.81 },
+        [2] = { -262.81, -37.81, 187.19 },
+        [3] = { -487.81, -262.81, -37.81, 412.19 },
+        [4] = { -712.81, -487.81, -37.81, 412.19, 637.19 },
+        [5] = { -937.81, -487.81, -37.81, 187.19, 412.19, 862.19 },
+        [6] = { -1162.81, -937.81, -487.81, -37.81, 412.19, 862.19, 1087.19 },
+        [7] = { -1387.81, -937.81, -487.81, -37.81, 412.19, 862.19, 1312.19 },
+    }
 
-function rafting.findChannel(reachIdx, nominalChZ)
-    if not (FjordZones and FjordZones.Channels and nominalChZ) then return nil end
-    local bestCh = nil
-    local minDiff = 40
-    for _, ch in ipairs(FjordZones.Channels) do
-        if ch[7] == reachIdx then
-            local diff = math.abs(ch[2] - nominalChZ)
-            if diff < minDiff then
-                minDiff = diff
-                bestCh = ch
+    function rafting.findChannel(reachIdx, nominalChZ)
+        if not (FjordZones and FjordZones.Channels and nominalChZ) then return nil end
+        local bestCh = nil
+        local minDiff = 40
+        for _, ch in ipairs(FjordZones.Channels) do
+            if ch[7] == reachIdx then
+                local diff = math.abs(ch[2] - nominalChZ)
+                if diff < minDiff then
+                    minDiff = diff
+                    bestCh = ch
+                end
             end
         end
+        return bestCh
     end
-    return bestCh
-end
 
-function rafting.getChannelCenterZ(reachIdx, nominalChZ, posX)
-    if not nominalChZ then return -37.81 end
-    local ch = rafting.findChannel(reachIdx, nominalChZ)
-    if ch then
-        local dirX = ch[3] or 1
-        local dirZ = ch[4] or 0
-        if math.abs(dirX) > 0.01 and math.abs(dirZ) > 0.001 and posX then
-            return ch[2] + (dirZ / dirX) * (posX - ch[1])
+    function rafting.getChannelCenterZ(reachIdx, nominalChZ, posX)
+        if not nominalChZ then return -37.81 end
+        local ch = rafting.findChannel(reachIdx, nominalChZ)
+        if ch then
+            local dirX = ch[3] or 1
+            local dirZ = ch[4] or 0
+            if math.abs(dirX) > 0.01 and math.abs(dirZ) > 0.001 and posX then
+                return ch[2] + (dirZ / dirX) * (posX - ch[1])
+            end
+            return ch[2]
         end
-        return ch[2]
-    end
-    return nominalChZ
-end
-
--- Centre line the raft should follow on a route. Differs from the geometric centre in two places:
--- * Crossovers overlap the middle channel before they cross it, so hold the middle until the crossing.
--- * Diagonals leave a fork from the same centre as the straight branch, so start on the branch's own
---   side and ease back, putting the hull on the correct side of the divider before it begins.
-function rafting.getRouteCenterZ(reachIdx, nominalChZ, posX)
-    local center = rafting.getChannelCenterZ(reachIdx, nominalChZ, posX)
-    local ch = rafting.findChannel(reachIdx, nominalChZ)
-    local dirZ = ch and ch[4] or 0
-    if math.abs(dirZ) < 0.001 then return center end
-
-    if type(ch[8]) == "string" then
-        local middleZ = (FjordZones and FjordZones.CenterlineZ) or -37.81
-        return if dirZ < 0 then math.min(center, middleZ) else math.max(center, middleZ)
+        return nominalChZ
     end
 
-    local prevForkX = reachIdx > 1 and getReachData().forkX[reachIdx - 1]
-    if prevForkX and posX then
-        local past = posX - prevForkX
-        if past >= -0.5 and past < 200 then
-            local side = if dirZ < 0 then -25 else 25
-            return center + side * (1 - math.max(past, 0) / 200)
+    -- Centre line the raft should follow on a route. Differs from the geometric centre in two places:
+    -- * Crossovers overlap the middle channel before they cross it, so hold the middle until the crossing.
+    -- * Diagonals leave a fork from the same centre as the straight branch, so start on the branch's own
+    --   side and ease back, putting the hull on the correct side of the divider before it begins.
+    function rafting.getRouteCenterZ(reachIdx, nominalChZ, posX)
+        local center = rafting.getChannelCenterZ(reachIdx, nominalChZ, posX)
+        local ch = rafting.findChannel(reachIdx, nominalChZ)
+        local dirZ = ch and ch[4] or 0
+        if math.abs(dirZ) < 0.001 then return center end
+
+        if type(ch[8]) == "string" then
+            local middleZ = (FjordZones and FjordZones.CenterlineZ) or -37.81
+            return if dirZ < 0 then math.min(center, middleZ) else math.max(center, middleZ)
         end
-    end
-    return center
-end
 
--- Channel the raft is physically in. Uses the nearest route centre rather than FjordZones.ChannelAt,
--- which returns the first overlapping rectangle and so picks the north branch at every fork.
--- Returns axisX, axisZ, cross-channel offset, along-channel offset; a straight +X axis outside a channel.
-function rafting.channelFrame(posX, posZ)
-    local chZ, reachIdx = rafting.getCurrentChannel(posX, posZ)
-    local ch = rafting.findChannel(reachIdx, chZ)
-    if ch then
-        local dx = posX - ch[1]
-        local dz = posZ - ch[2]
-        local along = dx * ch[3] + dz * ch[4]
-        local cross = -dx * ch[4] + dz * ch[3]
-        if math.abs(along) <= ch[5] + 10 and math.abs(cross) <= ch[6] + 10 then
-            return ch[3], ch[4], cross, along
+        local prevForkX = reachIdx > 1 and getReachData().forkX[reachIdx - 1]
+        if prevForkX and posX then
+            local past = posX - prevForkX
+            if past >= -0.5 and past < 200 then
+                local side = if dirZ < 0 then -25 else 25
+                return center + side * (1 - math.max(past, 0) / 200)
+            end
         end
+        return center
     end
-    return 1, 0, nil, nil
-end
 
-function rafting.getCurrentChannel(posX, posZ)
-    local reachIdx = getReachIndex(posX)
-    local channels = reachChannelZ[reachIdx] or { -37.81 }
-    local bestZ = channels[1]
-    local minDiff = math.huge
-    local z = posZ or -37.81
-    local middleZ = (FjordZones and FjordZones.CenterlineZ) or -37.81
-    for _, chZ in ipairs(channels) do
-        -- A crossover overlaps the middle channel, so a raft inside the middle channel is in the middle channel
+    -- Channel the raft is physically in. Uses the nearest route centre rather than FjordZones.ChannelAt,
+    -- which returns the first overlapping rectangle and so picks the north branch at every fork.
+    -- Returns axisX, axisZ, cross-channel offset, along-channel offset; a straight +X axis outside a channel.
+    function rafting.channelFrame(posX, posZ)
+        local chZ, reachIdx = rafting.getCurrentChannel(posX, posZ)
         local ch = rafting.findChannel(reachIdx, chZ)
-        local isCrossover = ch and type(ch[8]) == "string"
-        if not (isCrossover and math.abs(z - middleZ) <= 54.65) then
-            local centerZ = rafting.getRouteCenterZ(reachIdx, chZ, posX)
-            local diff = math.abs(centerZ - z)
+        if ch then
+            local dx = posX - ch[1]
+            local dz = posZ - ch[2]
+            local along = dx * ch[3] + dz * ch[4]
+            local cross = -dx * ch[4] + dz * ch[3]
+            if math.abs(along) <= ch[5] + 10 and math.abs(cross) <= ch[6] + 10 then
+                return ch[3], ch[4], cross, along
+            end
+        end
+        return 1, 0, nil, nil
+    end
+
+    function rafting.getCurrentChannel(posX, posZ)
+        local reachIdx = getReachIndex(posX)
+        local channels = reachChannelZ[reachIdx] or { -37.81 }
+        local bestZ = channels[1]
+        local minDiff = math.huge
+        local z = posZ or -37.81
+        local middleZ = (FjordZones and FjordZones.CenterlineZ) or -37.81
+        for _, chZ in ipairs(channels) do
+            -- A crossover overlaps the middle channel, so a raft inside the middle channel is in the middle channel
+            local ch = rafting.findChannel(reachIdx, chZ)
+            local isCrossover = ch and type(ch[8]) == "string"
+            if not (isCrossover and math.abs(z - middleZ) <= 54.65) then
+                local centerZ = rafting.getRouteCenterZ(reachIdx, chZ, posX)
+                local diff = math.abs(centerZ - z)
+                if diff < minDiff then
+                    minDiff = diff
+                    bestZ = chZ
+                end
+            end
+        end
+        return bestZ, reachIdx
+    end
+
+    local channelTransitions = {
+        [1] = {
+            [-37.81] = { -262.81, -37.81, 187.19 },
+        },
+        [2] = {
+            [-262.81] = { -487.81 },
+            [-37.81]  = { -262.81, -37.81 },
+            [187.19]  = { 412.19 },
+        },
+        [3] = {
+            [-487.81] = { -712.81, -487.81 },
+            [-262.81] = { -712.81, -487.81 },
+            [-37.81]  = { -37.81 },
+            [412.19]  = { 412.19, 637.19 },
+        },
+        [4] = {
+            [-712.81] = { -937.81 },
+            [-487.81] = { -487.81 },
+            [-37.81]  = { -37.81, 187.19 },
+            [412.19]  = { 412.19 },
+            [637.19]  = { 862.19 },
+        },
+        [5] = {
+            [-937.81] = { -1162.81, -937.81 },
+            [-487.81] = { -487.81 },
+            [-37.81]  = { -37.81 },
+            [187.19]  = { 412.19 },
+            [412.19]  = { 412.19 },
+            [862.19]  = { 862.19, 1087.19 },
+        },
+        [6] = {
+            [-1162.81] = { -1387.81 },
+            [-937.81]  = { -937.81 },
+            [-487.81]  = { -487.81 },
+            [-37.81]   = { -37.81 },
+            [412.19]   = { 412.19 },
+            [862.19]   = { 862.19 },
+            [1087.19]  = { 1312.19 },
+        },
+    }
+
+    local pipelineCorridors = {
+        ["North"]    = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -487.81, [5] = -487.81, [6] = -487.81, [7] = -487.81 },
+        ["NorthFar"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -937.81, [7] = -937.81 },
+        ["South"]    = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 412.19,  [5] = 412.19,  [6] = 412.19,  [7] = 412.19 },
+        ["SouthFar"] = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 637.19,  [5] = 862.19,  [6] = 1087.19,  [7] = 1312.19 },
+        ["Center"]   = { [1] = -37.81, [2] = -37.81,  [3] = -37.81,  [4] = -37.81,  [5] = -37.81,  [6] = -37.81,   [7] = -37.81 },
+    }
+
+    function rafting.selectOptimalPipeline()
+        local route = rafting.route or "Hybrid Dynamic Explorer"
+        if route:find("Fast Sea") or route:find("Center") then
+            return "Center"
+        elseif route:find("Leftmost") then
+            return "NorthFar"
+        elseif route:find("North Channels") then
+            return "North"
+        elseif route:find("South Channels") then
+            return "South"
+        end
+
+        local northCount = 0
+        local southCount = 0
+        local wantsFarNorth = false
+        local wantsFarSouth = false
+
+        local sitesToScan = rafting.allSites or clearingSites or {}
+        for _, site in ipairs(sitesToScan) do
+            if rafting.isSiteSelected(site) then
+                local shoreZ = site.ShoreZ or (site.Mouth and site.Mouth.Z) or -37.81
+                if shoreZ < -100 then
+                    northCount = northCount + 1
+                    if shoreZ < -700 then
+                        wantsFarNorth = true
+                    end
+                elseif shoreZ > 50 then
+                    southCount = southCount + 1
+                    if shoreZ > 700 then
+                        wantsFarSouth = true
+                    end
+                end
+            end
+        end
+
+        if northCount >= southCount and northCount > 0 then
+            return if wantsFarNorth then "NorthFar" else "North"
+        elseif southCount > 0 then
+            return if wantsFarSouth then "SouthFar" else "South"
+        end
+
+        return "North"
+    end
+
+    function getDownstreamChannelZ(reachIdx, curChZ, prefRoute)
+        local rTrans = channelTransitions[reachIdx]
+        if not rTrans then return curChZ end
+        local validNext = nil
+        local minDiff = 40
+        for keyZ, list in pairs(rTrans) do
+            local diff = math.abs(keyZ - curChZ)
             if diff < minDiff then
                 minDiff = diff
-                bestZ = chZ
+                validNext = list
             end
         end
-    end
-    return bestZ, reachIdx
-end
+        if not validNext or #validNext == 0 then return curChZ end
+        if #validNext == 1 then return validNext[1] end
 
-local channelTransitions = {
-    [1] = {
-        [-37.81] = { -262.81, -37.81, 187.19 },
-    },
-    [2] = {
-        [-262.81] = { -487.81 },
-        [-37.81]  = { -262.81, -37.81 },
-        [187.19]  = { 412.19 },
-    },
-    [3] = {
-        [-487.81] = { -712.81, -487.81 },
-        [-262.81] = { -712.81, -487.81 },
-        [-37.81]  = { -37.81 },
-        [412.19]  = { 412.19, 637.19 },
-    },
-    [4] = {
-        [-712.81] = { -937.81 },
-        [-487.81] = { -487.81 },
-        [-37.81]  = { -37.81, 187.19 },
-        [412.19]  = { 412.19 },
-        [637.19]  = { 862.19 },
-    },
-    [5] = {
-        [-937.81] = { -1162.81, -937.81 },
-        [-487.81] = { -487.81 },
-        [-37.81]  = { -37.81 },
-        [187.19]  = { 412.19 },
-        [412.19]  = { 412.19 },
-        [862.19]  = { 862.19, 1087.19 },
-    },
-    [6] = {
-        [-1162.81] = { -1387.81 },
-        [-937.81]  = { -937.81 },
-        [-487.81]  = { -487.81 },
-        [-37.81]   = { -37.81 },
-        [412.19]   = { 412.19 },
-        [862.19]   = { 862.19 },
-        [1087.19]  = { 1312.19 },
-    },
-}
-
-local pipelineCorridors = {
-    ["North"]    = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -487.81, [5] = -487.81, [6] = -487.81, [7] = -487.81 },
-    ["NorthFar"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -937.81, [7] = -937.81 },
-    ["South"]    = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 412.19,  [5] = 412.19,  [6] = 412.19,  [7] = 412.19 },
-    ["SouthFar"] = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 637.19,  [5] = 862.19,  [6] = 1087.19,  [7] = 1312.19 },
-    ["Center"]   = { [1] = -37.81, [2] = -37.81,  [3] = -37.81,  [4] = -37.81,  [5] = -37.81,  [6] = -37.81,   [7] = -37.81 },
-}
-
-function rafting.selectOptimalPipeline()
-    local route = rafting.route or "Hybrid Dynamic Explorer"
-    if route:find("Fast Sea") or route:find("Center") then
-        return "Center"
-    elseif route:find("Leftmost") then
-        return "NorthFar"
-    elseif route:find("North Channels") then
-        return "North"
-    elseif route:find("South Channels") then
-        return "South"
-    end
-
-    local northCount = 0
-    local southCount = 0
-    local wantsFarNorth = false
-    local wantsFarSouth = false
-
-    local sitesToScan = rafting.allSites or clearingSites or {}
-    for _, site in ipairs(sitesToScan) do
-        if rafting.isSiteSelected(site) then
-            local shoreZ = site.ShoreZ or (site.Mouth and site.Mouth.Z) or -37.81
-            if shoreZ < -100 then
-                northCount = northCount + 1
-                if shoreZ < -700 then
-                    wantsFarNorth = true
-                end
-            elseif shoreZ > 50 then
-                southCount = southCount + 1
-                if shoreZ > 700 then
-                    wantsFarSouth = true
+        local pipeline = rafting.selectOptimalPipeline()
+        local pCorr = pipelineCorridors[pipeline] or pipelineCorridors["North"]
+        local nextReach = reachIdx + 1
+        if pCorr and pCorr[nextReach] then
+            local targetPZ = pCorr[nextReach]
+            local bestPZ = validNext[1]
+            local minPDiff = math.huge
+            for _, z in ipairs(validNext) do
+                local diff = math.abs(z - targetPZ)
+                if diff < minPDiff then
+                    minPDiff = diff
+                    bestPZ = z
                 end
             end
+            return bestPZ
         end
-    end
 
-    if northCount >= southCount and northCount > 0 then
-        return if wantsFarNorth then "NorthFar" else "North"
-    elseif southCount > 0 then
-        return if wantsFarSouth then "SouthFar" else "South"
-    end
-
-    return "North"
-end
-
-local function getDownstreamChannelZ(reachIdx, curChZ, prefRoute)
-    local rTrans = channelTransitions[reachIdx]
-    if not rTrans then return curChZ end
-    local validNext = nil
-    local minDiff = 40
-    for keyZ, list in pairs(rTrans) do
-        local diff = math.abs(keyZ - curChZ)
-        if diff < minDiff then
-            minDiff = diff
-            validNext = list
-        end
-    end
-    if not validNext or #validNext == 0 then return curChZ end
-    if #validNext == 1 then return validNext[1] end
-
-    local pipeline = rafting.selectOptimalPipeline()
-    local pCorr = pipelineCorridors[pipeline] or pipelineCorridors["North"]
-    local nextReach = reachIdx + 1
-    if pCorr and pCorr[nextReach] then
-        local targetPZ = pCorr[nextReach]
-        local bestPZ = validNext[1]
-        local minPDiff = math.huge
-        for _, z in ipairs(validNext) do
-            local diff = math.abs(z - targetPZ)
-            if diff < minPDiff then
-                minPDiff = diff
-                bestPZ = z
+        local r = prefRoute or rafting.route or ""
+        if r:find("Leftmost") or r:find("North") or r:find("Left") then
+            local minZ = math.huge
+            for _, z in ipairs(validNext) do
+                if z < minZ then minZ = z end
             end
-        end
-        return bestPZ
-    end
-
-    local r = prefRoute or rafting.route or ""
-    if r:find("Leftmost") or r:find("North") or r:find("Left") then
-        local minZ = math.huge
-        for _, z in ipairs(validNext) do
-            if z < minZ then minZ = z end
-        end
-        return minZ
-    elseif r:find("South") or r:find("Right") then
-        local maxZ = -math.huge
-        for _, z in ipairs(validNext) do
-            if z > maxZ then maxZ = z end
-        end
-        return maxZ
-    else
-        local bestNext = validNext[1]
-        local closestDiff = math.huge
-        for _, z in ipairs(validNext) do
-            local diff = math.abs(z - curChZ)
-            if diff < closestDiff then
-                closestDiff = diff
-                bestNext = z
+            return minZ
+        elseif r:find("South") or r:find("Right") then
+            local maxZ = -math.huge
+            for _, z in ipairs(validNext) do
+                if z > maxZ then maxZ = z end
             end
-        end
-        return bestNext
-    end
-end
-
-local function getReachableChannelsInReach(curReach, curChZ, targetReach)
-    local currentSet = { [curChZ] = true }
-    if curReach >= targetReach then
-        return currentSet
-    end
-    for r = curReach, targetReach - 1 do
-        local nextSet = {}
-        local rTransitions = channelTransitions[r]
-        if rTransitions then
-            for chZ in pairs(currentSet) do
-                local matchedTrans = nil
-                local minDiff = 40
-                for transKey, targets in pairs(rTransitions) do
-                    local diff = math.abs(transKey - chZ)
-                    if diff < minDiff then
-                        minDiff = diff
-                        matchedTrans = targets
-                    end
-                end
-                if matchedTrans then
-                    for _, nextZ in ipairs(matchedTrans) do
-                        nextSet[nextZ] = true
-                    end
+            return maxZ
+        else
+            local bestNext = validNext[1]
+            local closestDiff = math.huge
+            for _, z in ipairs(validNext) do
+                local diff = math.abs(z - curChZ)
+                if diff < closestDiff then
+                    closestDiff = diff
+                    bestNext = z
                 end
             end
+            return bestNext
         end
-        if not next(nextSet) then
+    end
+
+    local function getReachableChannelsInReach(curReach, curChZ, targetReach)
+        local currentSet = { [curChZ] = true }
+        if curReach >= targetReach then
             return currentSet
         end
-        currentSet = nextSet
+        for r = curReach, targetReach - 1 do
+            local nextSet = {}
+            local rTransitions = channelTransitions[r]
+            if rTransitions then
+                for chZ in pairs(currentSet) do
+                    local matchedTrans = nil
+                    local minDiff = 40
+                    for transKey, targets in pairs(rTransitions) do
+                        local diff = math.abs(transKey - chZ)
+                        if diff < minDiff then
+                            minDiff = diff
+                            matchedTrans = targets
+                        end
+                    end
+                    if matchedTrans then
+                        for _, nextZ in ipairs(matchedTrans) do
+                            nextSet[nextZ] = true
+                        end
+                    end
+                end
+            end
+            if not next(nextSet) then
+                return currentSet
+            end
+            currentSet = nextSet
+        end
+        return currentSet
     end
-    return currentSet
-end
 
-local zoneSites = {
-    [1] = { "Clearing_01", "Cave_Cubby02", "Cave_Cubby01", "Clearing_02" },
-    [2] = { "Clearing_03", "Cave_Cubby03", "Clearing_04" },
-    [3] = { "Clearing_05", "Clearing_07", "Clearing_06", "Cave_Cubby04", "Clearing_08" },
-    [4] = { "Clearing_09", "Cave_11", "Clearing_10", "Cave_12", "Cave_Cubby05" },
-}
+    zoneSites = {
+        [1] = { "Clearing_01", "Cave_Cubby02", "Cave_Cubby01", "Clearing_02" },
+        [2] = { "Clearing_03", "Cave_Cubby03", "Clearing_04" },
+        [3] = { "Clearing_05", "Clearing_07", "Clearing_06", "Cave_Cubby04", "Clearing_08" },
+        [4] = { "Clearing_09", "Cave_11", "Clearing_10", "Cave_12", "Cave_Cubby05" },
+    }
 
-local siteZoneMap = {
-    ["Clearing_01"] = 1, ["Cave_Cubby02"] = 1, ["Cave_Cubby01"] = 1, ["Clearing_02"] = 1,
-    ["Clearing_03"] = 2, ["Cave_Cubby03"] = 2, ["Clearing_04"] = 2,
-    ["Clearing_05"] = 3, ["Clearing_07"] = 3, ["Clearing_06"] = 3, ["Cave_Cubby04"] = 3, ["Clearing_08"] = 3,
-    ["Clearing_09"] = 4, ["Cave_11"] = 4, ["Clearing_10"] = 4, ["Cave_12"] = 4, ["Cave_Cubby05"] = 4,
-}
+    siteZoneMap = {
+        ["Clearing_01"] = 1, ["Cave_Cubby02"] = 1, ["Cave_Cubby01"] = 1, ["Clearing_02"] = 1,
+        ["Clearing_03"] = 2, ["Cave_Cubby03"] = 2, ["Clearing_04"] = 2,
+        ["Clearing_05"] = 3, ["Clearing_07"] = 3, ["Clearing_06"] = 3, ["Cave_Cubby04"] = 3, ["Clearing_08"] = 3,
+        ["Clearing_09"] = 4, ["Cave_11"] = 4, ["Clearing_10"] = 4, ["Cave_12"] = 4, ["Cave_Cubby05"] = 4,
+    }
 
-local siteReach = {
-    ["Clearing_01"] = 1, ["Cave_Cubby02"] = 1, ["Clearing_02"] = 1, ["Cave_Cubby01"] = 1,
-    ["Clearing_03"] = 3, ["Cave_Cubby03"] = 3, ["Clearing_04"] = 3,
-    ["Clearing_05"] = 5, ["Clearing_06"] = 5, ["Cave_Cubby04"] = 5, ["Clearing_07"] = 5, ["Clearing_08"] = 5,
-    ["Cave_11"] = 7, ["Clearing_09"] = 7, ["Clearing_10"] = 7, ["Cave_Cubby05"] = 7, ["Cave_12"] = 7,
-}
+    local siteReach = {
+        ["Clearing_01"] = 1, ["Cave_Cubby02"] = 1, ["Clearing_02"] = 1, ["Cave_Cubby01"] = 1,
+        ["Clearing_03"] = 3, ["Cave_Cubby03"] = 3, ["Clearing_04"] = 3,
+        ["Clearing_05"] = 5, ["Clearing_06"] = 5, ["Cave_Cubby04"] = 5, ["Clearing_07"] = 5, ["Clearing_08"] = 5,
+        ["Cave_11"] = 7, ["Clearing_09"] = 7, ["Clearing_10"] = 7, ["Cave_Cubby05"] = 7, ["Cave_12"] = 7,
+    }
 
-local siteCorridors = {
-    -- Level 1 & 2 (Reach 1)
-    ["Clearing_01"] = { [1] = -37.81 },
-    ["Clearing_02"] = { [1] = -37.81 },
-    ["Cave_Cubby01"] = { [1] = -37.81 },
-    ["Cave_Cubby02"] = { [1] = -37.81 },
+    siteCorridors = {
+        -- Level 1 & 2 (Reach 1)
+        ["Clearing_01"] = { [1] = -37.81 },
+        ["Clearing_02"] = { [1] = -37.81 },
+        ["Cave_Cubby01"] = { [1] = -37.81 },
+        ["Cave_Cubby02"] = { [1] = -37.81 },
 
-    -- Level 3 (Reach 3)
-    ["Clearing_03"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81 },
-    ["Clearing_04"] = { [1] = -37.81, [2] = 187.19,  [3] = 412.19 },
-    ["Cave_Cubby03"] = { [1] = -37.81, [2] = -37.81,  [3] = -37.81 },
+        -- Level 3 (Reach 3)
+        ["Clearing_03"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81 },
+        ["Clearing_04"] = { [1] = -37.81, [2] = 187.19,  [3] = 412.19 },
+        ["Cave_Cubby03"] = { [1] = -37.81, [2] = -37.81,  [3] = -37.81 },
 
-    -- Level 4 Delta (Reach 5)
-    ["Clearing_05"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81 },
-    ["Clearing_06"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -487.81, [5] = -487.81 },
-    ["Cave_Cubby04"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -487.81, [5] = -487.81 },
-    -- Clearing 07 opens onto the 862 channel (its MaxZ is that channel's north wall), not the 412 channel
-    ["Clearing_07"] = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 637.19,  [5] = 862.19 },
-    ["Clearing_08"] = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 637.19,  [5] = 862.19 },
+        -- Level 4 Delta (Reach 5)
+        ["Clearing_05"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81 },
+        ["Clearing_06"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -487.81, [5] = -487.81 },
+        ["Cave_Cubby04"] = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -487.81, [5] = -487.81 },
+        -- Clearing 07 opens onto the 862 channel (its MaxZ is that channel's north wall), not the 412 channel
+        ["Clearing_07"] = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 637.19,  [5] = 862.19 },
+        ["Clearing_08"] = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 637.19,  [5] = 862.19 },
 
-    -- Level 4 Terminus (Reach 7)
-    ["Cave_Cubby05"]      = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -937.81,  [7] = -937.81 },
-    ["Clearing_09"]       = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -937.81,  [7] = -937.81 },
-    -- Clearing 10 opens onto the centre channel (its MaxZ is that channel's north wall), not the -487 channel
-    ["Clearing_10"]       = { [1] = -37.81, [2] = -37.81,  [3] = -37.81,  [4] = -37.81,  [5] = -37.81,  [6] = -37.81,   [7] = -37.81 },
-    ["Cave_11"]           = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 412.19,  [5] = 412.19,  [6] = 412.19,   [7] = 412.19 },
-    ["Cave_12"]           = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 637.19,  [5] = 862.19,  [6] = 1087.19,  [7] = 1312.19 },
-}
-rafting.siteCorridors = siteCorridors
+        -- Level 4 Terminus (Reach 7)
+        ["Cave_Cubby05"]      = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -937.81,  [7] = -937.81 },
+        ["Clearing_09"]       = { [1] = -37.81, [2] = -262.81, [3] = -487.81, [4] = -712.81, [5] = -937.81, [6] = -937.81,  [7] = -937.81 },
+        -- Clearing 10 opens onto the centre channel (its MaxZ is that channel's north wall), not the -487 channel
+        ["Clearing_10"]       = { [1] = -37.81, [2] = -37.81,  [3] = -37.81,  [4] = -37.81,  [5] = -37.81,  [6] = -37.81,   [7] = -37.81 },
+        ["Cave_11"]           = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 412.19,  [5] = 412.19,  [6] = 412.19,   [7] = 412.19 },
+        ["Cave_12"]           = { [1] = -37.81, [2] = 187.19,  [3] = 412.19,  [4] = 637.19,  [5] = 862.19,  [6] = 1087.19,  [7] = 1312.19 },
+    }
+    rafting.siteCorridors = siteCorridors
 
-function rafting.isSiteReachable(site, posX, currentZ)
-    if not site then return false end
-    local maxX = site.MaxX or site.MinX
-    if posX > (maxX + 25) then
+    function rafting.isSiteReachable(site, posX, currentZ)
+        if not site then return false end
+        local maxX = site.MaxX or site.MinX
+        if posX > (maxX + 25) then
+            return false
+        end
+        if currentZ == nil then
+            return true
+        end
+
+        local mouthX = site.Mouth and site.Mouth.X or ((site.MinX + site.MaxX) * 0.5)
+        local shoreZ = site.ShoreZ or ((site.MinZ + site.MaxZ) * 0.5)
+
+        -- If already inside cove or close proximity to mouth, reachable
+        if posX >= (mouthX - 100) and posX <= (maxX + 25) then
+            if math.abs(currentZ - shoreZ) <= 150 then
+                return true
+            end
+        end
+
+        -- Branches overlap for the first stretch past a fork, so the raft can be in several channels at once.
+        -- The site is reachable if any of them leads to it.
+        local curChZ, curReach = rafting.getCurrentChannel(posX, currentZ)
+        if rafting.channelLeadsToSite(curChZ, curReach, site, mouthX) then
+            return true
+        end
+        if FjordZones and FjordZones.Channels then
+            for _, ch in ipairs(FjordZones.Channels) do
+                if not ch[8] then
+                    local dx, dz = posX - ch[1], currentZ - ch[2]
+                    if math.abs(dx * ch[3] + dz * ch[4]) <= ch[5] and math.abs(-dx * ch[4] + dz * ch[3]) <= ch[6]
+                        and rafting.channelLeadsToSite(ch[2], ch[7], site, mouthX) then
+                        return true
+                    end
+                end
+            end
+        end
         return false
     end
-    if currentZ == nil then
-        return true
-    end
 
-    local mouthX = site.Mouth and site.Mouth.X or ((site.MinX + site.MaxX) * 0.5)
-    local shoreZ = site.ShoreZ or ((site.MinZ + site.MaxZ) * 0.5)
+    function rafting.channelLeadsToSite(curChZ, curReach, site, mouthX)
+        local sReach = siteReach[site.Id] or getReachIndex(mouthX)
 
-    -- If already inside cove or close proximity to mouth, reachable
-    if posX >= (mouthX - 100) and posX <= (maxX + 25) then
-        if math.abs(currentZ - shoreZ) <= 150 then
+        if curReach > sReach then
+            return false
+        end
+
+        local corridors = siteCorridors[site.Id]
+        local siteTargetChZ = corridors and corridors[sReach]
+
+        if curReach == sReach then
+            if siteTargetChZ and math.abs(curChZ - siteTargetChZ) > 40 then
+                if site.Id == "Cave_12" and (math.abs(curChZ - 862.19) <= 40 or math.abs(curChZ - 1312.19) <= 40) then
+                    return true
+                end
+                return false
+            end
+            return true
+        else
+            local reachableSet = getReachableChannelsInReach(curReach, curChZ, sReach)
+            if siteTargetChZ then
+                if reachableSet[siteTargetChZ] then
+                    return true
+                end
+                if site.Id == "Cave_12" and (reachableSet[862.19] or reachableSet[1312.19]) then
+                    return true
+                end
+                return false
+            end
             return true
         end
     end
 
-    -- Branches overlap for the first stretch past a fork, so the raft can be in several channels at once.
-    -- The site is reachable if any of them leads to it.
-    local curChZ, curReach = rafting.getCurrentChannel(posX, currentZ)
-    if rafting.channelLeadsToSite(curChZ, curReach, site, mouthX) then
-        return true
-    end
-    if FjordZones and FjordZones.Channels then
-        for _, ch in ipairs(FjordZones.Channels) do
-            if not ch[8] then
-                local dx, dz = posX - ch[1], currentZ - ch[2]
-                if math.abs(dx * ch[3] + dz * ch[4]) <= ch[5] and math.abs(-dx * ch[4] + dz * ch[3]) <= ch[6]
-                    and rafting.channelLeadsToSite(ch[2], ch[7], site, mouthX) then
-                    return true
+    local function getEndCaveSite(currentZ)
+        rafting.ensureDynamicSites()
+        local z = currentZ or -37.81
+        local bestCave = nil
+        local minDiff = math.huge
+        if rafting.allSites then
+            for _, s in ipairs(rafting.allSites) do
+                if s.Kind == "Cave" and (s.MaxX or s.MinX) >= 5800 then
+                    local diff = math.abs((s.ShoreZ or -37.81) - z)
+                    if diff < minDiff then
+                        minDiff = diff
+                        bestCave = s
+                    end
                 end
             end
         end
+        return bestCave or rafting.sitesById["Cave_Cubby05"]
     end
-    return false
-end
 
-function rafting.channelLeadsToSite(curChZ, curReach, site, mouthX)
-    local sReach = siteReach[site.Id] or getReachIndex(mouthX)
+    local leftmostSites = {
+        ["Clearing_01"] = true,
+        ["Cave_Cubby01"] = true,
+        ["Clearing_03"] = true,
+        ["Clearing_05"] = true,
+        ["Cave_Cubby05"] = true,
+    }
 
-    if curReach > sReach then
+    local northPresetSites = {
+        ["Clearing_01"] = true,
+        ["Cave_Cubby01"] = true,
+        ["Clearing_03"] = true,
+        ["Cave_Cubby04"] = true,
+        ["Clearing_05"] = true,
+        ["Cave_Cubby05"] = true,
+    }
+
+    local southPresetSites = {
+        ["Cave_Cubby02"] = true,
+        ["Clearing_02"] = true,
+        ["Cave_Cubby03"] = true,
+        ["Clearing_04"] = true,
+        ["Clearing_07"] = true,
+        ["Clearing_08"] = true,
+        ["Cave_11"] = true,
+        ["Cave_12"] = true,
+    }
+
+    function rafting.isSiteSelected(site)
+        if not site then return false end
+        local route = rafting.route or "Hybrid Dynamic Explorer"
+        if string.find(route, "Fast Sea Run", 1, true) then
+            return false
+        end
+        if string.find(route, "Leftmost", 1, true) then
+            return leftmostSites[site.Id] == true
+        end
+        if string.find(route, "North Channels", 1, true) then
+            return northPresetSites[site.Id] == true
+        end
+        if string.find(route, "South Channels", 1, true) then
+            return southPresetSites[site.Id] == true
+        end
+        if string.find(route, "Clearing & Chest Explorer", 1, true) or rafting.selectAllClearings then
+            return site.Kind == "Clearing"
+        end
+        if rafting.selectAllSites then
+            return true
+        end
+        if rafting.selectedClearings then
+            return rafting.selectedClearings[site.Id] == true
+        end
         return false
     end
 
-    local corridors = siteCorridors[site.Id]
-    local siteTargetChZ = corridors and corridors[sReach]
-
-    if curReach == sReach then
-        if siteTargetChZ and math.abs(curChZ - siteTargetChZ) > 40 then
-            if site.Id == "Cave_12" and (math.abs(curChZ - 862.19) <= 40 or math.abs(curChZ - 1312.19) <= 40) then
-                return true
-            end
-            return false
+    -- Logs each change of steering target, with the selected sites already marked visited, so a skipped dock
+    -- shows whether it was never chosen, marked visited early, or dropped mid-approach.
+    function rafting.logTargetChange(site, posX, posZ)
+        local siteId = site and site.Id or "none"
+        if siteId == rafting.lastTargetId then return end
+        rafting.lastTargetId = siteId
+        local visited = {}
+        for id in pairs(rafting.visitedSites or {}) do
+            local s = rafting.sitesById and rafting.sitesById[id]
+            if s and rafting.isSiteSelected(s) then table.insert(visited, id) end
         end
-        return true
-    else
-        local reachableSet = getReachableChannelsInReach(curReach, curChZ, sReach)
-        if siteTargetChZ then
-            if reachableSet[siteTargetChZ] then
-                return true
-            end
-            if site.Id == "Cave_12" and (reachableSet[862.19] or reachableSet[1312.19]) then
-                return true
-            end
-            return false
-        end
-        return true
+        table.sort(visited)
+        rafting.telemetryEvent("RaftTarget", {
+            Site = siteId,
+            X = math.floor(posX + 0.5),
+            Z = math.floor(posZ + 0.5),
+            Visited = table.concat(visited, " "),
+            Abandoned = rafting.abandonedSiteId,
+        })
     end
-end
 
-local function getEndCaveSite(currentZ)
-    rafting.ensureDynamicSites()
-    local z = currentZ or -37.81
-    local bestCave = nil
-    local minDiff = math.huge
-    if rafting.allSites then
-        for _, s in ipairs(rafting.allSites) do
-            if s.Kind == "Cave" and (s.MaxX or s.MinX) >= 5800 then
-                local diff = math.abs((s.ShoreZ or -37.81) - z)
-                if diff < minDiff then
-                    minDiff = diff
-                    bestCave = s
+    function rafting.getNextTargetClearing(posX, currentZ)
+        rafting.ensureDynamicSites()
+        local route = rafting.route or "Hybrid Dynamic Explorer"
+        if string.find(route, "Fast Sea Run", 1, true) then
+            rafting.isSelfCorrecting = false
+            return nil
+        end
+
+        local bestSite = nil
+        local bestCost = math.huge
+
+        local pipeline = rafting.selectOptimalPipeline()
+        local pCorr = pipelineCorridors[pipeline] or pipelineCorridors["North"]
+
+        local sitesToScan = rafting.allSites or clearingSites
+        for _, site in ipairs(sitesToScan) do
+            local isCandidate = rafting.isSiteSelected(site)
+
+            if isCandidate and not rafting.visitedSites[site.Id] then
+                if posX <= (site.MaxX or site.MinX) + 25 then
+                    local sReach = siteReach[site.Id] or getReachIndex(site.MinX)
+                    local expectedChZ = pCorr[sReach] or -37.81
+                    local corridors = siteCorridors[site.Id]
+                    local siteTargetChZ = (corridors and corridors[sReach]) or expectedChZ
+
+                    -- Dynamic reachability: site must be physically accessible downstream from current position
+                    if currentZ == nil or rafting.isSiteReachable(site, posX, currentZ) then
+                        local mouthX = site.Mouth and site.Mouth.X or site.MinX
+                        local dx = math.max(0, mouthX - posX)
+                        local dz = math.abs((site.ShoreZ or -37.81) - (currentZ or -37.81))
+                        -- Prefer sites aligned with active pipeline, but reachable sites are always valid (autocorrect for weather)
+                        local pipelinePenalty = (math.abs(siteTargetChZ - expectedChZ) <= 50) and 0 or 250
+                        local cost = dx + dz * 0.4 + pipelinePenalty
+                        if cost < bestCost then
+                            bestCost = cost
+                            bestSite = site
+                        end
+                    end
+                else
+                    rafting.visitedSites[site.Id] = true
                 end
             end
         end
-    end
-    return bestCave or rafting.sitesById["Cave_Cubby05"]
-end
 
-local leftmostSites = {
-    ["Clearing_01"] = true,
-    ["Cave_Cubby01"] = true,
-    ["Clearing_03"] = true,
-    ["Clearing_05"] = true,
-    ["Cave_Cubby05"] = true,
-}
+        if bestSite then
+            rafting.isSelfCorrecting = false
+            return bestSite
+        end
 
-local northPresetSites = {
-    ["Clearing_01"] = true,
-    ["Cave_Cubby01"] = true,
-    ["Clearing_03"] = true,
-    ["Cave_Cubby04"] = true,
-    ["Clearing_05"] = true,
-    ["Cave_Cubby05"] = true,
-}
+        -- End Cave fallback ONLY if route explicitly specifies caves OR site was selected by user
+        local routeWantsCaves = string.find(route, "Leftmost", 1, true) or string.find(route, "North Channels", 1, true)
+        local cubby05 = rafting.sitesById["Cave_Cubby05"]
+        local userSelectedCubby05 = cubby05 and rafting.isSiteSelected(cubby05)
+        if (routeWantsCaves or userSelectedCubby05) and cubby05 and not rafting.visitedSites[cubby05.Id] and posX <= (cubby05.MaxX or cubby05.MinX) + 25 and rafting.isSiteReachable(cubby05, posX, currentZ) then
+            rafting.isSelfCorrecting = false
+            return cubby05
+        end
 
-local southPresetSites = {
-    ["Cave_Cubby02"] = true,
-    ["Clearing_02"] = true,
-    ["Cave_Cubby03"] = true,
-    ["Clearing_04"] = true,
-    ["Clearing_07"] = true,
-    ["Clearing_08"] = true,
-    ["Cave_11"] = true,
-    ["Cave_12"] = true,
-}
+        local routeWantsSouthCaves = string.find(route, "South Channels", 1, true)
+        local southCave = rafting.sitesById["Cave_12"] or rafting.sitesById["Cave_11"]
+        local userSelectedSouthCave = southCave and rafting.isSiteSelected(southCave)
+        if (routeWantsSouthCaves or userSelectedSouthCave) and southCave and not rafting.visitedSites[southCave.Id] and posX <= (southCave.MaxX or southCave.MinX) + 25 and rafting.isSiteReachable(southCave, posX, currentZ) then
+            rafting.isSelfCorrecting = false
+            return southCave
+        end
 
-function rafting.isSiteSelected(site)
-    if not site then return false end
-    local route = rafting.route or "Hybrid Dynamic Explorer"
-    if string.find(route, "Fast Sea Run", 1, true) then
-        return false
-    end
-    if string.find(route, "Leftmost", 1, true) then
-        return leftmostSites[site.Id] == true
-    end
-    if string.find(route, "North Channels", 1, true) then
-        return northPresetSites[site.Id] == true
-    end
-    if string.find(route, "South Channels", 1, true) then
-        return southPresetSites[site.Id] == true
-    end
-    if string.find(route, "Clearing & Chest Explorer", 1, true) or rafting.selectAllClearings then
-        return site.Kind == "Clearing"
-    end
-    if rafting.selectAllSites then
-        return true
-    end
-    if rafting.selectedClearings then
-        return rafting.selectedClearings[site.Id] == true
-    end
-    return false
-end
+        -- Opportunistic Self-Correction Fallback:
+        -- Only run when no specific sites are selected (e.g. general exploration or selectAllSites/selectAllClearings)
+        local hasSpecificSelections = rafting.selectedClearings and next(rafting.selectedClearings) ~= nil and not (rafting.selectAllSites or rafting.selectAllClearings)
+        if not hasSpecificSelections and rafting.allSites then
+            local bestFallback = nil
+            local bestFallbackCost = math.huge
+            for _, site in ipairs(rafting.allSites) do
+                if not rafting.visitedSites[site.Id] and posX <= (site.MaxX or site.MinX) + 25 then
+                    if rafting.isSiteReachable(site, posX, currentZ) then
+                        local mouthX = site.Mouth and site.Mouth.X or site.MinX
+                        local dx = math.max(0, mouthX - posX)
+                        local dz = math.abs((site.ShoreZ or -37.81) - (currentZ or -37.81))
+                        local cost = dz * 1.5 + dx
+                        if cost < bestFallbackCost then
+                            bestFallbackCost = cost
+                            bestFallback = site
+                        end
+                    end
+                end
+            end
+            if bestFallback then
+                rafting.isSelfCorrecting = true
+                return bestFallback
+            end
+        end
 
--- Logs each change of steering target, with the selected sites already marked visited, so a skipped dock
--- shows whether it was never chosen, marked visited early, or dropped mid-approach.
-function rafting.logTargetChange(site, posX, posZ)
-    local siteId = site and site.Id or "none"
-    if siteId == rafting.lastTargetId then return end
-    rafting.lastTargetId = siteId
-    local visited = {}
-    for id in pairs(rafting.visitedSites or {}) do
-        local s = rafting.sitesById and rafting.sitesById[id]
-        if s and rafting.isSiteSelected(s) then table.insert(visited, id) end
-    end
-    table.sort(visited)
-    rafting.telemetryEvent("RaftTarget", {
-        Site = siteId,
-        X = math.floor(posX + 0.5),
-        Z = math.floor(posZ + 0.5),
-        Visited = table.concat(visited, " "),
-        Abandoned = rafting.abandonedSiteId,
-    })
-end
-
-function rafting.getNextTargetClearing(posX, currentZ)
-    rafting.ensureDynamicSites()
-    local route = rafting.route or "Hybrid Dynamic Explorer"
-    if string.find(route, "Fast Sea Run", 1, true) then
         rafting.isSelfCorrecting = false
+
+        if rafting.selectAllSites then
+            local ec = getEndCaveSite(currentZ)
+            if ec and rafting.isSiteReachable(ec, posX, currentZ) then return ec end
+        end
+        if rafting.selectedClearings then
+            for sId, active in pairs(rafting.selectedClearings) do
+                if active and (string.sub(sId, 1, 4) == "Cave") then
+                    local ec = getEndCaveSite(currentZ)
+                    if ec and rafting.isSiteReachable(ec, posX, currentZ) then return ec end
+                end
+            end
+        end
+
+        -- When clearings only selected and all passed downriver, return nil (steer straight to sea)
+        return nil
+    end
+end
+
+do
+    local function parseSiteId(opt)
+        if not opt or type(opt) ~= "string" then return nil end
+        local cubbyNum = string.match(opt, "Cubby%s*(%d+)")
+        if cubbyNum then
+            return string.format("Cave_Cubby%02d", tonumber(cubbyNum))
+        end
+        local clearingNum = string.match(opt, "Clearing%s*(%d+)")
+        if clearingNum then
+            return string.format("Clearing_%02d", tonumber(clearingNum))
+        end
+        local caveNum = string.match(opt, "Cave%s*(%d+)")
+        if caveNum then
+            return string.format("Cave_%s", caveNum)
+        end
         return nil
     end
 
-    local bestSite = nil
-    local bestCost = math.huge
+    local zone1Sites = { ["Clearing_01"] = true, ["Cave_Cubby01"] = true, ["Cave_Cubby02"] = true, ["Clearing_02"] = true }
+    local zone2Sites = { ["Clearing_03"] = true, ["Cave_Cubby03"] = true, ["Clearing_04"] = true }
+    local zone3Sites = { ["Clearing_05"] = true, ["Cave_Cubby04"] = true, ["Clearing_06"] = true, ["Clearing_07"] = true, ["Clearing_08"] = true }
+    local zone4Sites = { ["Cave_Cubby05"] = true, ["Clearing_09"] = true, ["Clearing_10"] = true, ["Cave_11"] = true, ["Cave_12"] = true }
 
-    local pipeline = rafting.selectOptimalPipeline()
-    local pCorr = pipelineCorridors[pipeline] or pipelineCorridors["North"]
+    function rafting.getSiteZone(siteOrId)
+        local sid = type(siteOrId) == "table" and siteOrId.Id or siteOrId
+        if not sid then return 1 end
+        if zone1Sites[sid] then return 1 end
+        if zone2Sites[sid] then return 2 end
+        if zone3Sites[sid] then return 3 end
+        if zone4Sites[sid] then return 4 end
 
-    local sitesToScan = rafting.allSites or clearingSites
-    for _, site in ipairs(sitesToScan) do
-        local isCandidate = rafting.isSiteSelected(site)
-
-        if isCandidate and not rafting.visitedSites[site.Id] then
-            if posX <= (site.MaxX or site.MinX) + 25 then
-                local sReach = siteReach[site.Id] or getReachIndex(site.MinX)
-                local expectedChZ = pCorr[sReach] or -37.81
-                local corridors = siteCorridors[site.Id]
-                local siteTargetChZ = (corridors and corridors[sReach]) or expectedChZ
-
-                -- Dynamic reachability: site must be physically accessible downstream from current position
-                if currentZ == nil or rafting.isSiteReachable(site, posX, currentZ) then
-                    local mouthX = site.Mouth and site.Mouth.X or site.MinX
-                    local dx = math.max(0, mouthX - posX)
-                    local dz = math.abs((site.ShoreZ or -37.81) - (currentZ or -37.81))
-                    -- Prefer sites aligned with active pipeline, but reachable sites are always valid (autocorrect for weather)
-                    local pipelinePenalty = (math.abs(siteTargetChZ - expectedChZ) <= 50) and 0 or 250
-                    local cost = dx + dz * 0.4 + pipelinePenalty
-                    if cost < bestCost then
-                        bestCost = cost
-                        bestSite = site
-                    end
-                end
-            else
-                rafting.visitedSites[site.Id] = true
-            end
+        -- Fallback by X coordinate
+        local x = type(siteOrId) == "table" and ((siteOrId.MinX + siteOrId.MaxX) * 0.5) or 0
+        if x > 0 then
+            if x < 2000 then return 1
+            elseif x < 3600 then return 2
+            elseif x < 5400 then return 3
+            else return 4 end
         end
+        return 1
     end
 
-    if bestSite then
-        rafting.isSelfCorrecting = false
-        return bestSite
-    end
-
-    -- End Cave fallback ONLY if route explicitly specifies caves OR site was selected by user
-    local routeWantsCaves = string.find(route, "Leftmost", 1, true) or string.find(route, "North Channels", 1, true)
-    local cubby05 = rafting.sitesById["Cave_Cubby05"]
-    local userSelectedCubby05 = cubby05 and rafting.isSiteSelected(cubby05)
-    if (routeWantsCaves or userSelectedCubby05) and cubby05 and not rafting.visitedSites[cubby05.Id] and posX <= (cubby05.MaxX or cubby05.MinX) + 25 and rafting.isSiteReachable(cubby05, posX, currentZ) then
-        rafting.isSelfCorrecting = false
-        return cubby05
-    end
-
-    local routeWantsSouthCaves = string.find(route, "South Channels", 1, true)
-    local southCave = rafting.sitesById["Cave_12"] or rafting.sitesById["Cave_11"]
-    local userSelectedSouthCave = southCave and rafting.isSiteSelected(southCave)
-    if (routeWantsSouthCaves or userSelectedSouthCave) and southCave and not rafting.visitedSites[southCave.Id] and posX <= (southCave.MaxX or southCave.MinX) + 25 and rafting.isSiteReachable(southCave, posX, currentZ) then
-        rafting.isSelfCorrecting = false
-        return southCave
-    end
-
-    -- Opportunistic Self-Correction Fallback:
-    -- Only run when no specific sites are selected (e.g. general exploration or selectAllSites/selectAllClearings)
-    local hasSpecificSelections = rafting.selectedClearings and next(rafting.selectedClearings) ~= nil and not (rafting.selectAllSites or rafting.selectAllClearings)
-    if not hasSpecificSelections and rafting.allSites then
-        local bestFallback = nil
-        local bestFallbackCost = math.huge
-        for _, site in ipairs(rafting.allSites) do
-            if not rafting.visitedSites[site.Id] and posX <= (site.MaxX or site.MinX) + 25 then
-                if rafting.isSiteReachable(site, posX, currentZ) then
-                    local mouthX = site.Mouth and site.Mouth.X or site.MinX
-                    local dx = math.max(0, mouthX - posX)
-                    local dz = math.abs((site.ShoreZ or -37.81) - (currentZ or -37.81))
-                    local cost = dz * 1.5 + dx
-                    if cost < bestFallbackCost then
-                        bestFallbackCost = cost
-                        bestFallback = site
-                    end
+    function rafting.updateZoneSites(zoneIdx, options)
+        rafting.ensureDynamicSites()
+        if not rafting.selectedByZone then
+            rafting.selectedByZone = { [1] = {}, [2] = {}, [3] = {}, [4] = {} }
+        end
+        local zoneSet = {}
+        if type(options) == "table" then
+            for k, v in pairs(options) do
+                local optStr = type(k) == "number" and v or k
+                local sid = parseSiteId(optStr)
+                if sid then
+                    zoneSet[sid] = true
                 end
             end
-        end
-        if bestFallback then
-            rafting.isSelfCorrecting = true
-            return bestFallback
-        end
-    end
-
-    rafting.isSelfCorrecting = false
-
-    if rafting.selectAllSites then
-        local ec = getEndCaveSite(currentZ)
-        if ec and rafting.isSiteReachable(ec, posX, currentZ) then return ec end
-    end
-    if rafting.selectedClearings then
-        for sId, active in pairs(rafting.selectedClearings) do
-            if active and (string.sub(sId, 1, 4) == "Cave") then
-                local ec = getEndCaveSite(currentZ)
-                if ec and rafting.isSiteReachable(ec, posX, currentZ) then return ec end
-            end
-        end
-    end
-
-    -- When clearings only selected and all passed downriver, return nil (steer straight to sea)
-    return nil
-end
-
-local function parseSiteId(opt)
-    if not opt or type(opt) ~= "string" then return nil end
-    local cubbyNum = string.match(opt, "Cubby%s*(%d+)")
-    if cubbyNum then
-        return string.format("Cave_Cubby%02d", tonumber(cubbyNum))
-    end
-    local clearingNum = string.match(opt, "Clearing%s*(%d+)")
-    if clearingNum then
-        return string.format("Clearing_%02d", tonumber(clearingNum))
-    end
-    local caveNum = string.match(opt, "Cave%s*(%d+)")
-    if caveNum then
-        return string.format("Cave_%s", caveNum)
-    end
-    return nil
-end
-
-local zone1Sites = { ["Clearing_01"] = true, ["Cave_Cubby01"] = true, ["Cave_Cubby02"] = true, ["Clearing_02"] = true }
-local zone2Sites = { ["Clearing_03"] = true, ["Cave_Cubby03"] = true, ["Clearing_04"] = true }
-local zone3Sites = { ["Clearing_05"] = true, ["Cave_Cubby04"] = true, ["Clearing_06"] = true, ["Clearing_07"] = true, ["Clearing_08"] = true }
-local zone4Sites = { ["Cave_Cubby05"] = true, ["Clearing_09"] = true, ["Clearing_10"] = true, ["Cave_11"] = true, ["Cave_12"] = true }
-
-function rafting.getSiteZone(siteOrId)
-    local sid = type(siteOrId) == "table" and siteOrId.Id or siteOrId
-    if not sid then return 1 end
-    if zone1Sites[sid] then return 1 end
-    if zone2Sites[sid] then return 2 end
-    if zone3Sites[sid] then return 3 end
-    if zone4Sites[sid] then return 4 end
-
-    -- Fallback by X coordinate
-    local x = type(siteOrId) == "table" and ((siteOrId.MinX + siteOrId.MaxX) * 0.5) or 0
-    if x > 0 then
-        if x < 2000 then return 1
-        elseif x < 3600 then return 2
-        elseif x < 5400 then return 3
-        else return 4 end
-    end
-    return 1
-end
-
-function rafting.updateZoneSites(zoneIdx, options)
-    rafting.ensureDynamicSites()
-    if not rafting.selectedByZone then
-        rafting.selectedByZone = { [1] = {}, [2] = {}, [3] = {}, [4] = {} }
-    end
-    local zoneSet = {}
-    if type(options) == "table" then
-        for k, v in pairs(options) do
-            local optStr = type(k) == "number" and v or k
-            local sid = parseSiteId(optStr)
+        elseif type(options) == "string" then
+            local sid = parseSiteId(options)
             if sid then
                 zoneSet[sid] = true
             end
         end
-    elseif type(options) == "string" then
-        local sid = parseSiteId(options)
-        if sid then
-            zoneSet[sid] = true
-        end
-    end
 
-    rafting.selectedByZone[zoneIdx] = zoneSet
+        rafting.selectedByZone[zoneIdx] = zoneSet
 
-    local combined = {}
-    for z = 1, 4 do
-        local zMap = rafting.selectedByZone[z]
-        if zMap then
-            for sid, active in pairs(zMap) do
-                if active then combined[sid] = true end
+        local combined = {}
+        for z = 1, 4 do
+            local zMap = rafting.selectedByZone[z]
+            if zMap then
+                for sid, active in pairs(zMap) do
+                    if active then combined[sid] = true end
+                end
             end
         end
-    end
-    rafting.selectedClearings = combined
-    rafting.selectAllSites = false
-    rafting.selectAllClearings = false
-    rafting.updateCards()
-end
-
-function rafting.updateTargetClearings(options)
-    rafting.ensureDynamicSites()
-    local selected = {}
-    local selectAllSites = false
-    local selectAllClearings = false
-    local hasSpecific = false
-
-    local function parseOption(opt)
-        if not opt or type(opt) ~= "string" then return end
-        if string.find(opt, "All Sites", 1, true) then
-            selectAllSites = true
-            return
-        end
-        if opt == "All Clearings" or string.find(opt, "All Clearings", 1, true) then
-            selectAllClearings = true
-            return
-        end
-        local sid = parseSiteId(opt)
-        if sid then
-            selected[sid] = true
-            hasSpecific = true
-        end
+        rafting.selectedClearings = combined
+        rafting.selectAllSites = false
+        rafting.selectAllClearings = false
+        rafting.updateCards()
     end
 
-    if type(options) == "table" then
-        for k, v in pairs(options) do
-            if type(k) == "number" and type(v) == "string" then
-                parseOption(v)
-            elseif type(k) == "string" and v == true then
-                parseOption(k)
+    function rafting.updateTargetClearings(options)
+        rafting.ensureDynamicSites()
+        local selected = {}
+        local selectAllSites = false
+        local selectAllClearings = false
+        local hasSpecific = false
+
+        local function parseOption(opt)
+            if not opt or type(opt) ~= "string" then return end
+            if string.find(opt, "All Sites", 1, true) then
+                selectAllSites = true
+                return
+            end
+            if opt == "All Clearings" or string.find(opt, "All Clearings", 1, true) then
+                selectAllClearings = true
+                return
+            end
+            local sid = parseSiteId(opt)
+            if sid then
+                selected[sid] = true
+                hasSpecific = true
             end
         end
-    elseif type(options) == "string" then
-        parseOption(options)
-    end
 
-    if hasSpecific then
-        selectAllSites = false
-        selectAllClearings = false
-    elseif selectAllSites and rafting.allSites then
-        for _, s in ipairs(rafting.allSites) do
-            selected[s.Id] = true
+        if type(options) == "table" then
+            for k, v in pairs(options) do
+                if type(k) == "number" and type(v) == "string" then
+                    parseOption(v)
+                elseif type(k) == "string" and v == true then
+                    parseOption(k)
+                end
+            end
+        elseif type(options) == "string" then
+            parseOption(options)
         end
-    elseif selectAllClearings and rafting.allSites then
-        for _, s in ipairs(rafting.allSites) do
-            if s.Kind == "Clearing" then
+
+        if hasSpecific then
+            selectAllSites = false
+            selectAllClearings = false
+        elseif selectAllSites and rafting.allSites then
+            for _, s in ipairs(rafting.allSites) do
                 selected[s.Id] = true
             end
+        elseif selectAllClearings and rafting.allSites then
+            for _, s in ipairs(rafting.allSites) do
+                if s.Kind == "Clearing" then
+                    selected[s.Id] = true
+                end
+            end
         end
-    end
 
-    rafting.selectAllSites = selectAllSites
-    rafting.selectAllClearings = selectAllClearings
-    rafting.selectedClearings = selected
-    rafting.updateCards()
+        rafting.selectAllSites = selectAllSites
+        rafting.selectAllClearings = selectAllClearings
+        rafting.selectedClearings = selected
+        rafting.updateCards()
+    end
 end
 
-local whiskerRayParams = RaycastParams.new()
-whiskerRayParams.FilterType = Enum.RaycastFilterType.Exclude
-whiskerRayParams.IgnoreWater = true
+do
+    local whiskerRayParams = RaycastParams.new()
+    whiskerRayParams.FilterType = Enum.RaycastFilterType.Exclude
+    whiskerRayParams.IgnoreWater = true
 
-function rafting.getWhiskerClearances(deck)
-    local now = os.clock()
-    if (now - (rafting.lastSensorAt or 0)) < 0.08 and rafting.whiskerClearances and next(rafting.whiskerClearances) then
-        return rafting.whiskerClearances
-    end
-    rafting.lastSensorAt = now
+    function rafting.getWhiskerClearances(deck)
+        local now = os.clock()
+        if (now - (rafting.lastSensorAt or 0)) < 0.08 and rafting.whiskerClearances and next(rafting.whiskerClearances) then
+            return rafting.whiskerClearances
+        end
+        rafting.lastSensorAt = now
 
-    local filterList = {}
-    if char then table.insert(filterList, char) end
-    if rafting.raftModel then table.insert(filterList, rafting.raftModel) end
-    if deck then table.insert(filterList, deck) end
-    whiskerRayParams.FilterDescendantsInstances = filterList
+        local filterList = {}
+        if char then table.insert(filterList, char) end
+        if rafting.raftModel then table.insert(filterList, rafting.raftModel) end
+        if deck then table.insert(filterList, deck) end
+        whiskerRayParams.FilterDescendantsInstances = filterList
 
-    -- Origins placed on perimeter: bow center at Z = -14.0, bow shoulders at X = +/- 5.0, Z = -12.0
-    local bowCenterOrigin  = deck.CFrame:PointToWorldSpace(Vector3.new(0, 2.5, -14.0))
-    local bowLeftOrigin    = deck.CFrame:PointToWorldSpace(Vector3.new(-5.0, 2.5, -12.0))
-    local bowRightOrigin   = deck.CFrame:PointToWorldSpace(Vector3.new(5.0, 2.5, -12.0))
-    local midLeftOrigin    = deck.CFrame:PointToWorldSpace(Vector3.new(-6.0, 2.5, 0.0))
-    local midRightOrigin   = deck.CFrame:PointToWorldSpace(Vector3.new(6.0, 2.5, 0.0))
-    local sternLeftOrigin  = deck.CFrame:PointToWorldSpace(Vector3.new(-6.0, 2.5, 12.0))
-    local sternRightOrigin = deck.CFrame:PointToWorldSpace(Vector3.new(6.0, 2.5, 12.0))
+        -- Origins placed on perimeter: bow center at Z = -14.0, bow shoulders at X = +/- 5.0, Z = -12.0
+        local bowCenterOrigin  = deck.CFrame:PointToWorldSpace(Vector3.new(0, 2.5, -14.0))
+        local bowLeftOrigin    = deck.CFrame:PointToWorldSpace(Vector3.new(-5.0, 2.5, -12.0))
+        local bowRightOrigin   = deck.CFrame:PointToWorldSpace(Vector3.new(5.0, 2.5, -12.0))
+        local midLeftOrigin    = deck.CFrame:PointToWorldSpace(Vector3.new(-6.0, 2.5, 0.0))
+        local midRightOrigin   = deck.CFrame:PointToWorldSpace(Vector3.new(6.0, 2.5, 0.0))
+        local sternLeftOrigin  = deck.CFrame:PointToWorldSpace(Vector3.new(-6.0, 2.5, 12.0))
+        local sternRightOrigin = deck.CFrame:PointToWorldSpace(Vector3.new(6.0, 2.5, 12.0))
 
-    -- Extended phased raycast shield to sense rock facades and divider islands far in advance
-    local whiskers = {
-        Forward        = { origin = bowCenterOrigin,  dir = Vector3.new(0, 0, -1), range = 110 },
-        ForwardLeft    = { origin = bowLeftOrigin,    dir = Vector3.new(-0.2588, 0, -0.9659), range = 95 },
-        ForwardRight   = { origin = bowRightOrigin,   dir = Vector3.new(0.2588, 0, -0.9659), range = 95 },
-        LeftOblique    = { origin = bowLeftOrigin,    dir = Vector3.new(-0.5736, 0, -0.8192), range = 75 },
-        RightOblique   = { origin = bowRightOrigin,   dir = Vector3.new(0.5736, 0, -0.8192), range = 75 },
-        LeftLateral    = { origin = midLeftOrigin,    dir = Vector3.new(-1, 0, 0), range = 45 },
-        RightLateral   = { origin = midRightOrigin,   dir = Vector3.new(1, 0, 0), range = 45 },
-        LeftStern      = { origin = sternLeftOrigin,  dir = Vector3.new(-1, 0, 0), range = 40 },
-        RightStern     = { origin = sternRightOrigin, dir = Vector3.new(1, 0, 0), range = 40 },
-    }
+        -- Extended phased raycast shield to sense rock facades and divider islands far in advance
+        local whiskers = {
+            Forward        = { origin = bowCenterOrigin,  dir = Vector3.new(0, 0, -1), range = 110 },
+            ForwardLeft    = { origin = bowLeftOrigin,    dir = Vector3.new(-0.2588, 0, -0.9659), range = 95 },
+            ForwardRight   = { origin = bowRightOrigin,   dir = Vector3.new(0.2588, 0, -0.9659), range = 95 },
+            LeftOblique    = { origin = bowLeftOrigin,    dir = Vector3.new(-0.5736, 0, -0.8192), range = 75 },
+            RightOblique   = { origin = bowRightOrigin,   dir = Vector3.new(0.5736, 0, -0.8192), range = 75 },
+            LeftLateral    = { origin = midLeftOrigin,    dir = Vector3.new(-1, 0, 0), range = 45 },
+            RightLateral   = { origin = midRightOrigin,   dir = Vector3.new(1, 0, 0), range = 45 },
+            LeftStern      = { origin = sternLeftOrigin,  dir = Vector3.new(-1, 0, 0), range = 40 },
+            RightStern     = { origin = sternRightOrigin, dir = Vector3.new(1, 0, 0), range = 40 },
+        }
 
-    local distances = {}
-    for name, w in pairs(whiskers) do
-        local worldDir = deck.CFrame:VectorToWorldSpace(w.dir)
-        local result = workspace:Raycast(w.origin, worldDir * w.range, whiskerRayParams)
-        local isSolid = false
-        if result and result.Instance then
-            if result.Instance:IsA("Terrain") then
-                isSolid = (result.Material ~= Enum.Material.Water)
-            elseif result.Instance.CanCollide then
-                isSolid = true
+        local distances = {}
+        for name, w in pairs(whiskers) do
+            local worldDir = deck.CFrame:VectorToWorldSpace(w.dir)
+            local result = workspace:Raycast(w.origin, worldDir * w.range, whiskerRayParams)
+            local isSolid = false
+            if result and result.Instance then
+                if result.Instance:IsA("Terrain") then
+                    isSolid = (result.Material ~= Enum.Material.Water)
+                elseif result.Instance.CanCollide then
+                    isSolid = true
+                end
+            end
+            if isSolid then
+                distances[name] = (result.Position - w.origin).Magnitude
+            else
+                distances[name] = w.range
             end
         end
-        if isSolid then
-            distances[name] = (result.Position - w.origin).Magnitude
-        else
-            distances[name] = w.range
-        end
-    end
 
-    -- Mathematical Canal Boundary Enclosure (Harbour: Dock to Delta Entrance)
-    if deck and FjordZones and FjordZones.RibbonAt then
-        local posX = deck.Position.X
-        local posZ = deck.Position.Z
-        if posX <= 1094.58 then
-            local cz, hw = FjordZones.RibbonAt(posX)
-            if cz and hw then
-                local distToNorthBank = math.max(0, posZ - (cz - hw))
-                local distToSouthBank = math.max(0, (cz + hw) - posZ)
-                distances.LeftLateral = math.min(distances.LeftLateral, distToNorthBank)
-                distances.LeftOblique = math.min(distances.LeftOblique, distToNorthBank * 1.25)
-                distances.LeftStern = math.min(distances.LeftStern, distToNorthBank)
-                distances.RightLateral = math.min(distances.RightLateral, distToSouthBank)
-                distances.RightOblique = math.min(distances.RightOblique, distToSouthBank * 1.25)
-                distances.RightStern = math.min(distances.RightStern, distToSouthBank)
+        -- Mathematical Canal Boundary Enclosure (Harbour: Dock to Delta Entrance)
+        if deck and FjordZones and FjordZones.RibbonAt then
+            local posX = deck.Position.X
+            local posZ = deck.Position.Z
+            if posX <= 1094.58 then
+                local cz, hw = FjordZones.RibbonAt(posX)
+                if cz and hw then
+                    local distToNorthBank = math.max(0, posZ - (cz - hw))
+                    local distToSouthBank = math.max(0, (cz + hw) - posZ)
+                    distances.LeftLateral = math.min(distances.LeftLateral, distToNorthBank)
+                    distances.LeftOblique = math.min(distances.LeftOblique, distToNorthBank * 1.25)
+                    distances.LeftStern = math.min(distances.LeftStern, distToNorthBank)
+                    distances.RightLateral = math.min(distances.RightLateral, distToSouthBank)
+                    distances.RightOblique = math.min(distances.RightOblique, distToSouthBank * 1.25)
+                    distances.RightStern = math.min(distances.RightStern, distToSouthBank)
+                end
             end
         end
-    end
 
-    rafting.whiskerClearances = distances
-    return distances
+        rafting.whiskerClearances = distances
+        return distances
+    end
 end
 
 function rafting.getTargetZ(posX, currentZ, clearances)
@@ -10096,106 +10141,109 @@ function rafting.getRiverTargetZ(posX, currentZ, clearances)
     return channelBaselineZ
 end
 
-local function walkToPosition(targetPos, timeout, stopDistance)
-    if not humanoid or not root then return false end
-    timeout = timeout or 3.5
-    stopDistance = stopDistance or 3.5
-    humanoid.WalkSpeed = 24
-    humanoid.AutoRotate = true
-    if root then pcall(function() root.Anchored = false end) end
-    humanoid:MoveTo(targetPos)
+local naturalWalkTo
+do
+    local function walkToPosition(targetPos, timeout, stopDistance)
+        if not humanoid or not root then return false end
+        timeout = timeout or 3.5
+        stopDistance = stopDistance or 3.5
+        humanoid.WalkSpeed = 24
+        humanoid.AutoRotate = true
+        if root then pcall(function() root.Anchored = false end) end
+        humanoid:MoveTo(targetPos)
 
-    local start = os.clock()
-    local lastPos = root.Position
-    local lastMoveTime = os.clock()
+        local start = os.clock()
+        local lastPos = root.Position
+        local lastMoveTime = os.clock()
 
-    while (os.clock() - start) < timeout do
-        if not root or not humanoid then return false end
-        local d = (Vector3.new(root.Position.X, 0, root.Position.Z) - Vector3.new(targetPos.X, 0, targetPos.Z)).Magnitude
-        if d <= stopDistance then
-            humanoid:Move(Vector3.zero, false)
-            return true
-        end
-        if (root.Position - lastPos).Magnitude > 0.5 then
-            lastPos = root.Position
-            lastMoveTime = os.clock()
-        elseif (os.clock() - lastMoveTime) > 1.2 then
-            break
-        end
-        task.wait(0.1)
-    end
-    return false
-end
-
-local function naturalWalkTo(targetWorldPos, timeout, stopDistance)
-    if not humanoid or not root then return false end
-    timeout = timeout or 8.0
-    stopDistance = stopDistance or 3.5
-
-    -- ComputeAsync has no timeout of its own and the caller holds the loot lock, so wait for it 2.5 s at most
-    -- and walk straight there otherwise
-    local path = nil
-    if PathfindingService then
-        local candidate, computed = nil, false
-        local fromPos = root.Position
-        task.spawn(function()
-            pcall(function()
-                candidate = PathfindingService:CreatePath({
-                    AgentRadius = 3.0,
-                    AgentHeight = 5.0,
-                    AgentCanJump = true,
-                    WaypointSpacing = 4.0,
-                    Costs = { Water = math.huge }
-                })
-                candidate:ComputeAsync(fromPos, targetWorldPos)
-            end)
-            computed = true
-        end)
-        local computeStart = os.clock()
-        while not computed and (os.clock() - computeStart) < 2.5 do task.wait(0.05) end
-        if computed then path = candidate end
-    end
-
-    if path and path.Status == Enum.PathStatus.Success then
-        local waypoints = path:GetWaypoints()
-        -- Each waypoint may take 2 s, so bound the whole walk as well
-        local walkDeadline = os.clock() + timeout + (root.Position - targetWorldPos).Magnitude / 12
-        for _, wp in ipairs(waypoints) do
+        while (os.clock() - start) < timeout do
             if not root or not humanoid then return false end
-            if os.clock() > walkDeadline then break end
-            if wp.Action == Enum.PathWaypointAction.Jump then
-                humanoid.Jump = true
+            local d = (Vector3.new(root.Position.X, 0, root.Position.Z) - Vector3.new(targetPos.X, 0, targetPos.Z)).Magnitude
+            if d <= stopDistance then
+                humanoid:Move(Vector3.zero, false)
+                return true
             end
-            humanoid.WalkSpeed = 24
-            humanoid.AutoRotate = true
-            if root then pcall(function() root.Anchored = false end) end
-            humanoid:MoveTo(wp.Position)
-
-            local wpStart = os.clock()
-            local lastP = root.Position
-            local lastMoveT = os.clock()
-            while os.clock() - wpStart < 2.0 do
-                if not root or not humanoid then return false end
-                local d = (Vector3.new(root.Position.X, 0, root.Position.Z) - Vector3.new(wp.Position.X, 0, wp.Position.Z)).Magnitude
-                if d <= stopDistance then break end
-                if (root.Position - lastP).Magnitude > 0.4 then
-                    lastP = root.Position
-                    lastMoveT = os.clock()
-                elseif (os.clock() - lastMoveT) > 0.8 then
-                    humanoid.Jump = true
-                    break
-                end
-                task.wait(0.08)
+            if (root.Position - lastPos).Magnitude > 0.5 then
+                lastPos = root.Position
+                lastMoveTime = os.clock()
+            elseif (os.clock() - lastMoveTime) > 1.2 then
+                break
             end
+            task.wait(0.1)
         end
-        local finalDist = (Vector3.new(root.Position.X, 0, root.Position.Z) - Vector3.new(targetWorldPos.X, 0, targetWorldPos.Z)).Magnitude
-        if finalDist <= stopDistance then
-            humanoid:Move(Vector3.zero, false)
-            return true
-        end
+        return false
     end
 
-    return walkToPosition(targetWorldPos, timeout, stopDistance)
+    function naturalWalkTo(targetWorldPos, timeout, stopDistance)
+        if not humanoid or not root then return false end
+        timeout = timeout or 8.0
+        stopDistance = stopDistance or 3.5
+
+        -- ComputeAsync has no timeout of its own and the caller holds the loot lock, so wait for it 2.5 s at most
+        -- and walk straight there otherwise
+        local path = nil
+        if PathfindingService then
+            local candidate, computed = nil, false
+            local fromPos = root.Position
+            task.spawn(function()
+                pcall(function()
+                    candidate = PathfindingService:CreatePath({
+                        AgentRadius = 3.0,
+                        AgentHeight = 5.0,
+                        AgentCanJump = true,
+                        WaypointSpacing = 4.0,
+                        Costs = { Water = math.huge }
+                    })
+                    candidate:ComputeAsync(fromPos, targetWorldPos)
+                end)
+                computed = true
+            end)
+            local computeStart = os.clock()
+            while not computed and (os.clock() - computeStart) < 2.5 do task.wait(0.05) end
+            if computed then path = candidate end
+        end
+
+        if path and path.Status == Enum.PathStatus.Success then
+            local waypoints = path:GetWaypoints()
+            -- Each waypoint may take 2 s, so bound the whole walk as well
+            local walkDeadline = os.clock() + timeout + (root.Position - targetWorldPos).Magnitude / 12
+            for _, wp in ipairs(waypoints) do
+                if not root or not humanoid then return false end
+                if os.clock() > walkDeadline then break end
+                if wp.Action == Enum.PathWaypointAction.Jump then
+                    humanoid.Jump = true
+                end
+                humanoid.WalkSpeed = 24
+                humanoid.AutoRotate = true
+                if root then pcall(function() root.Anchored = false end) end
+                humanoid:MoveTo(wp.Position)
+
+                local wpStart = os.clock()
+                local lastP = root.Position
+                local lastMoveT = os.clock()
+                while os.clock() - wpStart < 2.0 do
+                    if not root or not humanoid then return false end
+                    local d = (Vector3.new(root.Position.X, 0, root.Position.Z) - Vector3.new(wp.Position.X, 0, wp.Position.Z)).Magnitude
+                    if d <= stopDistance then break end
+                    if (root.Position - lastP).Magnitude > 0.4 then
+                        lastP = root.Position
+                        lastMoveT = os.clock()
+                    elseif (os.clock() - lastMoveT) > 0.8 then
+                        humanoid.Jump = true
+                        break
+                    end
+                    task.wait(0.08)
+                end
+            end
+            local finalDist = (Vector3.new(root.Position.X, 0, root.Position.Z) - Vector3.new(targetWorldPos.X, 0, targetWorldPos.Z)).Magnitude
+            if finalDist <= stopDistance then
+                humanoid:Move(Vector3.zero, false)
+                return true
+            end
+        end
+
+        return walkToPosition(targetWorldPos, timeout, stopDistance)
+    end
 end
 rafting.naturalWalkTo = naturalWalkTo
 
@@ -10256,101 +10304,104 @@ local function sendRaftKey(keyCode, holdSec)
     end
 end
 
-local localPlayer = plr or Players.LocalPlayer
+local isContinueButtonActive, isBoardingAnimationActive, triggerRaftingCommand
+do
+    local localPlayer = plr or Players.LocalPlayer
 
-local function getContinueButton()
-    local playerGui = (localPlayer or plr or Players.LocalPlayer) and (localPlayer or plr or Players.LocalPlayer):FindFirstChildWhichIsA("PlayerGui")
-    if not playerGui then return nil end
-    local hud = playerGui:FindFirstChild("FjordRaftingHUD")
-    if hud then
-        local btn = hud:FindFirstChild("Continue", true)
-        if btn and btn:IsA("GuiButton") then return btn end
-    end
-    for _, gui in ipairs(playerGui:GetChildren()) do
-        if string.find(gui.Name, "Raft", 1, true) then
-            local btn = gui:FindFirstChild("Continue", true)
+    local function getContinueButton()
+        local playerGui = (localPlayer or plr or Players.LocalPlayer) and (localPlayer or plr or Players.LocalPlayer):FindFirstChildWhichIsA("PlayerGui")
+        if not playerGui then return nil end
+        local hud = playerGui:FindFirstChild("FjordRaftingHUD")
+        if hud then
+            local btn = hud:FindFirstChild("Continue", true)
             if btn and btn:IsA("GuiButton") then return btn end
         end
+        for _, gui in ipairs(playerGui:GetChildren()) do
+            if string.find(gui.Name, "Raft", 1, true) then
+                local btn = gui:FindFirstChild("Continue", true)
+                if btn and btn:IsA("GuiButton") then return btn end
+            end
+        end
+        return nil
     end
-    return nil
-end
-rafting.getContinueButton = getContinueButton
+    rafting.getContinueButton = getContinueButton
 
-local function isContinueButtonActive()
-    local btn = getContinueButton()
-    return btn and btn.Visible and btn.Active or false
-end
-rafting.isContinueButtonActive = isContinueButtonActive
-
-local function isBoardingAnimationActive()
-    if isContinueButtonActive() then
-        return false
+    function isContinueButtonActive()
+        local btn = getContinueButton()
+        return btn and btn.Visible and btn.Active or false
     end
-    local char = character or (localPlayer and localPlayer.Character)
-    if char then
-        local cowDeck = char:FindFirstChild("CowRaftingDeck")
-        if cowDeck and cowDeck:GetAttribute("RaftBoarding") == true then
+    rafting.isContinueButtonActive = isContinueButtonActive
+
+    function isBoardingAnimationActive()
+        if isContinueButtonActive() then
+            return false
+        end
+        local char = character or (localPlayer and localPlayer.Character)
+        if char then
+            local cowDeck = char:FindFirstChild("CowRaftingDeck")
+            if cowDeck and cowDeck:GetAttribute("RaftBoarding") == true then
+                return true
+            end
+            if char:GetAttribute("CowMoofCutscene") == true then
+                return true
+            end
+        end
+        if localPlayer and localPlayer:GetAttribute("CowMoofCutscene") == true then
             return true
         end
-        if char:GetAttribute("CowMoofCutscene") == true then
-            return true
-        end
-    end
-    if localPlayer and localPlayer:GetAttribute("CowMoofCutscene") == true then
-        return true
-    end
-    local hum = humanoid or (char and char:FindFirstChildOfClass("Humanoid"))
-    if hum then
-        local ok, tracks = pcall(function() return hum:GetPlayingAnimationTracks() end)
-        if ok and tracks then
-            for _, t in ipairs(tracks) do
-                if t.IsPlaying then
-                    local anim = t.Animation
-                    local aName = anim and anim.Name and anim.Name:lower() or ""
-                    local tName = t.Name and t.Name:lower() or ""
-                    if aName:find("board") or tName:find("board") or aName:find("cutscene") or tName:find("cutscene") then
-                        return true
+        local hum = humanoid or (char and char:FindFirstChildOfClass("Humanoid"))
+        if hum then
+            local ok, tracks = pcall(function() return hum:GetPlayingAnimationTracks() end)
+            if ok and tracks then
+                for _, t in ipairs(tracks) do
+                    if t.IsPlaying then
+                        local anim = t.Animation
+                        local aName = anim and anim.Name and anim.Name:lower() or ""
+                        local tName = t.Name and t.Name:lower() or ""
+                        if aName:find("board") or tName:find("board") or aName:find("cutscene") or tName:find("cutscene") then
+                            return true
+                        end
                     end
                 end
             end
         end
+        local snap = rafting.currentSnapshot
+        if snap and snap.AllAboard == false and snap.Status ~= "Travelling" then
+            return true
+        end
+        return false
     end
-    local snap = rafting.currentSnapshot
-    if snap and snap.AllAboard == false and snap.Status ~= "Travelling" then
-        return true
-    end
-    return false
-end
-rafting.isBoardingAnimationActive = isBoardingAnimationActive
+    rafting.isBoardingAnimationActive = isBoardingAnimationActive
 
-local function triggerRaftingCommand(cmd)
-    if cmd == "Sail" or cmd == "Continue" or cmd == "Start" or cmd == "Vote" then
-        sendRaftKey(Enum.KeyCode.N, 0.25)
-    elseif cmd == "Return" then
-        sendRaftKey(Enum.KeyCode.H, 0.25)
-    end
+    function triggerRaftingCommand(cmd)
+        if cmd == "Sail" or cmd == "Continue" or cmd == "Start" or cmd == "Vote" then
+            sendRaftKey(Enum.KeyCode.N, 0.25)
+        elseif cmd == "Return" then
+            sendRaftKey(Enum.KeyCode.H, 0.25)
+        end
 
-    local candidateNames = { cmd, cmd .. "Button" }
-    if cmd == "Sail" or cmd == "Start" or cmd == "Vote" then
-        table.insert(candidateNames, "Continue")
-        table.insert(candidateNames, "ContinueButton")
-    end
+        local candidateNames = { cmd, cmd .. "Button" }
+        if cmd == "Sail" or cmd == "Start" or cmd == "Vote" then
+            table.insert(candidateNames, "Continue")
+            table.insert(candidateNames, "ContinueButton")
+        end
 
-    local playerGui = localPlayer and localPlayer:FindFirstChildWhichIsA("PlayerGui")
-    if playerGui then
-        for _, gui in ipairs(playerGui:GetChildren()) do
-            if string.find(gui.Name, "Raft", 1, true) then
-                for _, name in ipairs(candidateNames) do
-                    local btn = gui:FindFirstChild(name, true)
-                    if btn and btn:IsA("GuiButton") and btn.Visible and btn.Active then
-                        if firesignal then
-                            pcall(function() firesignal(btn.Activated) end)
-                        end
-                        if getconnections then
-                            local conns = getconnections(btn.Activated)
-                            if conns and #conns > 0 then
-                                for _, c in ipairs(conns) do
-                                    if c.Function then pcall(c.Function); return true end
+        local playerGui = localPlayer and localPlayer:FindFirstChildWhichIsA("PlayerGui")
+        if playerGui then
+            for _, gui in ipairs(playerGui:GetChildren()) do
+                if string.find(gui.Name, "Raft", 1, true) then
+                    for _, name in ipairs(candidateNames) do
+                        local btn = gui:FindFirstChild(name, true)
+                        if btn and btn:IsA("GuiButton") and btn.Visible and btn.Active then
+                            if firesignal then
+                                pcall(function() firesignal(btn.Activated) end)
+                            end
+                            if getconnections then
+                                local conns = getconnections(btn.Activated)
+                                if conns and #conns > 0 then
+                                    for _, c in ipairs(conns) do
+                                        if c.Function then pcall(c.Function); return true end
+                                    end
                                 end
                             end
                         end
@@ -10358,323 +10409,270 @@ local function triggerRaftingCommand(cmd)
                 end
             end
         end
+        return false
     end
-    return false
-end
 
-function rafting.castOff()
-    local rem = rafting.getRemote()
-    if not rem then return end
-    if rafting.isCastingOff then return end
-    rafting.isCastingOff = true
-    rafting.lastCastOffTime = os.clock()
-    rafting.lastProgressPos = nil
-    rafting.lastProgressX = nil
-    rafting.lastProgressTime = 0
-    rafting.stuckDuration = 0
-    rafting.isUnsticking = false
-    rafting.unstickDirection = 0
-    rafting.unstickStartTime = 0
-    rafting.dockedStartTime = nil
-    local wasDocked = (rafting.status == "Docked")
-    rafting.statusText = "Boarding raft..."
-    rafting.updateCards()
+    function rafting.castOff()
+        local rem = rafting.getRemote()
+        if not rem then return end
+        if rafting.isCastingOff then return end
+        rafting.isCastingOff = true
+        rafting.lastCastOffTime = os.clock()
+        rafting.lastProgressPos = nil
+        rafting.lastProgressX = nil
+        rafting.lastProgressTime = 0
+        rafting.stuckDuration = 0
+        rafting.isUnsticking = false
+        rafting.unstickDirection = 0
+        rafting.unstickStartTime = 0
+        rafting.dockedStartTime = nil
+        local wasDocked = (rafting.status == "Docked")
+        rafting.statusText = "Boarding raft..."
+        rafting.updateCards()
 
-    task.spawn(function()
-        local deck = rafting.getRaftDeck()
-        local onDeck = ensureCowOnDeck(deck, 6.0)
-        if onDeck then
-            local waitAnimStart = os.clock()
-            while isBoardingAnimationActive() and (os.clock() - waitAnimStart) < 6.0 and rafting.enabled do
-                task.wait(0.2)
+        task.spawn(function()
+            local deck = rafting.getRaftDeck()
+            local onDeck = ensureCowOnDeck(deck, 6.0)
+            if onDeck then
+                local waitAnimStart = os.clock()
+                while isBoardingAnimationActive() and (os.clock() - waitAnimStart) < 6.0 and rafting.enabled do
+                    task.wait(0.2)
+                end
+                task.wait(0.3) -- Allow native _stepDeckMotion to register and bind Key N
+                -- Dispatch departure via native Key N (FjordRafting_Continue)
+                sendRaftKey(Enum.KeyCode.N, 0.25)
+            else
+                if deck then placeCowAboveDeck(deck) end
+                sendRaftKey(Enum.KeyCode.N, 0.25)
             end
-            task.wait(0.3) -- Allow native _stepDeckMotion to register and bind Key N
-            -- Dispatch departure via native Key N (FjordRafting_Continue)
-            sendRaftKey(Enum.KeyCode.N, 0.25)
-        else
-            if deck then placeCowAboveDeck(deck) end
-            sendRaftKey(Enum.KeyCode.N, 0.25)
-        end
 
-        -- A dock only answers Continue. Sail is for Boarding and Ready, and at a dock just gets
-        -- "Board the raft before setting sail" back. The key above worked at every logged dock, so these
-        -- are fallbacks for when it did not.
-        local departCommand = if wasDocked then "Continue" else "Sail"
-        local function stillWaiting()
-            local current = rafting.currentSnapshot
-            return current and (current.Status == "Docked" or current.Status == "Ready")
-        end
-        task.wait(0.8)
-        if stillWaiting() then
-            triggerRaftingCommand(departCommand)
+            -- A dock only answers Continue. Sail is for Boarding and Ready, and at a dock just gets
+            -- "Board the raft before setting sail" back. The key above worked at every logged dock, so these
+            -- are fallbacks for when it did not.
+            local departCommand = if wasDocked then "Continue" else "Sail"
+            local function stillWaiting()
+                local current = rafting.currentSnapshot
+                return current and (current.Status == "Docked" or current.Status == "Ready")
+            end
             task.wait(0.8)
             if stillWaiting() then
-                rafting.fireRemoteSafely(departCommand, nil, 0.5)
+                triggerRaftingCommand(departCommand)
+                task.wait(0.8)
+                if stillWaiting() then
+                    rafting.fireRemoteSafely(departCommand, nil, 0.5)
+                end
             end
-        end
 
-        -- Resume sailing state
-        rafting.status = "Travelling"
-        rafting.isDockedState = false
-        rafting.currentDockSite = nil
-        rafting.isSailing = true
-        rafting.statusText = "Resuming voyage..."
-        rafting.isCastingOff = false
-        rafting.updateCards()
-    end)
-end
-
-function rafting.updateCards()
-    local snap = rafting.currentSnapshot
-    local statusTitle = "Fjord Rafting: " .. tostring(rafting.statusText)
-    local nextSite = snap and snap.Frame and typeof(snap.Frame) == "CFrame" and rafting.getNextTargetClearing(snap.Frame.Position.X, snap.Frame.Position.Z)
-    local nextSiteStr = nextSite and nextSite.Id or "Sea (Finish)"
-    if nextSite and rafting.isSelfCorrecting then
-        nextSiteStr = nextSiteStr .. " (Self-Corrected)"
-    end
-    local pipeline = rafting.selectOptimalPipeline and rafting.selectOptimalPipeline() or "North"
-    local statusContent = string.format("Session: %s | Auto-Pilot: %s | Target: %s\nRoute: %s (%s Pipeline) | Natural: %s | Auto-Loop: %s",
-        tostring(rafting.status),
-        rafting.enabled and "Active" or "Disabled",
-        nextSiteStr,
-        tostring(rafting.route),
-        tostring(pipeline),
-        rafting.naturalMode and "ON" or "OFF",
-        rafting.autoLoop and "ON" or "OFF"
-    )
-
-    if rafting.statusCard then
-        pcall(function()
-            if rafting.statusCard.SetTitle then
-                rafting.statusCard:SetTitle(statusTitle)
-                rafting.statusCard:Set(statusContent)
-            elseif rafting.statusCard.Set then
-                rafting.statusCard:Set({ Title = statusTitle, Content = statusContent })
-            end
+            -- Resume sailing state
+            rafting.status = "Travelling"
+            rafting.isDockedState = false
+            rafting.currentDockSite = nil
+            rafting.isSailing = true
+            rafting.statusText = "Resuming voyage..."
+            rafting.isCastingOff = false
+            rafting.updateCards()
         end)
     end
 
-    if rafting.telemetryCard then
-        local hp = snap and snap.Health or 0
-        local maxHp = snap and snap.MaxHealth or 120
-        local nrg = snap and snap.Energy or 0
-        local maxNrg = snap and snap.MaxEnergy or 326
-        local spd = snap and snap.Speed or 0
-        local steer = snap and snap.Steering or 0
-        local posStr = "N/A"
-        if snap and snap.Frame and typeof(snap.Frame) == "CFrame" then
-            posStr = string.format("X: %d | Z: %d", math.floor(snap.Frame.Position.X), math.floor(snap.Frame.Position.Z))
+    function rafting.updateCards()
+        local snap = rafting.currentSnapshot
+        local statusTitle = "Fjord Rafting: " .. tostring(rafting.statusText)
+        local nextSite = snap and snap.Frame and typeof(snap.Frame) == "CFrame" and rafting.getNextTargetClearing(snap.Frame.Position.X, snap.Frame.Position.Z)
+        local nextSiteStr = nextSite and nextSite.Id or "Sea (Finish)"
+        if nextSite and rafting.isSelfCorrecting then
+            nextSiteStr = nextSiteStr .. " (Self-Corrected)"
         end
-
-        local w = rafting.whiskerClearances or {}
-        local whiskerStr = string.format("Whiskers: L:%.0f | F:%.0f | R:%.0f", w.LeftLateral or 25, w.Forward or 50, w.RightLateral or 25)
-
-        local telemTitle = string.format("Raft Telemetry | HP: %d/%d | Energy: %d/%d", hp, maxHp, nrg, maxNrg)
-        local telemBody = string.format("Speed: %.1f kts | Steering: %+.2f | Pos: %s\nReach: %s | Boosting: %s | %s",
-            spd,
-            steer,
-            posStr,
-            tostring(snap and snap.Reach or "Harbour"),
-            tostring(snap and snap.Boosting == true),
-            whiskerStr
+        local pipeline = rafting.selectOptimalPipeline and rafting.selectOptimalPipeline() or "North"
+        local statusContent = string.format("Session: %s | Auto-Pilot: %s | Target: %s\nRoute: %s (%s Pipeline) | Natural: %s | Auto-Loop: %s",
+            tostring(rafting.status),
+            rafting.enabled and "Active" or "Disabled",
+            nextSiteStr,
+            tostring(rafting.route),
+            tostring(pipeline),
+            rafting.naturalMode and "ON" or "OFF",
+            rafting.autoLoop and "ON" or "OFF"
         )
-        pcall(function()
-            if rafting.telemetryCard.SetTitle then
-                rafting.telemetryCard:SetTitle(telemTitle)
-                rafting.telemetryCard:Set(telemBody)
-            elseif rafting.telemetryCard.Set then
-                rafting.telemetryCard:Set({ Title = telemTitle, Content = telemBody })
+
+        if rafting.statusCard then
+            pcall(function()
+                if rafting.statusCard.SetTitle then
+                    rafting.statusCard:SetTitle(statusTitle)
+                    rafting.statusCard:Set(statusContent)
+                elseif rafting.statusCard.Set then
+                    rafting.statusCard:Set({ Title = statusTitle, Content = statusContent })
+                end
+            end)
+        end
+
+        if rafting.telemetryCard then
+            local hp = snap and snap.Health or 0
+            local maxHp = snap and snap.MaxHealth or 120
+            local nrg = snap and snap.Energy or 0
+            local maxNrg = snap and snap.MaxEnergy or 326
+            local spd = snap and snap.Speed or 0
+            local steer = snap and snap.Steering or 0
+            local posStr = "N/A"
+            if snap and snap.Frame and typeof(snap.Frame) == "CFrame" then
+                posStr = string.format("X: %d | Z: %d", math.floor(snap.Frame.Position.X), math.floor(snap.Frame.Position.Z))
             end
-        end)
-    end
-end
 
-function rafting.handleHobgoblinRock(rock)
-    if not rock or typeof(rock) ~= "table" or not rock.Id or not rock.Landing then return end
-    if rock.RaftId and rafting.sessionId and tostring(rock.RaftId) ~= tostring(rafting.sessionId) then
-        return
-    end
+            local w = rafting.whiskerClearances or {}
+            local whiskerStr = string.format("Whiskers: L:%.0f | F:%.0f | R:%.0f", w.LeftLateral or 25, w.Forward or 50, w.RightLateral or 25)
 
-    rock.ReceivedAt = os.clock()
-    rafting.incomingRocks[rock.Id] = rock
-end
-
-function rafting.handleHobgoblinLanded(landed)
-    if not landed or typeof(landed) ~= "table" or not landed.Id then return end
-    rafting.incomingRocks[landed.Id] = nil
-    if landed.Hit then
-        rafting.lastRockHitTime = os.clock()
-    end
-end
-
--- Hull size as rocks see it, measured from 56 logged rocks: every hit landed within 30 studs along the hull
--- and 9 across it, though the deck itself is only 32 x 14. Across includes margin for prediction error.
-local ROCK_HALF_LENGTH = 31
-local ROCK_HALF_BEAM = 11.5
-local STEER_SPEED = 10
-local STEER_LAG = 0.3 -- seconds for the cow to reach a new deck position
-local DECK_STEER_RANGE = 5.8
-
-function rafting.getRockThreats(deck)
-    local threats = {}
-    local rocks = rafting.incomingRocks
-    if not rocks or not rafting.autoEvadeHobgoblins then return threats end
-
-    local snap = rafting.currentSnapshot
-    local speed = (snap and snap.Speed) or 0
-    local serverNow = workspace:GetServerTimeNow()
-    local clockNow = os.clock()
-    for rockId, rock in pairs(rocks) do
-        local flight = rock.Flight or 1.9
-        local timeLeft = if rock.ReleaseAt then rock.ReleaseAt + flight - serverNow else flight - (clockNow - (rock.ReceivedAt or clockNow))
-        if timeLeft < -0.5 or timeLeft > 6 then
-            rocks[rockId] = nil
-        elseif timeLeft > 0.05 and typeof(rock.Landing) == "Vector3" then
-            local rel = deck.CFrame:PointToObjectSpace(rock.Landing)
-            if math.abs(-rel.Z - speed * timeLeft) <= ROCK_HALF_LENGTH then
-                table.insert(threats, { across = rel.X, timeLeft = timeLeft })
-            end
+            local telemTitle = string.format("Raft Telemetry | HP: %d/%d | Energy: %d/%d", hp, maxHp, nrg, maxNrg)
+            local telemBody = string.format("Speed: %.1f kts | Steering: %+.2f | Pos: %s\nReach: %s | Boosting: %s | %s",
+                spd,
+                steer,
+                posStr,
+                tostring(snap and snap.Reach or "Harbour"),
+                tostring(snap and snap.Boosting == true),
+                whiskerStr
+            )
+            pcall(function()
+                if rafting.telemetryCard.SetTitle then
+                    rafting.telemetryCard:SetTitle(telemTitle)
+                    rafting.telemetryCard:Set(telemBody)
+                elseif rafting.telemetryCard.Set then
+                    rafting.telemetryCard:Set({ Title = telemTitle, Content = telemBody })
+                end
+            end)
         end
     end
-    return threats
-end
 
--- Leaves the wanted deck position alone unless it ends in a rock hit, and then moves it as little as clears
--- every rock in flight. Checking the wanted course is what stops a dodge or a lane return steering into a
--- second rock, which is how most logged hits happened.
--- Route error (studs) beyond which a dodge may ease the correction but not reverse it
-rafting.ROCK_COMMIT_ERROR = 25
+    function rafting.handleHobgoblinRock(rock)
+        if not rock or typeof(rock) ~= "table" or not rock.Id or not rock.Landing then return end
+        if rock.RaftId and rafting.sessionId and tostring(rock.RaftId) ~= tostring(rafting.sessionId) then
+            return
+        end
 
-function rafting.avoidRocks(deck, wantedDeckX, leftClear, rightClear, isCommitted)
-    local threats = rafting.getRockThreats(deck)
-    if #threats == 0 then
-        rafting.isEvadingRock = false
-        return wantedDeckX, false
+        rock.ReceivedAt = os.clock()
+        rafting.incomingRocks[rock.Id] = rock
     end
 
-    local snap = rafting.currentSnapshot
-    local steerNow = (snap and snap.Steering) or 0
-    local function penalty(steer)
-        local cost, wallMove = 0, 0
-        for _, threat in ipairs(threats) do
-            local lag = math.min(STEER_LAG, threat.timeLeft)
-            local moved = STEER_SPEED * (steerNow * lag + steer * (threat.timeLeft - lag))
-            if math.abs(threat.across - moved) <= ROCK_HALF_BEAM then
+    function rafting.handleHobgoblinLanded(landed)
+        if not landed or typeof(landed) ~= "table" or not landed.Id then return end
+        rafting.incomingRocks[landed.Id] = nil
+        if landed.Hit then
+            rafting.lastRockHitTime = os.clock()
+        end
+    end
+
+    -- Hull size as rocks see it, measured from 56 logged rocks: every hit landed within 30 studs along the hull
+    -- and 9 across it, though the deck itself is only 32 x 14. Across includes margin for prediction error.
+    local ROCK_HALF_LENGTH = 31
+    local ROCK_HALF_BEAM = 11.5
+    local STEER_SPEED = 10
+    local STEER_LAG = 0.3 -- seconds for the cow to reach a new deck position
+    local DECK_STEER_RANGE = 5.8
+
+    function rafting.getRockThreats(deck)
+        local threats = {}
+        local rocks = rafting.incomingRocks
+        if not rocks or not rafting.autoEvadeHobgoblins then return threats end
+
+        local snap = rafting.currentSnapshot
+        local speed = (snap and snap.Speed) or 0
+        local serverNow = workspace:GetServerTimeNow()
+        local clockNow = os.clock()
+        for rockId, rock in pairs(rocks) do
+            local flight = rock.Flight or 1.9
+            local timeLeft = if rock.ReleaseAt then rock.ReleaseAt + flight - serverNow else flight - (clockNow - (rock.ReceivedAt or clockNow))
+            if timeLeft < -0.5 or timeLeft > 6 then
+                rocks[rockId] = nil
+            elseif timeLeft > 0.05 and typeof(rock.Landing) == "Vector3" then
+                local rel = deck.CFrame:PointToObjectSpace(rock.Landing)
+                if math.abs(-rel.Z - speed * timeLeft) <= ROCK_HALF_LENGTH then
+                    table.insert(threats, { across = rel.X, timeLeft = timeLeft })
+                end
+            end
+        end
+        return threats
+    end
+
+    -- Leaves the wanted deck position alone unless it ends in a rock hit, and then moves it as little as clears
+    -- every rock in flight. Checking the wanted course is what stops a dodge or a lane return steering into a
+    -- second rock, which is how most logged hits happened.
+    -- Route error (studs) beyond which a dodge may ease the correction but not reverse it
+    rafting.ROCK_COMMIT_ERROR = 25
+
+    function rafting.avoidRocks(deck, wantedDeckX, leftClear, rightClear, isCommitted)
+        local threats = rafting.getRockThreats(deck)
+        if #threats == 0 then
+            rafting.isEvadingRock = false
+            return wantedDeckX, false
+        end
+
+        local snap = rafting.currentSnapshot
+        local steerNow = (snap and snap.Steering) or 0
+        local function penalty(steer)
+            local cost, wallMove = 0, 0
+            for _, threat in ipairs(threats) do
+                local lag = math.min(STEER_LAG, threat.timeLeft)
+                local moved = STEER_SPEED * (steerNow * lag + steer * (threat.timeLeft - lag))
+                if math.abs(threat.across - moved) <= ROCK_HALF_BEAM then
+                    cost = cost + 1
+                end
+                if math.abs(moved) > math.abs(wallMove) then wallMove = moved end
+            end
+            -- A crash costs about what a rock does, and also stops the raft
+            local room = if wallMove < 0 then leftClear else rightClear
+            if room - 7 - math.abs(wallMove) < 2 then
                 cost = cost + 1
             end
-            if math.abs(moved) > math.abs(wallMove) then wallMove = moved end
+            return cost
         end
-        -- A crash costs about what a rock does, and also stops the raft
-        local room = if wallMove < 0 then leftClear else rightClear
-        if room - 7 - math.abs(wallMove) < 2 then
-            cost = cost + 1
+
+        local wantedSteer = math.clamp(wantedDeckX / DECK_STEER_RANGE, -1, 1)
+        local bestSteer, bestCost = wantedSteer, penalty(wantedSteer)
+        if bestCost == 0 then
+            rafting.isEvadingRock = false
+            return wantedDeckX, false
         end
-        return cost
-    end
-
-    local wantedSteer = math.clamp(wantedDeckX / DECK_STEER_RANGE, -1, 1)
-    local bestSteer, bestCost = wantedSteer, penalty(wantedSteer)
-    if bestCost == 0 then
-        rafting.isEvadingRock = false
-        return wantedDeckX, false
-    end
-    for _, steer in ipairs({ 0, 0.35, -0.35, 0.7, -0.7, 1, -1 }) do
-        local allowed = not isCommitted or wantedSteer == 0 or (steer * wantedSteer > 0 and math.abs(steer) >= 0.7)
-        local cost = if allowed then penalty(steer) else math.huge
-        if cost < bestCost or (cost == bestCost and math.abs(steer - wantedSteer) < math.abs(bestSteer - wantedSteer)) then
-            bestSteer, bestCost = steer, cost
-        end
-    end
-    rafting.isEvadingRock = bestSteer ~= wantedSteer
-    return bestSteer * DECK_STEER_RANGE, rafting.isEvadingRock
-end
-
-rafting.CHEST_RETRY_NOTICES = { ChestBlocked = true, ApproachChest = true }
-rafting.CHEST_DONE_NOTICES = { ChestAlreadyClaimed = true, ChestUnavailable = true }
-rafting.CHEST_ABORT_NOTICES = { NotAtRaftingStop = true, InventoryFull = true }
-
-function rafting.dismissChestRewardGui(force)
-    if not force and rafting.autoDismissRewardGui == false and rafting.autoAcceptRewards == false then return false end
-    local p = plr or Players.LocalPlayer or localPlayer
-    local pg = nil
-    pcall(function() pg = p and p:FindFirstChildWhichIsA("PlayerGui") end)
-    if not pg then return false end
-    local dismissed = false
-    local vi = VirtualInput
-
-    -- 1. Targeted dismissal for known reward / reveal modal ScreenGuis (RewardBoxReveal from TeamChestController, etc.)
-    local targetGuiNames = { "RewardBoxReveal", "CaravanCrateReveal", "CowFavoriteReward", "FavoriteRewardPrompt", "QuestModal" }
-    for _, tName in ipairs(targetGuiNames) do
-        local rGui = nil
-        pcall(function() rGui = pg:FindFirstChild(tName) end)
-        local isTargetActive = false
-        pcall(function()
-            if rGui and rGui:IsA("ScreenGui") and rGui.Enabled then
-                if tName == "RewardBoxReveal" then
-                    local panel = rGui:FindFirstChild("Backdrop") and rGui.Backdrop:FindFirstChild("Panel")
-                    if rGui:GetAttribute("RewardBox") ~= nil or (panel and panel:IsA("CanvasGroup") and panel.GroupTransparency < 0.9) then
-                        isTargetActive = true
-                    end
-                else
-                    isTargetActive = true
-                end
-            end
-        end)
-        if isTargetActive then
-            local descs = nil
-            pcall(function() descs = rGui:GetDescendants() end)
-            if descs then
-                for _, desc in ipairs(descs) do
-                    if isRewardDismissButton(desc) then
-                        if activateGuiButton(desc, vi) then
-                            dismissed = true
-                        end
-                    end
-                end
-            end
-            if dismissed or (rGui:GetAttribute("RewardBox") ~= nil) then
-                if vi and vi.SendKeyEvent then
-                    pcall(function()
-                        vi:SendKeyEvent(true, Enum.KeyCode.Escape, false, game)
-                        task.wait(0.04)
-                        vi:SendKeyEvent(false, Enum.KeyCode.Escape, false, game)
-                    end)
-                end
-                pcall(function() rGui.Enabled = false end)
-                dismissed = true
+        for _, steer in ipairs({ 0, 0.35, -0.35, 0.7, -0.7, 1, -1 }) do
+            local allowed = not isCommitted or wantedSteer == 0 or (steer * wantedSteer > 0 and math.abs(steer) >= 0.7)
+            local cost = if allowed then penalty(steer) else math.huge
+            if cost < bestCost or (cost == bestCost and math.abs(steer - wantedSteer) < math.abs(bestSteer - wantedSteer)) then
+                bestSteer, bestCost = steer, cost
             end
         end
+        rafting.isEvadingRock = bestSteer ~= wantedSteer
+        return bestSteer * DECK_STEER_RANGE, rafting.isEvadingRock
     end
 
-    -- 2. General search across reward ScreenGuis and BillboardGuis
-    local children = nil
-    pcall(function() children = pg:GetChildren() end)
-    if children then
-        local ignoredGuiNames = {
-            rayfield = true, cowhub = true, fjordraftinghud = true, trickortreatsign = true,
-            fieldhud = true, barnbook = true, quickmenus = true, adminpanel = true,
-            herdmenu = true, updatesmenu = true, cosmeticdetail = true, playermailbox = true,
-            npcshoppanel = true, plotpanel = true, constructionpanel = true, atlaspage = true,
-            gardenpanel = true, robloxgui = true, chat = true
-        }
-        for _, gui in ipairs(children) do
-            local canCheck = false
-            local gName = ""
+    rafting.CHEST_RETRY_NOTICES = { ChestBlocked = true, ApproachChest = true }
+    rafting.CHEST_DONE_NOTICES = { ChestAlreadyClaimed = true, ChestUnavailable = true }
+    rafting.CHEST_ABORT_NOTICES = { NotAtRaftingStop = true, InventoryFull = true }
+
+    function rafting.dismissChestRewardGui(force)
+        if not force and rafting.autoDismissRewardGui == false and rafting.autoAcceptRewards == false then return false end
+        local p = plr or Players.LocalPlayer or localPlayer
+        local pg = nil
+        pcall(function() pg = p and p:FindFirstChildWhichIsA("PlayerGui") end)
+        if not pg then return false end
+        local dismissed = false
+        local vi = VirtualInput
+
+        -- 1. Targeted dismissal for known reward / reveal modal ScreenGuis (RewardBoxReveal from TeamChestController, etc.)
+        local targetGuiNames = { "RewardBoxReveal", "CaravanCrateReveal", "CowFavoriteReward", "FavoriteRewardPrompt", "QuestModal" }
+        for _, tName in ipairs(targetGuiNames) do
+            local rGui = nil
+            pcall(function() rGui = pg:FindFirstChild(tName) end)
+            local isTargetActive = false
             pcall(function()
-                if (gui:IsA("ScreenGui") or gui:IsA("BillboardGui")) and gui.Enabled then
-                    gName = gui.Name:lower()
-                    if not ignoredGuiNames[gName] and not gName:find("rayfield") and not gName:find("cowhub") and not gName:find("hud") then
-                        if gui:GetAttribute("RewardBox") ~= nil
-                            or gName:find("reward") or gName:find("reveal") or gName:find("chest")
-                            or gName:find("crate") or gName:find("prize") or gName:find("loot") then
-                            canCheck = true
+                if rGui and rGui:IsA("ScreenGui") and rGui.Enabled then
+                    if tName == "RewardBoxReveal" then
+                        local panel = rGui:FindFirstChild("Backdrop") and rGui.Backdrop:FindFirstChild("Panel")
+                        if rGui:GetAttribute("RewardBox") ~= nil or (panel and panel:IsA("CanvasGroup") and panel.GroupTransparency < 0.9) then
+                            isTargetActive = true
                         end
+                    else
+                        isTargetActive = true
                     end
                 end
             end)
-            if canCheck then
+            if isTargetActive then
                 local descs = nil
-                pcall(function() descs = gui:GetDescendants() end)
+                pcall(function() descs = rGui:GetDescendants() end)
                 if descs then
                     for _, desc in ipairs(descs) do
                         if isRewardDismissButton(desc) then
@@ -10684,19 +10682,72 @@ function rafting.dismissChestRewardGui(force)
                         end
                     end
                 end
+                if dismissed or (rGui:GetAttribute("RewardBox") ~= nil) then
+                    if vi and vi.SendKeyEvent then
+                        pcall(function()
+                            vi:SendKeyEvent(true, Enum.KeyCode.Escape, false, game)
+                            task.wait(0.04)
+                            vi:SendKeyEvent(false, Enum.KeyCode.Escape, false, game)
+                        end)
+                    end
+                    pcall(function() rGui.Enabled = false end)
+                    dismissed = true
+                end
             end
         end
-    end
 
-    if dismissed and vi and vi.SendKeyEvent then
-        pcall(function()
-            vi:SendKeyEvent(true, Enum.KeyCode.Escape, false, game)
-            task.wait(0.04)
-            vi:SendKeyEvent(false, Enum.KeyCode.Escape, false, game)
-        end)
-    end
+        -- 2. General search across reward ScreenGuis and BillboardGuis
+        local children = nil
+        pcall(function() children = pg:GetChildren() end)
+        if children then
+            local ignoredGuiNames = {
+                rayfield = true, cowhub = true, fjordraftinghud = true, trickortreatsign = true,
+                fieldhud = true, barnbook = true, quickmenus = true, adminpanel = true,
+                herdmenu = true, updatesmenu = true, cosmeticdetail = true, playermailbox = true,
+                npcshoppanel = true, plotpanel = true, constructionpanel = true, atlaspage = true,
+                gardenpanel = true, robloxgui = true, chat = true
+            }
+            for _, gui in ipairs(children) do
+                local canCheck = false
+                local gName = ""
+                pcall(function()
+                    if (gui:IsA("ScreenGui") or gui:IsA("BillboardGui")) and gui.Enabled then
+                        gName = gui.Name:lower()
+                        if not ignoredGuiNames[gName] and not gName:find("rayfield") and not gName:find("cowhub") and not gName:find("hud") then
+                            if gui:GetAttribute("RewardBox") ~= nil
+                                or gName:find("reward") or gName:find("reveal") or gName:find("chest")
+                                or gName:find("crate") or gName:find("prize") or gName:find("loot") then
+                                canCheck = true
+                            end
+                        end
+                    end
+                end)
+                if canCheck then
+                    local descs = nil
+                    pcall(function() descs = gui:GetDescendants() end)
+                    if descs then
+                        for _, desc in ipairs(descs) do
+                            if isRewardDismissButton(desc) then
+                                if activateGuiButton(desc, vi) then
+                                    dismissed = true
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
 
-    return dismissed
+        if dismissed and vi and vi.SendKeyEvent then
+            pcall(function()
+                vi:SendKeyEvent(true, Enum.KeyCode.Escape, false, game)
+                task.wait(0.04)
+                vi:SendKeyEvent(false, Enum.KeyCode.Escape, false, game)
+            end)
+        end
+
+        return dismissed
+    end
 end
 
 function rafting.pollRewardGuiUntilDismissed(timeoutSecs, force)
@@ -10718,29 +10769,31 @@ function rafting.pollRewardGuiUntilDismissed(timeoutSecs, force)
     end)
 end
 
-local ProximityPromptService = game:GetService("ProximityPromptService")
-if ProximityPromptService then
-    pcall(function()
-        ProximityPromptService.PromptTriggered:Connect(function(prompt, playerWhoTriggered)
-            if playerWhoTriggered == (plr or Players.LocalPlayer) and prompt then
-                local promptName = ""
-                local pName = ""
-                local grandParentName = ""
-                pcall(function()
-                    promptName = prompt.Name:lower()
-                    if prompt.Parent then
-                        pName = prompt.Parent.Name:lower()
-                        if prompt.Parent.Parent then
-                            grandParentName = prompt.Parent.Parent.Name:lower()
+do
+    local ProximityPromptService = game:GetService("ProximityPromptService")
+    if ProximityPromptService then
+        pcall(function()
+            ProximityPromptService.PromptTriggered:Connect(function(prompt, playerWhoTriggered)
+                if playerWhoTriggered == (plr or Players.LocalPlayer) and prompt then
+                    local promptName = ""
+                    local pName = ""
+                    local grandParentName = ""
+                    pcall(function()
+                        promptName = prompt.Name:lower()
+                        if prompt.Parent then
+                            pName = prompt.Parent.Name:lower()
+                            if prompt.Parent.Parent then
+                                grandParentName = prompt.Parent.Parent.Name:lower()
+                            end
                         end
+                    end)
+                    if promptName:find("chest") or pName:find("chest") or grandParentName:find("chest") or pName == "localteamchest" or grandParentName == "localteamchest" then
+                        rafting.pollRewardGuiUntilDismissed(8.0)
                     end
-                end)
-                if promptName:find("chest") or pName:find("chest") or grandParentName:find("chest") or pName == "localteamchest" or grandParentName == "localteamchest" then
-                    rafting.pollRewardGuiUntilDismissed(8.0)
                 end
-            end
+            end)
         end)
-    end)
+    end
 end
 
 task.spawn(function()
@@ -11307,77 +11360,79 @@ rafting.telemetry = {
     facadesSavedAt = 0,
 }
 
-local telemetryIgnoredEvents = { RaftingSnapshot = true, RaftRiverLoad = true, RaftRiverKeep = true, RaftYard = true }
+do
+    local telemetryIgnoredEvents = { RaftingSnapshot = true, RaftRiverLoad = true, RaftRiverKeep = true, RaftYard = true }
 
-function rafting.telemetryText(value, depth)
-    depth = depth or 0
-    if type(value) ~= "table" then return tostring(value) end
-    if depth >= 3 then return "{...}" end
-    local parts = {}
-    for k, v in pairs(value) do
-        table.insert(parts, tostring(k) .. "=" .. rafting.telemetryText(v, depth + 1))
-    end
-    return "{" .. table.concat(parts, " ") .. "}"
-end
-
-function rafting.telemetryLine(line)
-    local tel = rafting.telemetry
-    if not tel.fileName then return end
-    table.insert(tel.pending, line)
-end
-
-function rafting.telemetryFlush(force)
-    local tel = rafting.telemetry
-    local now = os.clock()
-    if not tel.fileName or #tel.pending == 0 then return end
-    if not force and (now - tel.lastFlushAt) < 5 then return end
-    tel.lastFlushAt = now
-    local chunk = table.concat(tel.pending, "\n") .. "\n"
-    tel.pending = {}
-    pcall(function()
-        if appendfile then
-            appendfile(tel.fileName, chunk)
-        elseif writefile then
-            -- No append support: rewrite the file, capped so a long voyage cannot stall on it
-            table.insert(tel.allLines, chunk)
-            if #tel.allLines > 400 then table.remove(tel.allLines, 1) end
-            writefile(tel.fileName, table.concat(tel.allLines))
+    function rafting.telemetryText(value, depth)
+        depth = depth or 0
+        if type(value) ~= "table" then return tostring(value) end
+        if depth >= 3 then return "{...}" end
+        local parts = {}
+        for k, v in pairs(value) do
+            table.insert(parts, tostring(k) .. "=" .. rafting.telemetryText(v, depth + 1))
         end
-    end)
-end
-
-function rafting.telemetryStart(sessionId)
-    local tel = rafting.telemetry
-    if not writefile then return end
-    tel.fileName = resolveCowHubPath(string.format("cowhub_raft_%d_%s.log", os.time(), string.sub(tostring(sessionId), 1, 8)), "raftlogs")
-    tel.pending = {}
-    tel.allLines = {}
-    tel.lastObserved = {}
-    tel.knownKeys = {}
-    tel.lastCross = nil
-    pcall(function() writefile(tel.fileName, "") end)
-    rafting.telemetryLine("H,t,x,z,headingDeg,cross,along,steering,targetDeckX,targetZ,errorZ,left,right,forward,status,health,energy,speed,crash,bump,weather,gust,drift,statusText")
-    local cg = game:GetService("ReplicatedStorage"):FindFirstChild("CowGame")
-    if cg then
-        rafting.telemetryEvent("StormAttributes", {
-            Seed = cg:GetAttribute("FjordStormSeed"),
-            Epoch = cg:GetAttribute("FjordStormEpoch"),
-            Mask = cg:GetAttribute("FjordStormMask"),
-        })
+        return "{" .. table.concat(parts, " ") .. "}"
     end
-    rafting.telemetryFlush(true)
-end
 
-function rafting.telemetryEvent(name, payload)
-    if not rafting.telemetry.fileName or telemetryIgnoredEvents[name] then return end
-    if type(name) ~= "string" then return end
-    local isRelevant = name == "SessionEnded" or name == "StormAttributes" or name == "Snapshot"
-        or string.find(name, "Raft", 1, true) or string.find(name, "Storm", 1, true) or string.find(name, "TeamChest", 1, true)
-        or string.find(name, "Hobgoblin", 1, true) or string.find(name, "Hazard", 1, true) or string.find(name, "Weather", 1, true)
-    if not isRelevant then return end
-    local ok, text = pcall(rafting.telemetryText, payload)
-    rafting.telemetryLine(string.format("E,%.2f,%s,%s", os.clock(), name, ok and text or "?"))
-    rafting.telemetryFlush(true)
+    function rafting.telemetryLine(line)
+        local tel = rafting.telemetry
+        if not tel.fileName then return end
+        table.insert(tel.pending, line)
+    end
+
+    function rafting.telemetryFlush(force)
+        local tel = rafting.telemetry
+        local now = os.clock()
+        if not tel.fileName or #tel.pending == 0 then return end
+        if not force and (now - tel.lastFlushAt) < 5 then return end
+        tel.lastFlushAt = now
+        local chunk = table.concat(tel.pending, "\n") .. "\n"
+        tel.pending = {}
+        pcall(function()
+            if appendfile then
+                appendfile(tel.fileName, chunk)
+            elseif writefile then
+                -- No append support: rewrite the file, capped so a long voyage cannot stall on it
+                table.insert(tel.allLines, chunk)
+                if #tel.allLines > 400 then table.remove(tel.allLines, 1) end
+                writefile(tel.fileName, table.concat(tel.allLines))
+            end
+        end)
+    end
+
+    function rafting.telemetryStart(sessionId)
+        local tel = rafting.telemetry
+        if not writefile then return end
+        tel.fileName = resolveCowHubPath(string.format("cowhub_raft_%d_%s.log", os.time(), string.sub(tostring(sessionId), 1, 8)), "raftlogs")
+        tel.pending = {}
+        tel.allLines = {}
+        tel.lastObserved = {}
+        tel.knownKeys = {}
+        tel.lastCross = nil
+        pcall(function() writefile(tel.fileName, "") end)
+        rafting.telemetryLine("H,t,x,z,headingDeg,cross,along,steering,targetDeckX,targetZ,errorZ,left,right,forward,status,health,energy,speed,crash,bump,weather,gust,drift,statusText")
+        local cg = game:GetService("ReplicatedStorage"):FindFirstChild("CowGame")
+        if cg then
+            rafting.telemetryEvent("StormAttributes", {
+                Seed = cg:GetAttribute("FjordStormSeed"),
+                Epoch = cg:GetAttribute("FjordStormEpoch"),
+                Mask = cg:GetAttribute("FjordStormMask"),
+            })
+        end
+        rafting.telemetryFlush(true)
+    end
+
+    function rafting.telemetryEvent(name, payload)
+        if not rafting.telemetry.fileName or telemetryIgnoredEvents[name] then return end
+        if type(name) ~= "string" then return end
+        local isRelevant = name == "SessionEnded" or name == "StormAttributes" or name == "Snapshot"
+            or string.find(name, "Raft", 1, true) or string.find(name, "Storm", 1, true) or string.find(name, "TeamChest", 1, true)
+            or string.find(name, "Hobgoblin", 1, true) or string.find(name, "Hazard", 1, true) or string.find(name, "Weather", 1, true)
+        if not isRelevant then return end
+        local ok, text = pcall(rafting.telemetryText, payload)
+        rafting.telemetryLine(string.format("E,%.2f,%s,%s", os.clock(), name, ok and text or "?"))
+        rafting.telemetryFlush(true)
+    end
 end
 
 -- Records snapshot transitions, and any snapshot field not seen before, as events.
@@ -12818,369 +12873,363 @@ _G.CowHubRaftingCleanup = rafting.cleanup
 -- ==========================
 -- UI SETUP: Fjord Rafting Tab
 -- ==========================
-local RaftingTab = Window:CreateTab({ Name = "Fjord Rafting", Icon = 4483362458 })
+do
+    local RaftingTab = Window:CreateTab({ Name = "Fjord Rafting", Icon = 4483362458 })
 
-RaftingTab:CreateSection({ Name = "Live Voyage Telemetry" })
+    RaftingTab:CreateSection({ Name = "Live Voyage Telemetry" })
 
-local initialRaftStatusTitle = "Fjord Rafting: Idle at Raft Yard"
-local initialRaftStatusBody = "Rafting inactive. Click 'Start Rafting Voyage' to begin."
-if RaftingTab.CreateText then
-    pcall(function()
-        rafting.statusCard = RaftingTab:CreateText({
-            name = initialRaftStatusTitle,
-            text = initialRaftStatusBody
-        })
-    end)
-end
-if not rafting.statusCard and RaftingTab.CreateParagraph then
-    pcall(function()
-        rafting.statusCard = RaftingTab:CreateParagraph({
-            Title = initialRaftStatusTitle,
-            Content = initialRaftStatusBody
-        })
-    end)
-end
+    local initialRaftStatusTitle = "Fjord Rafting: Idle at Raft Yard"
+    local initialRaftStatusBody = "Rafting inactive. Click 'Start Rafting Voyage' to begin."
+    if RaftingTab.CreateText then
+        pcall(function()
+            rafting.statusCard = RaftingTab:CreateText({
+                name = initialRaftStatusTitle,
+                text = initialRaftStatusBody
+            })
+        end)
+    end
+    if not rafting.statusCard and RaftingTab.CreateParagraph then
+        pcall(function()
+            rafting.statusCard = RaftingTab:CreateParagraph({
+                Title = initialRaftStatusTitle,
+                Content = initialRaftStatusBody
+            })
+        end)
+    end
 
-local initialTelemTitle = "Raft Telemetry | HP: --/-- | Energy: --/--"
-local initialTelemBody = "Speed: 0.0 kts | Steering: 0.00 | Pos: N/A\nReach: Harbour | Boosting: false | Adrift: false"
-if RaftingTab.CreateText then
-    pcall(function()
-        rafting.telemetryCard = RaftingTab:CreateText({
-            name = initialTelemTitle,
-            text = initialTelemBody
-        })
-    end)
-end
-if not rafting.telemetryCard and RaftingTab.CreateParagraph then
-    pcall(function()
-        rafting.telemetryCard = RaftingTab:CreateParagraph({
-            Title = initialTelemTitle,
-            Content = initialTelemBody
-        })
-    end)
-end
+    local initialTelemTitle = "Raft Telemetry | HP: --/-- | Energy: --/--"
+    local initialTelemBody = "Speed: 0.0 kts | Steering: 0.00 | Pos: N/A\nReach: Harbour | Boosting: false | Adrift: false"
+    if RaftingTab.CreateText then
+        pcall(function()
+            rafting.telemetryCard = RaftingTab:CreateText({
+                name = initialTelemTitle,
+                text = initialTelemBody
+            })
+        end)
+    end
+    if not rafting.telemetryCard and RaftingTab.CreateParagraph then
+        pcall(function()
+            rafting.telemetryCard = RaftingTab:CreateParagraph({
+                Title = initialTelemTitle,
+                Content = initialTelemBody
+            })
+        end)
+    end
 
-RaftingTab:CreateSection({ Name = "Session Controls" })
+    RaftingTab:CreateSection({ Name = "Session Controls" })
 
-RaftingTab:CreateToggle({
-    Name = "Enable Automated Rafting",
-    CurrentValue = false,
-    Flag = "Toggle_Rafting_Enabled",
-    Callback = function(Value)
-        rafting.enabled = Value
-        rafting.telemetryEvent("RaftAutoPilot", { Enabled = Value, Status = rafting.status })
-        if Value then
-            rafting.cancelLooting = false
-            rafting.isEndingVoyage = false
-            rafting.isEndingVoyageInProgress = false
-            rafting.lastStepOkAt = nil
-            rafting.initClientListener()
-            rafting.startSteeringLoop()
-            Window:Notify({ Title = "Rafting Auto-Pilot", Content = "Auto-Pilot enabled. Raft will steer along the selected route.", Duration = 3 })
-        else
-            rafting.stopSteeringLoop()
-        end
-        rafting.updateCards()
-    end,
-})
-
-RaftingTab:CreateToggle({
-    Name = "Auto-Loop Voyages (Repeat Runs)",
-    CurrentValue = false,
-    Flag = "Toggle_Rafting_AutoLoop",
-    Callback = function(Value)
-        rafting.autoLoop = Value
-    end,
-})
-
-RaftingTab:CreateButton({
-    Name = "Start Rafting Voyage",
-    Callback = function()
-        rafting.startVoyage()
-    end,
-})
-
-RaftingTab:CreateButton({
-    Name = "Sail Now / Cast Off",
-    Callback = function()
-        rafting.castOff()
-        Window:Notify({ Title = "Sailing", Content = "Cast off signal sent!", Duration = 3 })
-    end,
-})
-
-RaftingTab:CreateButton({
-    Name = "Return to Shore / Dock",
-    Callback = function()
-        rafting.endVoyage()
-    end,
-})
-
-RaftingTab:CreateButton({
-    Name = "Teleport to Raft Yard Dock",
-    Callback = function()
-        rafting.teleportToRaftYard()
-    end,
-})
-
-RaftingTab:CreateButton({
-    Name = "Teleport Above Raft Deck",
-    Callback = function()
-        rafting.teleportToDeck()
-    end,
-})
-
-RaftingTab:CreateSection({ Name = "Route Navigation Settings" })
-
-RaftingTab:CreateDropdown({
-    Name = "Rafting Route Profile",
-    Options = {
-        "Leftmost Clearings & Caves (Far-North / Left-Left-Forward)",
-        "Hybrid Dynamic Explorer (Custom Selection)",
-        "Clearing & Chest Explorer (All Clearings)",
-        "North Channels (Caves & Drops)",
-        "South Channels (Scenic & Clearings)",
-        "Fast Sea Run (Center/Direct)"
-    },
-    CurrentOption = {"Hybrid Dynamic Explorer (Custom Selection)"},
-    Flag = "Dropdown_Rafting_Route",
-    Callback = function(Option)
-        local chosen = type(Option) == "table" and Option[1] or Option
-        rafting.route = chosen or "Hybrid Dynamic Explorer (Custom Selection)"
-        rafting.updateCards()
-    end,
-})
-
-RaftingTab:CreateSection({ Name = "Target Sites Selection by Level & River Bank" })
-
-RaftingTab:CreateDropdown({
-    Name = "Zone 1: Level 1 & 2 Sites (Upper Fjord - Reach 1)",
-    Options = {
-        "[Left] Clearing 01 (Level 1, North Bank)",
-        "[Left] Cubby 01 Cave (Level 2, North Bank)",
-        "[Right] Cubby 02 Cave (Level 1, South Bank)",
-        "[Right] Clearing 02 (Level 2, South Bank)"
-    },
-    CurrentOption = {
-        "[Right] Clearing 02 (Level 2, South Bank)"
-    },
-    MultipleOptions = true,
-    Flag = "Dropdown_Rafting_Zone1",
-    Callback = function(Options)
-        rafting.updateZoneSites(1, Options)
-    end,
-})
-
-RaftingTab:CreateDropdown({
-    Name = "Zone 2: Level 3 Sites (Mid-Fjord Canyon - Reach 3)",
-    Options = {
-        "[Left] Clearing 03 (Level 3, North Bank)",
-        "[Center] Cubby 03 Cave (Level 3, Center/South Bank)",
-        "[Right] Clearing 04 (Level 3, South Bank)"
-    },
-    CurrentOption = {
-        "[Left] Clearing 03 (Level 3, North Bank)",
-        "[Right] Clearing 04 (Level 3, South Bank)"
-    },
-    MultipleOptions = true,
-    Flag = "Dropdown_Rafting_Zone2",
-    Callback = function(Options)
-        rafting.updateZoneSites(2, Options)
-    end,
-})
-
-RaftingTab:CreateDropdown({
-    Name = "Zone 3: Level 4 Delta Sites (Lower Fjord - Reach 5)",
-    Options = {
-        "[Far-Left] Clearing 05 (Level 4, North 1 Channel)",
-        "[Left] Cubby 04 Cave (Level 4, North 2 Channel)",
-        "[Mid-Left] Clearing 06 (Level 4, North-Center Channel)",
-        "[Mid-Right] Clearing 07 (Level 4, South-Center Channel)",
-        "[Far-Right] Clearing 08 (Level 4, South 1 Channel)"
-    },
-    CurrentOption = {
-        "[Far-Left] Clearing 05 (Level 4, North 1 Channel)",
-        "[Mid-Left] Clearing 06 (Level 4, North-Center Channel)",
-        "[Mid-Right] Clearing 07 (Level 4, South-Center Channel)",
-        "[Far-Right] Clearing 08 (Level 4, South 1 Channel)"
-    },
-    MultipleOptions = true,
-    Flag = "Dropdown_Rafting_Zone3",
-    Callback = function(Options)
-        rafting.updateZoneSites(3, Options)
-    end,
-})
-
-RaftingTab:CreateDropdown({
-    Name = "Zone 4: Level 4 Terminus Sites (Delta Terminus - Reach 7 & Caves)",
-    Options = {
-        "[Left] Cubby 05 Cave (Level 4, North 1 Channel)",
-        "[Mid-Left] Clearing 09 (Level 4, North 2 Channel)",
-        "[Mid-Left] Clearing 10 (Level 4, North 2 Channel)",
-        "[Mid-Right] Cave 11 (Level 4, South 2 Channel)",
-        "[Far-Right] Cave 12 (Level 4, South Terminus)"
-    },
-    CurrentOption = {
-        "[Mid-Left] Clearing 09 (Level 4, North 2 Channel)",
-        "[Mid-Left] Clearing 10 (Level 4, North 2 Channel)"
-    },
-    MultipleOptions = true,
-    Flag = "Dropdown_Rafting_Zone4",
-    Callback = function(Options)
-        rafting.updateZoneSites(4, Options)
-    end,
-})
-
-RaftingTab:CreateButton({
-    Name = "Select All Sites (All 4 Zones)",
-    Callback = function()
-        rafting.selectAllSites = true
-        rafting.selectAllClearings = false
-        if rafting.allSites then
-            local combined = {}
-            for _, s in ipairs(rafting.allSites) do
-                combined[s.Id] = true
+    RaftingTab:CreateToggle({
+        Name = "Enable Automated Rafting",
+        CurrentValue = false,
+        Flag = "Toggle_Rafting_Enabled",
+        Callback = function(Value)
+            rafting.enabled = Value
+            rafting.telemetryEvent("RaftAutoPilot", { Enabled = Value, Status = rafting.status })
+            if Value then
+                rafting.cancelLooting = false
+                rafting.isEndingVoyage = false
+                rafting.isEndingVoyageInProgress = false
+                rafting.lastStepOkAt = nil
+                rafting.initClientListener()
+                rafting.startSteeringLoop()
+                Window:Notify({ Title = "Rafting Auto-Pilot", Content = "Auto-Pilot enabled. Raft will steer along the selected route.", Duration = 3 })
+            else
+                rafting.stopSteeringLoop()
             end
-            rafting.selectedClearings = combined
-        end
-        rafting.updateCards()
-    end,
-})
+            rafting.updateCards()
+        end,
+    })
 
-RaftingTab:CreateButton({
-    Name = "Clear All Sites (All 4 Zones)",
-    Callback = function()
-        rafting.selectAllSites = false
-        rafting.selectAllClearings = false
-        rafting.selectedClearings = {}
-        rafting.selectedByZone = { [1] = {}, [2] = {}, [3] = {}, [4] = {} }
-        rafting.updateCards()
-    end,
-})
+    RaftingTab:CreateToggle({
+        Name = "Auto-Loop Voyages (Repeat Runs)",
+        CurrentValue = false,
+        Flag = "Toggle_Rafting_AutoLoop",
+        Callback = function(Value)
+            rafting.autoLoop = Value
+        end,
+    })
 
-RaftingTab:CreateToggle({
-    Name = "Auto-Dismiss Chest Reward GUI (Accept / Okay)",
-    CurrentValue = true,
-    Flag = "Toggle_Rafting_DismissChestRewardGui",
-    Callback = function(Value)
-        rafting.autoDismissRewardGui = Value
-        rafting.autoAcceptRewards = Value
-    end,
-})
+    do
+        local row = RaftingTab:CreateGroup()
+        row:CreateButton({
+            Name = "Start Rafting Voyage",
+            Callback = function()
+                rafting.startVoyage()
+            end,
+        })
 
-RaftingTab:CreateButton({
-    Name = "Dismiss Reward GUI Now",
-    Callback = function()
-        local didDismiss = rafting.dismissChestRewardGui(true)
-        if didDismiss then
-            Window:Notify({ Title = "Chest GUI", Content = "Dismissed reward popup.", Duration = 2 })
-        else
-            Window:Notify({ Title = "Chest GUI", Content = "No active reward popup found.", Duration = 2 })
-        end
-    end,
-})
+        row:CreateButton({
+            Name = "Sail Now / Cast Off",
+            Callback = function()
+                rafting.castOff()
+                Window:Notify({ Title = "Sailing", Content = "Cast off signal sent!", Duration = 3 })
+            end,
+        })
 
-RaftingTab:CreateToggle({
-    Name = "Auto-Continue After Docking & Chest",
-    CurrentValue = true,
-    Flag = "Toggle_Rafting_AutoContinue",
-    Callback = function(Value)
-        rafting.autoContinueFromDock = Value
-    end,
-})
+        row:CreateButton({
+            Name = "Return to Shore / Dock",
+            Callback = function()
+                rafting.endVoyage()
+            end,
+        })
+    end
 
-RaftingTab:CreateToggle({
-    Name = "Collect All Loot Chests (Clearings & Caves)",
-    CurrentValue = true,
-    Flag = "Toggle_Rafting_CollectAllLootChests",
-    Callback = function(Value)
-        rafting.collectAllLootChests = Value
-        rafting.updateCards()
-    end,
-})
+    RaftingTab:CreateSection({ Name = "Route Navigation Settings" })
 
-RaftingTab:CreateSection({ Name = "Automation & Safety" })
+    RaftingTab:CreateDropdown({
+        Name = "Rafting Route Profile",
+        Options = {
+            "Leftmost Clearings & Caves (Far-North / Left-Left-Forward)",
+            "Hybrid Dynamic Explorer (Custom Selection)",
+            "Clearing & Chest Explorer (All Clearings)",
+            "North Channels (Caves & Drops)",
+            "South Channels (Scenic & Clearings)",
+            "Fast Sea Run (Center/Direct)"
+        },
+        CurrentOption = {"Hybrid Dynamic Explorer (Custom Selection)"},
+        Flag = "Dropdown_Rafting_Route",
+        Callback = function(Option)
+            local chosen = type(Option) == "table" and Option[1] or Option
+            rafting.route = chosen or "Hybrid Dynamic Explorer (Custom Selection)"
+            rafting.updateCards()
+        end,
+    })
 
-RaftingTab:CreateToggle({
-    Name = "Natural Mode (Walk & Pathfind, No Teleports)",
-    CurrentValue = false,
-    Flag = "Toggle_Rafting_NaturalMode",
-    Callback = function(Value)
-        rafting.naturalMode = Value
-        rafting.updateCards()
-    end,
-})
+    RaftingTab:CreateSection({ Name = "Target Sites Selection by Level & River Bank" })
 
-RaftingTab:CreateToggle({
-    Name = "Auto-Recover Overboard / Separated",
-    CurrentValue = true,
-    Flag = "Toggle_Rafting_AutoRecoverOverboard",
-    Callback = function(Value)
-        rafting.autoRecoverOverboard = Value
-    end,
-})
+    RaftingTab:CreateDropdown({
+        Name = "Zone 1: Level 1 & 2 Sites (Upper Fjord - Reach 1)",
+        Options = {
+            "[Left] Clearing 01 (Level 1, North Bank)",
+            "[Left] Cubby 01 Cave (Level 2, North Bank)",
+            "[Right] Cubby 02 Cave (Level 1, South Bank)",
+            "[Right] Clearing 02 (Level 2, South Bank)"
+        },
+        CurrentOption = {
+            "[Right] Clearing 02 (Level 2, South Bank)"
+        },
+        MultipleOptions = true,
+        Flag = "Dropdown_Rafting_Zone1",
+        Callback = function(Options)
+            rafting.updateZoneSites(1, Options)
+        end,
+    })
 
-RaftingTab:CreateToggle({
-    Name = "Auto-Boost (Sprint on Straights)",
-    CurrentValue = true,
-    Flag = "Toggle_Rafting_AutoBoost",
-    Callback = function(Value)
-        rafting.autoBoost = Value
-    end,
-})
+    RaftingTab:CreateDropdown({
+        Name = "Zone 2: Level 3 Sites (Mid-Fjord Canyon - Reach 3)",
+        Options = {
+            "[Left] Clearing 03 (Level 3, North Bank)",
+            "[Center] Cubby 03 Cave (Level 3, Center/South Bank)",
+            "[Right] Clearing 04 (Level 3, South Bank)"
+        },
+        CurrentOption = {
+            "[Left] Clearing 03 (Level 3, North Bank)",
+            "[Right] Clearing 04 (Level 3, South Bank)"
+        },
+        MultipleOptions = true,
+        Flag = "Dropdown_Rafting_Zone2",
+        Callback = function(Options)
+            rafting.updateZoneSites(2, Options)
+        end,
+    })
 
-RaftingTab:CreateToggle({
-    Name = "Auto-Evade Threats & Weather",
-    CurrentValue = true,
-    Flag = "Toggle_Rafting_AutoEvadeHobgoblins",
-    Callback = function(Value)
-        rafting.autoEvadeHobgoblins = Value
-    end,
-})
+    RaftingTab:CreateDropdown({
+        Name = "Zone 3: Level 4 Delta Sites (Lower Fjord - Reach 5)",
+        Options = {
+            "[Far-Left] Clearing 05 (Level 4, North 1 Channel)",
+            "[Left] Cubby 04 Cave (Level 4, North 2 Channel)",
+            "[Mid-Left] Clearing 06 (Level 4, North-Center Channel)",
+            "[Mid-Right] Clearing 07 (Level 4, South-Center Channel)",
+            "[Far-Right] Clearing 08 (Level 4, South 1 Channel)"
+        },
+        CurrentOption = {
+            "[Far-Left] Clearing 05 (Level 4, North 1 Channel)",
+            "[Mid-Left] Clearing 06 (Level 4, North-Center Channel)",
+            "[Mid-Right] Clearing 07 (Level 4, South-Center Channel)",
+            "[Far-Right] Clearing 08 (Level 4, South 1 Channel)"
+        },
+        MultipleOptions = true,
+        Flag = "Dropdown_Rafting_Zone3",
+        Callback = function(Options)
+            rafting.updateZoneSites(3, Options)
+        end,
+    })
 
-RaftingTab:CreateSlider({
-    Name = "Min Stamina to Boost (%)",
-    Range = {10, 90},
-    Increment = 5,
-    Suffix = "%",
-    CurrentValue = rafting.minBoostStamina,
-    Flag = "Slider_Rafting_MinBoostStamina",
-    Callback = function(Value)
-        rafting.minBoostStamina = Value
-    end,
-})
+    RaftingTab:CreateDropdown({
+        Name = "Zone 4: Level 4 Terminus Sites (Delta Terminus - Reach 7 & Caves)",
+        Options = {
+            "[Left] Cubby 05 Cave (Level 4, North 1 Channel)",
+            "[Mid-Left] Clearing 09 (Level 4, North 2 Channel)",
+            "[Mid-Left] Clearing 10 (Level 4, North 2 Channel)",
+            "[Mid-Right] Cave 11 (Level 4, South 2 Channel)",
+            "[Far-Right] Cave 12 (Level 4, South Terminus)"
+        },
+        CurrentOption = {
+            "[Mid-Left] Clearing 09 (Level 4, North 2 Channel)",
+            "[Mid-Left] Clearing 10 (Level 4, North 2 Channel)"
+        },
+        MultipleOptions = true,
+        Flag = "Dropdown_Rafting_Zone4",
+        Callback = function(Options)
+            rafting.updateZoneSites(4, Options)
+        end,
+    })
 
-RaftingTab:CreateToggle({
-    Name = "Auto-Repair Split Beams",
-    CurrentValue = true,
-    Flag = "Toggle_Rafting_AutoRepair",
-    Callback = function(Value)
-        rafting.autoRepair = Value
-    end,
-})
+    do
+        local row = RaftingTab:CreateGroup()
+        row:CreateButton({
+            Name = "Select All Sites (All 4 Zones)",
+            Callback = function()
+                rafting.selectAllSites = true
+                rafting.selectAllClearings = false
+                if rafting.allSites then
+                    local combined = {}
+                    for _, s in ipairs(rafting.allSites) do
+                        combined[s.Id] = true
+                    end
+                    rafting.selectedClearings = combined
+                end
+                rafting.updateCards()
+            end,
+        })
 
-RaftingTab:CreateSlider({
-    Name = "Emergency Return Health",
-    Range = {10, 80},
-    Increment = 5,
-    Suffix = " HP",
-    CurrentValue = rafting.emergencyReturnHp,
-    Flag = "Slider_Rafting_EmergencyReturnHp",
-    Callback = function(Value)
-        rafting.emergencyReturnHp = Value
-    end,
-})
+        row:CreateButton({
+            Name = "Clear All Sites (All 4 Zones)",
+            Callback = function()
+                rafting.selectAllSites = false
+                rafting.selectAllClearings = false
+                rafting.selectedClearings = {}
+                rafting.selectedByZone = { [1] = {}, [2] = {}, [3] = {}, [4] = {} }
+                rafting.updateCards()
+            end,
+        })
+    end
 
-RaftingTab:CreateSlider({
-    Name = "Dock Stop Delay (Seconds)",
-    Range = {2, 30},
-    Increment = 1,
-    Suffix = "s",
-    CurrentValue = rafting.dockMaxWaitSeconds,
-    Flag = "Slider_Rafting_DockWait",
-    Callback = function(Value)
-        rafting.dockMaxWaitSeconds = Value
-    end,
-})
+    RaftingTab:CreateToggle({
+        Name = "Auto-Dismiss Chest Reward GUI (Accept / Okay)",
+        CurrentValue = true,
+        Flag = "Toggle_Rafting_DismissChestRewardGui",
+        Callback = function(Value)
+            rafting.autoDismissRewardGui = Value
+            rafting.autoAcceptRewards = Value
+        end,
+    })
+
+    RaftingTab:CreateButton({
+        Name = "Dismiss Reward GUI Now",
+        Callback = function()
+            local didDismiss = rafting.dismissChestRewardGui(true)
+            if didDismiss then
+                Window:Notify({ Title = "Chest GUI", Content = "Dismissed reward popup.", Duration = 2 })
+            else
+                Window:Notify({ Title = "Chest GUI", Content = "No active reward popup found.", Duration = 2 })
+            end
+        end,
+    })
+
+    RaftingTab:CreateToggle({
+        Name = "Auto-Continue After Docking & Chest",
+        CurrentValue = true,
+        Flag = "Toggle_Rafting_AutoContinue",
+        Callback = function(Value)
+            rafting.autoContinueFromDock = Value
+        end,
+    })
+
+    RaftingTab:CreateToggle({
+        Name = "Collect All Loot Chests (Clearings & Caves)",
+        CurrentValue = true,
+        Flag = "Toggle_Rafting_CollectAllLootChests",
+        Callback = function(Value)
+            rafting.collectAllLootChests = Value
+            rafting.updateCards()
+        end,
+    })
+
+    RaftingTab:CreateSection({ Name = "Automation & Safety" })
+
+    RaftingTab:CreateToggle({
+        Name = "Natural Mode (Walk & Pathfind, No Teleports)",
+        CurrentValue = false,
+        Flag = "Toggle_Rafting_NaturalMode",
+        Callback = function(Value)
+            rafting.naturalMode = Value
+            rafting.updateCards()
+        end,
+    })
+
+    RaftingTab:CreateToggle({
+        Name = "Auto-Recover Overboard / Separated",
+        CurrentValue = true,
+        Flag = "Toggle_Rafting_AutoRecoverOverboard",
+        Callback = function(Value)
+            rafting.autoRecoverOverboard = Value
+        end,
+    })
+
+    RaftingTab:CreateToggle({
+        Name = "Auto-Boost (Sprint on Straights)",
+        CurrentValue = true,
+        Flag = "Toggle_Rafting_AutoBoost",
+        Callback = function(Value)
+            rafting.autoBoost = Value
+        end,
+    })
+
+    RaftingTab:CreateToggle({
+        Name = "Auto-Evade Threats & Weather",
+        CurrentValue = true,
+        Flag = "Toggle_Rafting_AutoEvadeHobgoblins",
+        Callback = function(Value)
+            rafting.autoEvadeHobgoblins = Value
+        end,
+    })
+
+    RaftingTab:CreateSlider({
+        Name = "Min Stamina to Boost (%)",
+        Range = {10, 90},
+        Increment = 5,
+        Suffix = "%",
+        CurrentValue = rafting.minBoostStamina,
+        Flag = "Slider_Rafting_MinBoostStamina",
+        Callback = function(Value)
+            rafting.minBoostStamina = Value
+        end,
+    })
+
+    RaftingTab:CreateToggle({
+        Name = "Auto-Repair Split Beams",
+        CurrentValue = true,
+        Flag = "Toggle_Rafting_AutoRepair",
+        Callback = function(Value)
+            rafting.autoRepair = Value
+        end,
+    })
+
+    RaftingTab:CreateSlider({
+        Name = "Emergency Return Health",
+        Range = {10, 80},
+        Increment = 5,
+        Suffix = " HP",
+        CurrentValue = rafting.emergencyReturnHp,
+        Flag = "Slider_Rafting_EmergencyReturnHp",
+        Callback = function(Value)
+            rafting.emergencyReturnHp = Value
+        end,
+    })
+
+    RaftingTab:CreateSlider({
+        Name = "Dock Stop Delay (Seconds)",
+        Range = {2, 30},
+        Increment = 1,
+        Suffix = "s",
+        CurrentValue = rafting.dockMaxWaitSeconds,
+        Flag = "Slider_Rafting_DockWait",
+        Callback = function(Value)
+            rafting.dockMaxWaitSeconds = Value
+        end,
+    })
+end
 
 -- ==========================
 -- CARAVAN RAID (Plan 1.3; proven in luascripts/caravan_autofarm.lua, UAT runs 1-5)
@@ -14142,493 +14191,556 @@ end
 -- ==========================
 -- UI SETUP: Caravan Raid Tab
 -- ==========================
-local CaravanTab = Window:CreateTab({ Name = "Caravan Raid", Icon = 4483362458 })
-
-CaravanTab:CreateSection({ Name = "Caravan Raid" })
-
-CaravanTab:CreateToggle({
-    Name = "Caravan Autofarm (overrides other farms)",
-    CurrentValue = false,
-    Flag = "Toggle_CaravanAutofarm",
-    Callback = function(Value)
-        caravan.enabled = Value == true
-        if caravan.enabled then
-            caravan.grumpyState, caravan.grumpyMisses, caravan.grumpyUnanswered = "unknown", 0, 0
-        end
-    end,
-})
-
-CaravanTab:CreateToggle({
-    Name = "Natural Mode (walk from the barn)",
-    CurrentValue = false,
-    Flag = "Toggle_CaravanNatural",
-    Callback = function(Value)
-        local on = Value == true
-        if on ~= caravan.natural and caravan.active then
-            -- Switching mid-event: stop walking or keep the teleport-mode return point
-            if not on then caravan.stopWalk() end
-        end
-        caravan.natural = on
-    end,
-})
-
-CaravanTab:CreateToggle({
-    Name = "Grumpy Moo",
-    CurrentValue = true,
-    Flag = "Toggle_CaravanGrumpy",
-    Callback = function(Value)
-        caravan.useGrumpy = Value == true
-        if caravan.useGrumpy then caravan.grumpyState, caravan.grumpyMisses, caravan.grumpyUnanswered = "unknown", 0, 0 end
-    end,
-})
-
-CaravanTab:CreateToggle({
-    Name = "Loot Barrels (materials)",
-    CurrentValue = true,
-    Flag = "Toggle_CaravanGrazeBarrels",
-    Callback = function(Value)
-        caravan.grazeBarrels = Value == true
-        if not caravan.grazeBarrels then caravan.barrelLock = nil end
-    end,
-})
-
-CaravanTab:CreateToggle({
-    Name = "Loot Only (skip scaring)",
-    CurrentValue = false,
-    Flag = "Toggle_CaravanLootOnly",
-    Callback = function(Value) caravan.lootOnly = Value == true end,
-})
-
-CaravanTab:CreateButton({
-    Name = "Teleport to Barn",
-    Callback = function() caravan.teleportBarn() end,
-})
-
-CaravanTab:CreateToggle({
-    Name = "Caravan Debug Log",
-    CurrentValue = false,
-    Flag = "Toggle_CaravanDebugLog",
-    Callback = function(Value)
-        caravan.debug = Value == true
-        if not caravan.debug then caravan.flushLog(true) end
-    end,
-})
-
 do
-    local card
-    local title, body = "Caravan: --", "Waiting for caravan"
-    if CaravanTab.CreateText then
-        pcall(function() card = CaravanTab:CreateText({ name = title, text = body }) end)
-    end
-    if not card and CaravanTab.CreateParagraph then
-        pcall(function() card = CaravanTab:CreateParagraph({ Title = title, Content = body }) end)
-    end
-    task.spawn(function()
-        while card and _G.CowHubConnections == scriptConnections do
-            task.wait(1)
-            local s, st = caravan.stats, caravan.readState()
-            local t = string.format("Caravan: %s", caravan.status)
-            local b = string.format(
-                "Mode: %s · Grumpy: %s · Override: %s\nPhase: %s · Kind: %s\nCaravans %d · Stopped %d\nMoos %d · Frights %d · Missed %d\nKicks %d (ok %d / rejected %d) · Crates opened %d · Skins %d\nBites %d (ok %d / rejected %d) · Loot drops %d%s",
-                caravan.natural and "Natural (walk)" or "Teleport", caravan.useGrumpy and caravan.grumpyState or "off",
-                caravan.active and "ACTIVE" or "idle",
-                tostring(st and st.Phase or "none"), tostring(st and st.Kind or "-"),
-                s.caravans, s.stopped, s.moos, s.frights, s.missed, s.kicks, s.kickOk, s.kickBad, s.opened, s.skins,
-                s.bites, s.grazeOk, s.grazeBad, s.loot,
-                caravan.debug and caravan.logFile and ("\nLog: " .. caravan.logFile) or "")
-            pcall(function()
-                if card.SetTitle then
-                    card:SetTitle(t)
-                    card:Set(b)
-                elseif card.Set then
-                    card:Set({ Title = t, Content = b })
-                end
-            end)
+    local CaravanTab = Window:CreateTab({ Name = "Caravan Raid", Icon = 4483362458 })
+
+    CaravanTab:CreateSection({ Name = "Caravan Raid" })
+
+    CaravanTab:CreateToggle({
+        Name = "Caravan Autofarm (overrides other farms)",
+        CurrentValue = false,
+        Flag = "Toggle_CaravanAutofarm",
+        Callback = function(Value)
+            caravan.enabled = Value == true
+            if caravan.enabled then
+                caravan.grumpyState, caravan.grumpyMisses, caravan.grumpyUnanswered = "unknown", 0, 0
+            end
+        end,
+    })
+
+    CaravanTab:CreateToggle({
+        Name = "Natural Mode (walk from the barn)",
+        CurrentValue = false,
+        Flag = "Toggle_CaravanNatural",
+        Callback = function(Value)
+            local on = Value == true
+            if on ~= caravan.natural and caravan.active then
+                -- Switching mid-event: stop walking or keep the teleport-mode return point
+                if not on then caravan.stopWalk() end
+            end
+            caravan.natural = on
+        end,
+    })
+
+    CaravanTab:CreateToggle({
+        Name = "Grumpy Moo",
+        CurrentValue = true,
+        Flag = "Toggle_CaravanGrumpy",
+        Callback = function(Value)
+            caravan.useGrumpy = Value == true
+            if caravan.useGrumpy then caravan.grumpyState, caravan.grumpyMisses, caravan.grumpyUnanswered = "unknown", 0, 0 end
+        end,
+    })
+
+    CaravanTab:CreateToggle({
+        Name = "Loot Barrels (materials)",
+        CurrentValue = true,
+        Flag = "Toggle_CaravanGrazeBarrels",
+        Callback = function(Value)
+            caravan.grazeBarrels = Value == true
+            if not caravan.grazeBarrels then caravan.barrelLock = nil end
+        end,
+    })
+
+    CaravanTab:CreateToggle({
+        Name = "Loot Only (skip scaring)",
+        CurrentValue = false,
+        Flag = "Toggle_CaravanLootOnly",
+        Callback = function(Value) caravan.lootOnly = Value == true end,
+    })
+
+    CaravanTab:CreateToggle({
+        Name = "Caravan Debug Log",
+        CurrentValue = false,
+        Flag = "Toggle_CaravanDebugLog",
+        Callback = function(Value)
+            caravan.debug = Value == true
+            if not caravan.debug then caravan.flushLog(true) end
+        end,
+    })
+
+    do
+        local card
+        local title, body = "Caravan: --", "Waiting for caravan"
+        if CaravanTab.CreateText then
+            pcall(function() card = CaravanTab:CreateText({ name = title, text = body }) end)
         end
-    end)
+        if not card and CaravanTab.CreateParagraph then
+            pcall(function() card = CaravanTab:CreateParagraph({ Title = title, Content = body }) end)
+        end
+        task.spawn(function()
+            while card and _G.CowHubConnections == scriptConnections do
+                task.wait(1)
+                local s, st = caravan.stats, caravan.readState()
+                local t = string.format("Caravan: %s", caravan.status)
+                local b = string.format(
+                    "Mode: %s · Grumpy: %s · Override: %s\nPhase: %s · Kind: %s\nCaravans %d · Stopped %d\nMoos %d · Frights %d · Missed %d\nKicks %d (ok %d / rejected %d) · Crates opened %d · Skins %d\nBites %d (ok %d / rejected %d) · Loot drops %d%s",
+                    caravan.natural and "Natural (walk)" or "Teleport", caravan.useGrumpy and caravan.grumpyState or "off",
+                    caravan.active and "ACTIVE" or "idle",
+                    tostring(st and st.Phase or "none"), tostring(st and st.Kind or "-"),
+                    s.caravans, s.stopped, s.moos, s.frights, s.missed, s.kicks, s.kickOk, s.kickBad, s.opened, s.skins,
+                    s.bites, s.grazeOk, s.grazeBad, s.loot,
+                    caravan.debug and caravan.logFile and ("\nLog: " .. caravan.logFile) or "")
+                pcall(function()
+                    if card.SetTitle then
+                        card:SetTitle(t)
+                        card:Set(b)
+                    elseif card.Set then
+                        card:Set({ Title = t, Content = b })
+                    end
+                end)
+            end
+        end)
+    end
+end
+
+-- ==========================
+-- UI SETUP: Teleports Tab
+-- ==========================
+do
+    TeleportsTab:CreateSection({ Name = "Locations" })
+    do
+        local row = TeleportsTab:CreateGroup()
+        row:CreateButton({
+            Name = "Teleport to Farming Area",
+            Callback = function()
+                if not root or not char then return end
+                local target = CFrame.new(6269, 706, -185)
+                char:PivotTo(target)
+                root.CFrame = target
+                stopCharacterVelocity()
+                for _, part in ipairs(charBaseParts) do
+                    part.AssemblyLinearVelocity = Vector3.zero
+                    part.AssemblyAngularVelocity = Vector3.zero
+                end
+                -- Re-home the autofarm so it doesn't walk back to the old anchor
+                if farm.on then
+                    farm.anchorPos = target.Position
+                    farm.currentTargetNode = nil
+                    farm.currentNodeStartTime = 0
+                    farm.nextRandomPos = nil
+                end
+            end,
+        })
+        row:CreateButton({
+            Name = "Teleport to Barn",
+            Callback = function() caravan.teleportBarn() end,
+        })
+        row:CreateButton({
+            Name = "Teleport to Town Store (Buttercup Creamery)",
+            Callback = function()
+                townAuction.teleportToStore()
+            end,
+        })
+    end
+
+    TeleportsTab:CreateSection({ Name = "Fjord Rafting" })
+    do
+        local row = TeleportsTab:CreateGroup()
+        row:CreateButton({
+            Name = "Teleport to Raft Yard Dock",
+            Callback = function()
+                rafting.teleportToRaftYard()
+            end,
+        })
+        row:CreateButton({
+            Name = "Teleport Above Raft Deck",
+            Callback = function()
+                rafting.teleportToDeck()
+            end,
+        })
+    end
 end
 
 -- ==========================
 -- UI SETUP: Settings Tab
 -- ==========================
-local SettingsTab = Window:CreateTab({ Name = "Settings", Icon = 4483362458 })
+do
+    local SettingsTab = Window:CreateTab({ Name = "Settings", Icon = 4483362458 })
 
-SettingsTab:CreateSection({ Name = "Performance & Anti-Lag" })
+    SettingsTab:CreateSection({ Name = "Performance & Anti-Lag" })
 
-SettingsTab:CreateToggle({
-    Name = "Map & Asset Optimizer (Anti-Lag)",
-    CurrentValue = false,
-    Flag = "Toggle_MapOptimizer",
-    Callback = function(Value)
-        mapOptimizer.enabled = Value
-        if Value then
-            mapOptimizer.applyToWorld()
-            mapOptimizer.startStreamHook()
+    SettingsTab:CreateToggle({
+        Name = "Map & Asset Optimizer (Anti-Lag)",
+        CurrentValue = false,
+        Flag = "Toggle_MapOptimizer",
+        Callback = function(Value)
+            mapOptimizer.enabled = Value
+            if Value then
+                mapOptimizer.applyToWorld()
+                mapOptimizer.startStreamHook()
+                mapOptimizer.preloadAssets()
+                if Window and Window.Notify then
+                    Window:Notify({
+                        Title = "Anti-Lag Optimizer Enabled",
+                        Content = "Simplified map materials, disabled heavy shadows/particles, and hooked chunk streaming.",
+                        Duration = 3.5,
+                    })
+                end
+            else
+                mapOptimizer.stopStreamHook()
+            end
+        end,
+    })
+
+    SettingsTab:CreateToggle({
+        Name = "Auto-Clean Streamed Chunks",
+        CurrentValue = true,
+        Flag = "Toggle_StreamCleaner",
+        Callback = function(Value)
+            mapOptimizer.autoCleanStreamed = Value
+        end,
+    })
+
+    SettingsTab:CreateButton({
+        Name = "Preload Game Audio & Assets",
+        Callback = function()
             mapOptimizer.preloadAssets()
             if Window and Window.Notify then
                 Window:Notify({
-                    Title = "Anti-Lag Optimizer Enabled",
-                    Content = "Simplified map materials, disabled heavy shadows/particles, and hooked chunk streaming.",
-                    Duration = 3.5,
+                    Title = "Asset Preloader",
+                    Content = "Preloaded game audio and interface assets into memory cache.",
+                    Duration = 2.5,
                 })
             end
-        else
-            mapOptimizer.stopStreamHook()
-        end
-    end,
-})
-
-SettingsTab:CreateToggle({
-    Name = "Auto-Clean Streamed Chunks",
-    CurrentValue = true,
-    Flag = "Toggle_StreamCleaner",
-    Callback = function(Value)
-        mapOptimizer.autoCleanStreamed = Value
-    end,
-})
-
-SettingsTab:CreateButton({
-    Name = "Preload Game Audio & Assets",
-    Callback = function()
-        mapOptimizer.preloadAssets()
-        if Window and Window.Notify then
-            Window:Notify({
-                Title = "Asset Preloader",
-                Content = "Preloaded game audio and interface assets into memory cache.",
-                Duration = 2.5,
-            })
-        end
-    end,
-})
-
-SettingsTab:CreateToggle({
-    Name = "Disable 3D Rendering",
-    CurrentValue = false,
-    Flag = "Toggle_3DRender",
-    Callback = function(Value)
-        pcall(function()
-            RunService:Set3dRenderingEnabled(not Value)
-        end)
-    end,
-})
-
-SettingsTab:CreateToggle({
-    Name = "Enable FPS Cap",
-    CurrentValue = false,
-    Flag = "Toggle_FPSCap",
-    Callback = function(Value)
-        fps.capEnabled = Value
-        if setfpscap then pcall(function() setfpscap(fps.capEnabled and fps.currentCap or 60) end) end
-    end,
-})
-
-SettingsTab:CreateSlider({
-    Name = "FPS Cap Limit",
-    Range = {15, 60},
-    Increment = 1,
-    Suffix = "FPS",
-    CurrentValue = 60,
-    Flag = "Slider_FPSCap",
-    Callback = function(Value)
-        fps.currentCap = Value
-        if fps.capEnabled and setfpscap then pcall(function() setfpscap(fps.currentCap) end) end
-    end,
-})
-
-SettingsTab:CreateSection({ Name = "AFK Anti-Cheat & Auto-Rejoin" })
-
-SettingsTab:CreateToggle({
-    Name = "Enable 6-Hour Auto-Rejoin & Resume",
-    CurrentValue = true,
-    Flag = "Toggle_AFK_Rejoin",
-    Callback = function(Value)
-        afkRelog.enabled = Value
-        afkRelog.updateUI()
-    end,
-})
-
-SettingsTab:CreateSlider({
-    Name = "Rejoin Interval (Hours)",
-    Range = {0.5, 12.0},
-    Increment = 0.5,
-    Suffix = " Hours",
-    CurrentValue = 6.0,
-    Flag = "Slider_AFK_Interval",
-    Callback = function(Value)
-        afkRelog.interval = Value * 3600
-        afkRelog.targetRejoinTime = os.time() + afkRelog.interval
-        afkRelog.updateUI()
-    end,
-})
-
-pcall(function()
-    afkRelog.statusCard = SettingsTab:CreateParagraph({
-        Title = "AFK Rejoin Timer: Initializing...",
-        Content = "State persistence: Ready"
+        end,
     })
-end)
 
-SettingsTab:CreateButton({
-    Name = "Save State & Test Rejoin Now",
-    Callback = function()
-        afkRelog.triggerRejoin()
-    end,
-})
+    SettingsTab:CreateToggle({
+        Name = "Disable 3D Rendering",
+        CurrentValue = false,
+        Flag = "Toggle_3DRender",
+        Callback = function(Value)
+            pcall(function()
+                RunService:Set3dRenderingEnabled(not Value)
+            end)
+        end,
+    })
 
-SettingsTab:CreateButton({
-    Name = "Clear Saved Persistence File",
-    Callback = function()
-        local deleteFn = delfile or deletefile
-        if deleteFn then
-            pcall(function() deleteFn(afkRelog.fileName) end)
-        end
-        Window:Notify({ Title = "Cleared", Content = "Saved persistence file removed.", Duration = 2 })
-    end,
-})
+    SettingsTab:CreateToggle({
+        Name = "Enable FPS Cap",
+        CurrentValue = false,
+        Flag = "Toggle_FPSCap",
+        Callback = function(Value)
+            fps.capEnabled = Value
+            if setfpscap then pcall(function() setfpscap(fps.capEnabled and fps.currentCap or 60) end) end
+        end,
+    })
 
-SettingsTab:CreateSection({ Name = "Rayfield Gen2 Configuration Saving" })
+    SettingsTab:CreateSlider({
+        Name = "FPS Cap Limit",
+        Range = {15, 60},
+        Increment = 1,
+        Suffix = "FPS",
+        CurrentValue = 60,
+        Flag = "Slider_FPSCap",
+        Callback = function(Value)
+            fps.currentCap = Value
+            if fps.capEnabled and setfpscap then pcall(function() setfpscap(fps.currentCap) end) end
+        end,
+    })
 
-SettingsTab:CreateButton({
-    Name = "Save Configuration (CowHubConfig.rfld)",
-    Callback = function()
-        local success, err = pcall(function()
-            return Window:Save()
-        end)
-        if success then
-            Window:Notify({
-                Title = "Configuration Saved",
-                Content = "Saved current UI flags to Rayfield/Configurations/CowHub/CowHubConfig.rfld",
-                Duration = 4,
-                Image = 4483362458,
-            })
-        else
-            Window:Notify({
-                Title = "Save Error",
-                Content = "Failed to save configuration: " .. tostring(err),
-                Duration = 4,
-            })
-        end
-    end,
-})
+    SettingsTab:CreateSection({ Name = "AFK Anti-Cheat & Auto-Rejoin" })
 
-SettingsTab:CreateButton({
-    Name = "Reload Configuration (CowHubConfig.rfld)",
-    Callback = function()
-        local success, err = pcall(function()
-            return Window:Load()
-        end)
-        if success then
-            Window:Notify({
-                Title = "Configuration Loaded",
-                Content = "Restored and applied settings from Rayfield/Configurations/CowHub/CowHubConfig.rfld",
-                Duration = 4,
-                Image = 4483362458,
-            })
-        else
-            Window:Notify({
-                Title = "Load Error",
-                Content = "Failed to load configuration: " .. tostring(err),
-                Duration = 4,
-            })
-        end
-    end,
-})
+    SettingsTab:CreateToggle({
+        Name = "Enable 6-Hour Auto-Rejoin & Resume",
+        CurrentValue = true,
+        Flag = "Toggle_AFK_Rejoin",
+        Callback = function(Value)
+            afkRelog.enabled = Value
+            afkRelog.updateUI()
+        end,
+    })
 
-SettingsTab:CreateSection({ Name = "Script Controls" })
+    SettingsTab:CreateSlider({
+        Name = "Rejoin Interval (Hours)",
+        Range = {0.5, 12.0},
+        Increment = 0.5,
+        Suffix = " Hours",
+        CurrentValue = 6.0,
+        Flag = "Slider_AFK_Interval",
+        Callback = function(Value)
+            afkRelog.interval = Value * 3600
+            afkRelog.targetRejoinTime = os.time() + afkRelog.interval
+            afkRelog.updateUI()
+        end,
+    })
 
-SettingsTab:CreateButton({
-    Name = "Close Script & Destroy UI",
-    Callback = function()
-        pcall(function()
-            if auction.scannerRunning and httpRequest and WEBHOOK_URL ~= "" then
-                task.spawn(function()
-                    pcall(function()
-                        httpRequest({
-                            Url = WEBHOOK_URL,
-                            Method = "POST",
-                            Headers = {["Content-Type"] = "application/json"},
-                            Body = HttpService:JSONEncode({["embeds"] = {{
-                                ["title"] = "🛑 Scanner Offline",
-                                ["description"] = "The script has been closed and the auction scanner is no longer active.",
-                                ["color"] = 0xFF0000,
-                                ["footer"] = {["text"] = "Auction Scanner • " .. os.date("%X")}
-                            }}})
-                        })
+    pcall(function()
+        afkRelog.statusCard = SettingsTab:CreateParagraph({
+            Title = "AFK Rejoin Timer: Initializing...",
+            Content = "State persistence: Ready"
+        })
+    end)
+
+    do
+        local row = SettingsTab:CreateGroup()
+        row:CreateButton({
+            Name = "Save State & Test Rejoin Now",
+            Callback = function()
+                afkRelog.triggerRejoin()
+            end,
+        })
+
+        row:CreateButton({
+            Name = "Clear Saved Persistence File",
+            Callback = function()
+                local deleteFn = delfile or deletefile
+                if deleteFn then
+                    pcall(function() deleteFn(afkRelog.fileName) end)
+                end
+                Window:Notify({ Title = "Cleared", Content = "Saved persistence file removed.", Duration = 2 })
+            end,
+        })
+    end
+
+    SettingsTab:CreateSection({ Name = "Rayfield Gen2 Configuration Saving" })
+
+    do
+        local row = SettingsTab:CreateGroup()
+        row:CreateButton({
+            Name = "Save Configuration (CowHubConfig.rfld)",
+            Callback = function()
+                local success, err = pcall(function()
+                    return Window:Save()
+                end)
+                if success then
+                    Window:Notify({
+                        Title = "Configuration Saved",
+                        Content = "Saved current UI flags to Rayfield/Configurations/CowHub/CowHubConfig.rfld",
+                        Duration = 4,
+                        Image = 4483362458,
+                    })
+                else
+                    Window:Notify({
+                        Title = "Save Error",
+                        Content = "Failed to save configuration: " .. tostring(err),
+                        Duration = 4,
+                    })
+                end
+            end,
+        })
+
+        row:CreateButton({
+            Name = "Reload Configuration (CowHubConfig.rfld)",
+            Callback = function()
+                local success, err = pcall(function()
+                    return Window:Load()
+                end)
+                if success then
+                    Window:Notify({
+                        Title = "Configuration Loaded",
+                        Content = "Restored and applied settings from Rayfield/Configurations/CowHub/CowHubConfig.rfld",
+                        Duration = 4,
+                        Image = 4483362458,
+                    })
+                else
+                    Window:Notify({
+                        Title = "Load Error",
+                        Content = "Failed to load configuration: " .. tostring(err),
+                        Duration = 4,
+                    })
+                end
+            end,
+        })
+    end
+
+    SettingsTab:CreateSection({ Name = "Script Controls" })
+
+    SettingsTab:CreateButton({
+        Name = "Close Script & Destroy UI",
+        Callback = function()
+            pcall(function()
+                if auction.scannerRunning and httpRequest and WEBHOOK_URL ~= "" then
+                    task.spawn(function()
+                        pcall(function()
+                            httpRequest({
+                                Url = WEBHOOK_URL,
+                                Method = "POST",
+                                Headers = {["Content-Type"] = "application/json"},
+                                Body = HttpService:JSONEncode({["embeds"] = {{
+                                    ["title"] = "🛑 Scanner Offline",
+                                    ["description"] = "The script has been closed and the auction scanner is no longer active.",
+                                    ["color"] = 0xFF0000,
+                                    ["footer"] = {["text"] = "Auction Scanner • " .. os.date("%X")}
+                                }}})
+                            })
+                        end)
                     end)
-                end)
-            end
+                end
 
-            farm.on = false
-            farm.autoChomp = false
-            pcall(_G.CowHubChompCleanup)
-            farm.autoChompMobs = false
-            farm.autoFish = false
-            cache.cleanupRippleTracking()
-            dodge.auto = false
+                farm.on = false
+                farm.autoChomp = false
+                pcall(_G.CowHubChompCleanup)
+                farm.autoChompMobs = false
+                farm.autoFish = false
+                cache.cleanupRippleTracking()
+                dodge.auto = false
 
-            if manatite then
-                pcall(function()
-                    manatite.auto = false
-                    manatite.showESP = false
-                    manatite.cleanupVisuals()
-                    if manatite.anchor and root then
-                        pcall(function() root.Anchored = false end)
-                    end
-                    manatite.model = nil
-                    manatite.target = nil
-                    manatite.payload = nil
-                end)
-            end
-
-            if mithril then
-                pcall(function()
-                    mithril.auto = false
-                    mithril.showESP = false
-                    mithril.cleanupVisuals()
-                    if mithril.anchor and root then
-                        pcall(function() root.Anchored = false end)
-                    end
-                    mithril.model = nil
-                    mithril.orePart = nil
-                    mithril.payload = nil
-                end)
-            end
-
-            if aerial then
-                pcall(function()
-                    if aerial.active and root then
-                        aerial.active = false
-                        pcall(function() root.Anchored = false end)
-                        if aerial.preCFrame then
-                            pcall(function() char:PivotTo(aerial.preCFrame) end)
-                            pcall(function() setRootCFrame(aerial.preCFrame) end)
+                if manatite then
+                    pcall(function()
+                        manatite.auto = false
+                        manatite.showESP = false
+                        manatite.cleanupVisuals()
+                        if manatite.anchor and root then
+                            pcall(function() root.Anchored = false end)
                         end
-                        pcall(function()
-                            root.AssemblyLinearVelocity = Vector3.zero
-                            root.AssemblyAngularVelocity = Vector3.zero
-                        end)
-                        aerial.cframe = nil
-                        aerial.preCFrame = nil
-                    end
-                end)
-            end
+                        manatite.model = nil
+                        manatite.target = nil
+                        manatite.payload = nil
+                    end)
+                end
 
-            if dodge then
+                if mithril then
+                    pcall(function()
+                        mithril.auto = false
+                        mithril.showESP = false
+                        mithril.cleanupVisuals()
+                        if mithril.anchor and root then
+                            pcall(function() root.Anchored = false end)
+                        end
+                        mithril.model = nil
+                        mithril.orePart = nil
+                        mithril.payload = nil
+                    end)
+                end
+
+                if aerial then
+                    pcall(function()
+                        if aerial.active and root then
+                            aerial.active = false
+                            pcall(function() root.Anchored = false end)
+                            if aerial.preCFrame then
+                                pcall(function() char:PivotTo(aerial.preCFrame) end)
+                                pcall(function() setRootCFrame(aerial.preCFrame) end)
+                            end
+                            pcall(function()
+                                root.AssemblyLinearVelocity = Vector3.zero
+                                root.AssemblyAngularVelocity = Vector3.zero
+                            end)
+                            aerial.cframe = nil
+                            aerial.preCFrame = nil
+                        end
+                    end)
+                end
+
+                if dodge then
+                    pcall(function()
+                        if dodge.isUnderground and root and dodge.lastSurfaceCFrame then
+                            setRootCFrame(dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0))
+                            pcall(function() root.Anchored = false end)
+                            pcall(function()
+                                root.AssemblyLinearVelocity = Vector3.zero
+                                root.AssemblyAngularVelocity = Vector3.zero
+                            end)
+                            dodge.isUnderground = false
+                            dodge.currentUndergroundRetreatOffset = nil
+                        end
+                        if dodge.isDodging then
+                            if humanoid then humanoid.WalkSpeed = dodge.originalWalkSpeed or 16 end
+                            dodge.isDodging = false
+                            dodge.currentAttackingMob = nil
+                        end
+                    end)
+                end
+
+                if afkRelog then
+                    pcall(function()
+                        afkRelog.enabled = false
+                        afkRelog.isRejoining = false
+                    end)
+                end
+
+                auction.scannerRunning = false
                 pcall(function()
-                    if dodge.isUnderground and root and dodge.lastSurfaceCFrame then
-                        setRootCFrame(dodge.lastSurfaceCFrame + Vector3.new(0, 0.5, 0))
-                        pcall(function() root.Anchored = false end)
-                        pcall(function()
-                            root.AssemblyLinearVelocity = Vector3.zero
-                            root.AssemblyAngularVelocity = Vector3.zero
-                        end)
-                        dodge.isUnderground = false
-                        dodge.currentUndergroundRetreatOffset = nil
-                    end
-                    if dodge.isDodging then
-                        if humanoid then humanoid.WalkSpeed = dodge.originalWalkSpeed or 16 end
-                        dodge.isDodging = false
-                        dodge.currentAttackingMob = nil
-                    end
+                    penESP.show = false
+                    penESP.update()
                 end)
-            end
-
-            if afkRelog then
                 pcall(function()
-                    afkRelog.enabled = false
-                    afkRelog.isRejoining = false
+                    chestESP.show = false
+                    chestESP.update()
                 end)
-            end
 
-            auction.scannerRunning = false
-            pcall(function()
-                penESP.show = false
-                penESP.update()
+                pcall(function() table.clear(cache.activeAuraMobs) end)
+                pcall(function() table.clear(cache.mithrilCaveMobSet) end)
+
+                pcall(function()
+                    if successVIM and VirtualInput then
+                        VirtualInput:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+                    elseif keyrelease then
+                        keyrelease(0x45)
+                    elseif VirtualUser then
+                        VirtualUser:SetKeyUp("0x65")
+                    end
+                end)
+
+                spamThreads.E = spamThreads.E + 1
+                spamThreads.Q = spamThreads.Q + 1
+
+                for _, conn in ipairs(auction.connections) do
+                    if conn and conn.Disconnect then
+                        pcall(function() conn:Disconnect() end)
+                    end
+                end
+                table.clear(auction.connections)
+
+                auction.autoBidLoopRunning = false
+                for _, conn in ipairs(auction.autoBidConnections) do
+                    if conn and conn.Disconnect then
+                        pcall(function() conn:Disconnect() end)
+                    end
+                end
+                table.clear(auction.autoBidConnections)
+                table.clear(auction.cards)
+                table.clear(auction.customBidAmounts)
+
+                if townAuction and townAuction.cleanup then
+                    pcall(function() townAuction.cleanup() end)
+                end
+
+                if rafting and rafting.cleanup then
+                    pcall(function() rafting.cleanup() end)
+                end
+
+                for _, conn in ipairs(scriptConnections) do
+                    if conn and conn.Disconnect then
+                        pcall(function() conn:Disconnect() end)
+                    end
+                end
+                chomp.watchStats(false)
+                if mapOptimizer and mapOptimizer.stopStreamHook then
+                    pcall(function() mapOptimizer.stopStreamHook() end)
+                end
+                table.clear(scriptConnections)
+
+                pcall(function() RunService:Set3dRenderingEnabled(true) end)
+                if setfpscap then pcall(function() setfpscap(60) end) end
+
+                if HeartbeatConnection then
+                    pcall(function() HeartbeatConnection:Disconnect() end)
+                    HeartbeatConnection = nil
+                end
+                pcall(function() if humanoid then humanoid:Move(Vector3.zero, false) end end)
+
+                _G.CowHubLoaded = nil
+                _G.CowHubRayfield = nil
+                _G.CowHubWindow = nil
+                _G.CowHubConnections = nil
+                _G.CowHubHeartbeat = nil
             end)
-            pcall(function()
-                chestESP.show = false
-                chestESP.update()
+
+            task.delay(0.05, function()
+                pcall(function()
+                    if Rayfield and Rayfield.Destroy then
+                        Rayfield:Destroy()
+                    elseif Window and Window.Unload then
+                        Window:Unload()
+                    end
+                end)
             end)
-
-            pcall(function() table.clear(cache.activeAuraMobs) end)
-            pcall(function() table.clear(cache.mithrilCaveMobSet) end)
-
-            pcall(function()
-                if successVIM and VirtualInput then
-                    VirtualInput:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-                elseif keyrelease then
-                    keyrelease(0x45)
-                elseif VirtualUser then
-                    VirtualUser:SetKeyUp("0x65")
-                end
-            end)
-
-            spamThreads.E = spamThreads.E + 1
-            spamThreads.Q = spamThreads.Q + 1
-
-            for _, conn in ipairs(auction.connections) do
-                if conn and conn.Disconnect then
-                    pcall(function() conn:Disconnect() end)
-                end
-            end
-            table.clear(auction.connections)
-
-            auction.autoBidLoopRunning = false
-            for _, conn in ipairs(auction.autoBidConnections) do
-                if conn and conn.Disconnect then
-                    pcall(function() conn:Disconnect() end)
-                end
-            end
-            table.clear(auction.autoBidConnections)
-            table.clear(auction.cards)
-            table.clear(auction.customBidAmounts)
-
-            if townAuction and townAuction.cleanup then
-                pcall(function() townAuction.cleanup() end)
-            end
-
-            if rafting and rafting.cleanup then
-                pcall(function() rafting.cleanup() end)
-            end
-
-            for _, conn in ipairs(scriptConnections) do
-                if conn and conn.Disconnect then
-                    pcall(function() conn:Disconnect() end)
-                end
-            end
-            chomp.watchStats(false)
-            if mapOptimizer and mapOptimizer.stopStreamHook then
-                pcall(function() mapOptimizer.stopStreamHook() end)
-            end
-            table.clear(scriptConnections)
-
-            pcall(function() RunService:Set3dRenderingEnabled(true) end)
-            if setfpscap then pcall(function() setfpscap(60) end) end
-
-            if HeartbeatConnection then
-                pcall(function() HeartbeatConnection:Disconnect() end)
-                HeartbeatConnection = nil
-            end
-            pcall(function() if humanoid then humanoid:Move(Vector3.zero, false) end end)
-
-            _G.CowHubLoaded = nil
-            _G.CowHubRayfield = nil
-            _G.CowHubWindow = nil
-            _G.CowHubConnections = nil
-            _G.CowHubHeartbeat = nil
-        end)
-
-        task.delay(0.05, function()
-            pcall(function()
-                if Rayfield and Rayfield.Destroy then
-                    Rayfield:Destroy()
-                elseif Window and Window.Unload then
-                    Window:Unload()
-                end
-            end)
-        end)
-    end,
-})
+        end,
+    })
+end
 
 -- ==========================
 -- BOOT: Initialize 6-Hour AFK Timer, State Resume & Preloading
