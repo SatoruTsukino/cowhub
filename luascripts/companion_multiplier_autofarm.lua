@@ -7,6 +7,7 @@ local SETTINGS = {
     CYCLE_DELAY = 3,              -- extra delay after each interaction (server reward lock is 8.0s from completion)
     SHOW_HUD = true,              -- show floating progress HUD
     STOP_ON_MAX = true,           -- auto-stop when 1.1500x (100% bond) reached
+    MODE = "Feed",                -- "Feed": feed bait (only path that raised Bond in logs) | "Interact": nuzzle/play/explore
     HOLD_MAX = 15,                -- max seconds to stand still while an interaction runs
 }
 -- ==========================================================================
@@ -399,7 +400,15 @@ local function performCareTick()
     refreshLiveStats()
     local bondBefore = farm.currentBond
 
+    -- Feed matches the game's own payload when grazing with bait equipped near the pet.
+    -- Interact (nuzzle) mostly returns "Try again in a moment." and its 2 s Affection never paid Bond
+    -- (logs companion_1794118105 / companion_1794118504); Feed raised Bond +0.012.
+    local feeding = SETTINGS.MODE == "Feed"
+    if feeding then kind = "Feed" end
     local success, reply = pcall(function()
+        if feeding then
+            return companionRequest:InvokeServer({ Species = species, Action = "Feed", TargetId = runtimeId })
+        end
         return companionRequest:InvokeServer({
             Action = "Interact",
             Kind = kind,
@@ -420,7 +429,9 @@ local function performCareTick()
 
     -- The interaction runs while CowCompanionStatus == kind; moving cancels it (status -> None
     -- after ~2 s with no reward, log companion_1794117805). Stay still until it ends.
-    if success then
+    if feeding then
+        task.wait(1) -- profile Care syncs after the treat is accepted
+    elseif success then
         local started = os.clock()
         while os.clock() - started < 1.5 and plr:GetAttribute("CowCompanionStatus") ~= kind do
             task.wait(0.1)
