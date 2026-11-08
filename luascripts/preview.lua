@@ -1,4 +1,4 @@
--- Cow Hub [bfd1eff] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [4ca5b03] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [bfd1eff]",
+    Name = "Cow Hub [4ca5b03]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -2138,7 +2138,7 @@ function chomp.send(nodeId, node, now)
     if chomp.debug then
         chomp.log("send", {
             id = serial, node = tostring(nodeId), interval = interval, margin = chomp.margin,
-            golden = golden, src = chomp.target.src, dist = chomp.target.dist, dot = chomp.target.dot,
+            golden = golden, src = chomp.target.src, dist = chomp.target.dist, dot = chomp.target.dot, value = chomp.target.value,
             speed = root and Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z).Magnitude or 0,
             lag = math.clamp(chomp.rtt * 0.5, 0.05, 0.3), rtt = chomp.rtt,
             avail = node and typeof(node) == "Instance" and node:GetAttribute("Available") or nil,
@@ -5589,6 +5589,72 @@ do
     end
 end
 
+-- Teleport the character; re-home the autofarm so it doesn't walk back to the old anchor
+function farm.teleportTo(target)
+    if not root or not char then return end
+    char:PivotTo(target)
+    root.CFrame = target
+    stopCharacterVelocity()
+    for _, part in ipairs(charBaseParts) do
+        part.AssemblyLinearVelocity = Vector3.zero
+        part.AssemblyAngularVelocity = Vector3.zero
+    end
+    if farm.on then
+        farm.anchorPos = target.Position
+        farm.currentTargetNode = nil
+        farm.currentNodeStartTime = 0
+        farm.nextRandomPos = nil
+    end
+end
+
+-- Best accessible field by the game's own calorie inputs:
+-- LiveBalance.Category(zone).BaseValue x LiveBalance.ZoneMultiplier(zone) (Shared FoodValue.Calculate)
+function farm.bestField()
+    local shared = cowGame:FindFirstChild("Shared")
+    if not shared then return nil end
+    local ok, catalog, balance = pcall(function()
+        return require(shared.FieldCatalog), require(shared.LiveBalance)
+    end)
+    if not ok then return nil end
+    local mask = tonumber(plr:GetAttribute("CowFieldAccessMask")) or 0
+    local best, bestValue = nil, -1
+    for _, zone in ipairs(catalog.Zones) do
+        if catalog.CanAccessMask(zone.Id, mask) and zone.Houses[1] then
+            local okV, value = pcall(function()
+                return balance.Category(zone.Id).BaseValue * balance.ZoneMultiplier(zone.Id)
+            end)
+            if okV and type(value) == "number" and value > bestValue then
+                best, bestValue = zone, value
+            end
+        end
+    end
+    return best, bestValue
+end
+
+-- Open terrain near the field's first farmer house (not a roof, not water)
+function farm.fieldLandingSpot(zone)
+    local house = zone.Houses[1]
+    for _, radius in ipairs({ 25, 45 }) do
+        for i = 0, 7 do
+            local a = i * math.pi / 4
+            local x, z = house.X + math.cos(a) * radius, house.Z + math.sin(a) * radius
+            local hit = workspace:Raycast(Vector3.new(x, 900, z), Vector3.new(0, -400, 0), wallRaycastParams)
+            if hit and hit.Instance == workspace.Terrain and hit.Material ~= Enum.Material.Water then
+                return hit.Position + Vector3.new(0, 4, 0)
+            end
+        end
+    end
+    return nil
+end
+
+-- Calories a bite on this node earns relative to a full-grown plain node:
+-- maturity (GrowthProgress 0-1) x 2 when Golden (FoodConfig.Modifiers.Golden.Multiplier)
+function farm.nodeValue(node)
+    local progress = tonumber(node:GetAttribute("GrowthProgress") or node:GetAttribute("GrowProgress")) or 1
+    progress = math.clamp(progress, 0, 1)
+    return progress * (node:GetAttribute("Golden") == true and 2 or 1)
+end
+
 function farm.processMovement(dt, now, rootPos)
     farm.patternTimer = farm.patternTimer + (dt * farm.patternSpeed)
 
@@ -5722,7 +5788,9 @@ function farm.processMovement(dt, now, rootPos)
                             edible += 1
                             local nodeId = cache.getNodeID(node)
                             if nodeId then
-                                local distFromGhostSq = get2DDistanceSq(ghostPos, nodePos)
+                                -- Prefer Golden / fully grown grass: value 2 counts as half the distance
+                                local value = math.max(farm.nodeValue(node), 0.05)
+                                local distFromGhostSq = get2DDistanceSq(ghostPos, nodePos) / (value * value)
                                 local blacklistedAt = cache.nodeBlacklist[node]
                                 if blacklistedAt and now - blacklistedAt <= 10 then
                                     cooled += 1
@@ -5961,14 +6029,38 @@ function farm.processGrassChomp(now, rootPos)
             targetNodeId = id
             targetInstance = inst
             local t = chomp.target
-            t.src, t.dist, t.dot = src, dist, dot
+            t.src, t.dist, t.dot, t.value = src, dist, dot, nil
             return true
+        end
+
+        -- 0. Highest-value valid node in reach (Golden, fully grown); every bite costs the same chew time
+        do
+            local reachSq = chomp.REACH * chomp.REACH
+            local best, bestId, bestValue, bestDistSq = nil, nil, 0, math.huge
+            for _, node in ipairs(cache.getGrassNodes()) do
+                if node.Parent then
+                    local dSq = get2DDistanceSq(rootPos, cache.getNodePosition(node))
+                    if dSq <= reachSq then
+                        local value = farm.nodeValue(node)
+                        if value > bestValue or (value == bestValue and dSq < bestDistSq) then
+                            local id = cache.getNodeID(node)
+                            if chomp.canTarget(node, id, rootPos, now) then
+                                best, bestId, bestValue, bestDistSq = node, id, value, dSq
+                            end
+                        end
+                    end
+                end
+            end
+            if best then
+                tryCandidate(best, bestId, "value")
+                chomp.target.value = bestValue
+            end
         end
 
         -- 1. Primary: Game's native CowGrassPrediction SelectionBox in Camera (mouth/view target)
         local camera = workspace.CurrentCamera or workspace:FindFirstChildOfClass("Camera") or workspace:FindFirstChild("Camera")
         local predBox = camera and camera:FindFirstChild("CowGrassPrediction")
-        if predBox then
+        if predBox and not targetNodeId then
             local adornee = nil
             local pcallOk, propVal = pcall(function() return predBox.Adornee end)
             if pcallOk and propVal then
@@ -14211,22 +14303,20 @@ do
         row:CreateButton({
             Name = "Teleport to Farming Area",
             Callback = function()
-                if not root or not char then return end
-                local target = CFrame.new(6269, 706, -185)
-                char:PivotTo(target)
-                root.CFrame = target
-                stopCharacterVelocity()
-                for _, part in ipairs(charBaseParts) do
-                    part.AssemblyLinearVelocity = Vector3.zero
-                    part.AssemblyAngularVelocity = Vector3.zero
+                farm.teleportTo(CFrame.new(6269, 706, -185))
+            end,
+        })
+        row:CreateButton({
+            Name = "Teleport to Best Calorie Field",
+            Callback = function()
+                local field, value = farm.bestField()
+                local spot = field and farm.fieldLandingSpot(field)
+                if not spot then
+                    Window:Notify({ Title = "Best Calorie Field", Content = field and ("No open ground found in " .. field.DisplayName) or "Field data unavailable", Duration = 4, Image = 4483362458 })
+                    return
                 end
-                -- Re-home the autofarm so it doesn't walk back to the old anchor
-                if farm.on then
-                    farm.anchorPos = target.Position
-                    farm.currentTargetNode = nil
-                    farm.currentNodeStartTime = 0
-                    farm.nextRandomPos = nil
-                end
+                farm.teleportTo(CFrame.new(spot))
+                Window:Notify({ Title = "Best Calorie Field", Content = string.format("%s (%.3g cal base per bite)", field.DisplayName, value), Duration = 4, Image = 4483362458 })
             end,
         })
         row:CreateButton({

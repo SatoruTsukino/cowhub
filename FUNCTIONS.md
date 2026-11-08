@@ -171,6 +171,10 @@ Primary CowHub script containing autofarm engines, mining, dodging, auction scan
 | [5346](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5346) | `farm.findClearEscapeDirection(rootPos)` | Subsystem helper / execution logic. |
 | [5392](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5392) | `farm.isEdible(node)` | Grass node edible by the server's rule (`Available == true`) (Plan 1.7). |
 | [5434](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5434) | `farm.findBait(rootPos, now)` | Closest GrazingBaitFind drop inside the farm radius (not over water, not skipped) (Plan 1.8). |
+| [preview 5593](file:///Users/jsph/cowhub/luascripts/preview.lua#L5593) | `farm.teleportTo(target)` | Teleport the character and re-home the autofarm anchor; staging only (Plan 1.9). |
+| [preview 5612](file:///Users/jsph/cowhub/luascripts/preview.lua#L5612) | `farm.bestField()` | Best accessible field by LiveBalance BaseValue × ZoneMultiplier; staging only (Plan 1.9). |
+| [preview 5635](file:///Users/jsph/cowhub/luascripts/preview.lua#L5635) | `farm.fieldLandingSpot(zone)` | Open terrain near a field's first farmer house; staging only (Plan 1.9). |
+| [preview 5652](file:///Users/jsph/cowhub/luascripts/preview.lua#L5652) | `farm.nodeValue(node)` | Bite value: GrowthProgress × 2 when Golden; staging only (Plan 1.9). |
 | [5467](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5467) | `farm.processMovement(dt, now, rootPos)` | Controls character movement along farming patrol path. |
 | [5697](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5697) | `farm.processMobAura(now, rootPos)` | Dispatches auto-attacks against hostile mobs in aura range. |
 | [5805](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5805) | `farm.processGrassChomp(now, rootPos)` | Directs raycast grass harvesting toward nearest target. |
