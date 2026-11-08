@@ -10,6 +10,7 @@ local SETTINGS = {
 -- Companion Status Export
 -- Logs the equipped companion's state to cowhub/companionlogs/companion_<time>.jsonl:
 --   attr:     every change to a CowCompanion* player attribute (CowCompanionStatus = AskPlay, Affection, ...)
+--   request:  each CompanionRequest the autofarm sends, with the server reply (via exporter.emit)
 --   snapshot: the companion's profile record (Care.Bond, Care.Needs, Care.Favorites, ...) every SNAPSHOT_EVERY s
 -- Profile comes from the game's live Store (Store:GetState().Profile.Companions.Owned[EquippedId]).
 
@@ -83,6 +84,11 @@ local function emit(ev, data)
     if canWrite then
         pcall(appendfile, path, line .. "\n")
     end
+end
+
+-- Other scripts (companion_multiplier_autofarm.lua) log through this
+function exporter.emit(ev, data)
+    if exporter.running then emit(ev, sanitize(data, 0, {})) end
 end
 
 local store

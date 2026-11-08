@@ -425,7 +425,18 @@ local function performCareTick()
         for k, v in pairs(reply) do parts[#parts + 1] = tostring(k) .. "=" .. tostring(v) end
         replyText = "{" .. table.concat(parts, ", ") .. "}"
     end
-    print(string.format("[CompanionAutofarm] Interact %s -> ok=%s reply=%s status=%s", kind, tostring(success), replyText, tostring(plr:GetAttribute("CowCompanionStatus"))))
+    print(string.format("[CompanionAutofarm] %s -> ok=%s reply=%s status=%s", kind, tostring(success), replyText, tostring(plr:GetAttribute("CowCompanionStatus"))))
+    -- Also into the companion log when companion_status_export.lua is running
+    local exporter = _G.CompanionStatusExport
+    if exporter and type(exporter.emit) == "function" then
+        pcall(exporter.emit, "request", {
+            kind = kind,
+            ok = success,
+            reply = type(reply) == "table" and reply or tostring(reply),
+            status = plr:GetAttribute("CowCompanionStatus"),
+            bondBefore = bondBefore,
+        })
+    end
 
     -- The interaction runs while CowCompanionStatus == kind; moving cancels it (status -> None
     -- after ~2 s with no reward, log companion_1794117805). Stay still until it ends.
