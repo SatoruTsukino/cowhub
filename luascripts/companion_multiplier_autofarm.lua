@@ -4,9 +4,10 @@ local SETTINGS = {
     AUTO_EQUIP = true,            -- auto-equip first owned companion if none equipped
     STAND_STILL = true,           -- anchor RootPart during cuddle (server checks Speed <= 0.8)
     TELEPORT_TO_PET = true,       -- teleport to companion if > 13 studs away
-    CYCLE_DELAY = 8.5,            -- delay between care ticks (server reward lock is 8.0s)
+    CYCLE_DELAY = 3,              -- extra delay after each interaction (server reward lock is 8.0s from completion)
     SHOW_HUD = true,              -- show floating progress HUD
     STOP_ON_MAX = true,           -- auto-stop when 1.1500x (100% bond) reached
+    HOLD_MAX = 15,                -- max seconds to stand still while an interaction runs
 }
 -- ==========================================================================
 
@@ -268,7 +269,7 @@ local function updateHud()
 
     local remainingBond = math.max(0, 1 - bond)
     local remainingTicks = math.ceil(remainingBond / 0.012)
-    local etaSec = remainingTicks * SETTINGS.CYCLE_DELAY
+    local etaSec = remainingTicks * math.max(8, SETTINGS.CYCLE_DELAY) -- 8 s server reward lock
     local etaMin = math.floor(etaSec / 60)
     local etaSecMod = math.floor(etaSec % 60)
 
@@ -395,7 +396,10 @@ local function performCareTick()
     farm.statusText = "Interacting (" .. kind .. ")..."
     updateHud()
 
-    local success, result = pcall(function()
+    refreshLiveStats()
+    local bondBefore = farm.currentBond
+
+    local success = pcall(function()
         return companionRequest:InvokeServer({
             Action = "Interact",
             Kind = kind,
@@ -405,23 +409,35 @@ local function performCareTick()
         })
     end)
 
+    -- The interaction runs while CowCompanionStatus == kind; moving cancels it (status -> None
+    -- after ~2 s with no reward, log companion_1794117805). Stay still until it ends.
+    if success then
+        local started = os.clock()
+        while os.clock() - started < 1.5 and plr:GetAttribute("CowCompanionStatus") ~= kind do
+            task.wait(0.1)
+        end
+        while os.clock() - started < SETTINGS.HOLD_MAX and plr:GetAttribute("CowCompanionStatus") == kind do
+            root.AssemblyLinearVelocity = Vector3.zero
+            task.wait(0.1)
+        end
+        task.wait(0.5) -- profile Care syncs after completion
+    end
+
     if SETTINGS.STAND_STILL then
-        task.wait(0.5)
         root.Anchored = prevAnchored
     end
 
-    if success then
+    -- Count only a real reward: live bond rose (Care.Bond, +0.012 per completion)
+    refreshLiveStats()
+    if success and farm.currentBond > bondBefore then
         farm.ticksDone += 1
-        farm.currentBond = math.min(1, farm.currentBond + 0.012)
-        farm.statusText = string.format("Fed care (%s) · +0.012 Bond", kind)
-        refreshLiveStats()
+        farm.statusText = string.format("Completed %s · Bond %.3f", kind, farm.currentBond)
         updateHud()
         return true
-    else
-        farm.statusText = "Remote rejected. Retrying..."
-        updateHud()
-        return false
     end
+    farm.statusText = success and ("No reward (" .. tostring(plr:GetAttribute("CowCompanionStatus")) .. "). Retrying...") or "Remote rejected. Retrying..."
+    updateHud()
+    return false
 end
 
 -- Main Loop
@@ -466,6 +482,6 @@ function farm.destroy()
     print("[CompanionAutofarm] Stopped.")
 end
 
-print("[CompanionAutofarm] Initialized. Automating care cycles every " .. tostring(SETTINGS.CYCLE_DELAY) .. "s.")
+print("[CompanionAutofarm] Initialized. Holding still through each interaction, then " .. tostring(SETTINGS.CYCLE_DELAY) .. "s between cycles.")
 return farm
 
