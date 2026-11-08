@@ -13,6 +13,7 @@ updated: 2026-11-03T00:00:00Z
 > Separate milestone (complete): `.gsd/milestones/auction-ownership/MILESTONE.md`
 > Separate milestone (planning): `.gsd/milestones/skinhunter-catalog/MILESTONE.md`
 > Separate milestone (planning): `.gsd/milestones/caravan-autofarm/MILESTONE.md`
+> Separate milestone (verifying): `.gsd/milestones/crate-odds/MILESTONE.md`
 
 ## Must-Haves (from SPEC)
 
