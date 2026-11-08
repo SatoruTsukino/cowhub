@@ -51,28 +51,42 @@ local esp = {
     visuals = {},
     controllers = {},
     modelRecords = {},
-    lastGcScan = 0,
+    lastGcScan = -math.huge,
+    store = nil, -- cached profile Store (found once via getgc)
+    lastStoreScan = -math.huge,
+    knownBond = {}, -- [species..":"..Id] = last bond seen; bridges transient misses
     conns = {},
 }
 _G.CompanionMultiplierESP = esp
 
--- Extract player profile store for live equipped companion data
+-- Profile Store for live equipped companion data. getgc only when the Store is not cached
+-- (at most every 5 s); GetState itself is cheap and runs once per draw tick.
 local function getProfileCompanions()
-    if type(getgc) ~= "function" then return nil end
-    local ok, objects = pcall(getgc, true)
-    if not ok or type(objects) ~= "table" then return nil end
-    for _, obj in ipairs(objects) do
-        if type(obj) == "table" and rawget(obj, "Remotes") and type(rawget(obj, "Store")) == "table" then
-            local okState, state = pcall(function() return obj.Store:GetState() end)
-            if okState and type(state) == "table" and type(state.Profile) == "table" then
-                local profile = state.Profile
-                if type(profile.Companions) == "table" then
-                    return profile.Companions
+    if not esp.store and type(getgc) == "function" and os.clock() - esp.lastStoreScan > 5 then
+        esp.lastStoreScan = os.clock()
+        local ok, objects = pcall(getgc, true)
+        if ok and type(objects) == "table" then
+            for _, obj in ipairs(objects) do
+                if type(obj) == "table" and rawget(obj, "Remotes") and type(rawget(obj, "Store")) == "table" then
+                    local store = rawget(obj, "Store")
+                    local okState, state = pcall(function() return store:GetState() end)
+                    if okState and type(state) == "table" and type(state.Profile) == "table" then
+                        esp.store = store
+                        break
+                    end
                 end
             end
         end
     end
-    return nil
+    local store = esp.store
+    if not store then return nil end
+    local okState, state = pcall(function() return store:GetState() end)
+    if not okState or type(state) ~= "table" or type(state.Profile) ~= "table" then
+        esp.store = nil
+        return nil
+    end
+    local companions = state.Profile.Companions
+    return type(companions) == "table" and companions or nil
 end
 
 -- Find Dog/Cat controllers via getgc to resolve model -> actor record
@@ -118,7 +132,8 @@ local function refreshRecords()
             for _, actor in pairs(actors) do
                 if type(actor) == "table" then
                     local model = rawget(actor, "Model")
-                    local record = rawget(actor, "RenderRecord") or rawget(actor, "Record")
+                    -- Record is authoritative; RenderRecord can be an interpolated sample without CompanionCare.
+                    local record = rawget(actor, "Record") or rawget(actor, "RenderRecord")
                     if typeof(model) == "Instance" and type(record) == "table" then
                         esp.modelRecords[model] = record
                     end
@@ -129,8 +144,7 @@ local function refreshRecords()
 end
 
 -- Calculate CompanionMultiplier & Bond from record/profile
-local function getCompanionStats(model, record)
-    local myRuntimeId = plr:GetAttribute("CowCompanionRuntimeId")
+local function getCompanionStats(model, record, companions, myRuntimeId)
     local isMyCompanion = false
     local bond = nil
     local name = nil
@@ -149,7 +163,6 @@ local function getCompanionStats(model, record)
     end
 
     if isMyCompanion or not bond then
-        local companions = getProfileCompanions()
         if companions and companions.EquippedId and companions.Owned then
             local owned = companions.Owned[companions.EquippedId]
             if owned and type(owned.Care) == "table" and type(owned.Care.Bond) == "number" then
@@ -159,6 +172,16 @@ local function getCompanionStats(model, record)
                     name = owned.Name or name
                 end
             end
+        end
+    end
+
+    -- Remember the last real bond per pet so a one-tick lookup miss does not flash "Untamed".
+    local key = record and record.Id ~= nil and (tostring(species) .. ":" .. tostring(record.Id)) or nil
+    if key then
+        if bond then
+            esp.knownBond[key] = bond
+        else
+            bond = esp.knownBond[key]
         end
     end
 
@@ -283,13 +306,22 @@ local function attachVisual(model, species)
     }
 end
 
--- Update loop
+-- Update loop (Heartbeat, gated: folders 1 s, records 0.5 s, draw 0.25 s; controllers self-gate at 4 s)
+local clock = { scan = -math.huge, records = -math.huge, draw = -math.huge }
+
 local function update()
     if not esp.running then return end
+    local now = os.clock()
     findControllers()
-    refreshRecords()
+    if now - clock.records >= 0.5 then
+        clock.records = now
+        refreshRecords()
+    end
+    if now - clock.scan < 1 and now - clock.draw < 0.25 then return end
 
     -- Scan models in LocalDogs & LocalBarnCats
+    if now - clock.scan >= 1 then
+    clock.scan = now
     for folderName, species in pairs(FOLDERS) do
         local enabled = (species == "Dog" and SETTINGS.DOGS) or (species == "Cat" and SETTINGS.CATS)
         local folder = Workspace:FindFirstChild(folderName)
@@ -301,6 +333,14 @@ local function update()
             end
         end
     end
+    end
+
+    if now - clock.draw < 0.25 then return end
+    clock.draw = now
+
+    -- Once per draw tick, shared by every pet
+    local companions = getProfileCompanions()
+    local myRuntimeId = plr:GetAttribute("CowCompanionRuntimeId")
 
     -- Update each active visual
     for model, visual in pairs(esp.visuals) do
@@ -308,12 +348,20 @@ local function update()
             removeVisual(model)
         else
             local record = esp.modelRecords[model]
-            local stats = getCompanionStats(model, record)
+            local stats = getCompanionStats(model, record, companions, myRuntimeId)
+            local hidden = SETTINGS.ONLY_EQUIPPED and not stats.isMyCompanion
+            -- Skip all property writes when nothing visible changed
+            local state = hidden and "hidden" or string.format("%s|%s|%s|%.4f|%.3f|%s",
+                tostring(stats.isMyCompanion), stats.species, tostring(stats.name), stats.multiplier, stats.bond, tostring(stats.isUntamed))
 
-            if SETTINGS.ONLY_EQUIPPED and not stats.isMyCompanion then
+            if state == visual.state then
+                -- unchanged
+            elseif hidden then
+                visual.state = state
                 visual.billboard.Enabled = false
                 visual.highlight.Enabled = false
             else
+                visual.state = state
                 visual.billboard.Enabled = true
                 visual.highlight.Enabled = true
 
@@ -363,6 +411,8 @@ function esp.destroy()
         removeVisual(model)
     end
     table.clear(esp.visuals)
+    table.clear(esp.knownBond)
+    esp.store = nil
     if _G.CompanionMultiplierESP == esp then
         _G.CompanionMultiplierESP = nil
     end
