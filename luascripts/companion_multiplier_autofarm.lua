@@ -8,6 +8,7 @@ local SETTINGS = {
     SHOW_HUD = true,              -- show floating progress HUD
     STOP_ON_MAX = true,           -- auto-stop when 1.1500x (100% bond) reached
     MODE = "Feed",                -- "Feed": feed bait (only path that raised Bond in logs) | "Interact": nuzzle/play/explore
+    ON_EMPTY = "Stop",            -- Feed mode, out of bait: "Stop" the autofarm | "Interact": switch to Interact mode
     HOLD_MAX = 15,                -- max seconds to stand still while an interaction runs
 }
 -- ==========================================================================
@@ -73,7 +74,7 @@ local farm = {
 _G.CompanionAutofarm = farm
 
 -- Profile / GC extractor for accurate live bond state
-local function getProfileCompanions()
+local function getProfile()
     if type(getgc) ~= "function" then return nil end
     local ok, objects = pcall(getgc, true)
     if not ok or type(objects) ~= "table" then return nil end
@@ -81,14 +82,26 @@ local function getProfileCompanions()
         if type(obj) == "table" and rawget(obj, "Remotes") and type(rawget(obj, "Store")) == "table" then
             local okState, state = pcall(function() return obj.Store:GetState() end)
             if okState and type(state) == "table" and type(state.Profile) == "table" then
-                local profile = state.Profile
-                if type(profile.Companions) == "table" then
-                    return profile.Companions
-                end
+                return state.Profile
             end
         end
     end
     return nil
+end
+
+local function getProfileCompanions()
+    local profile = getProfile()
+    return profile and type(profile.Companions) == "table" and profile.Companions or nil
+end
+
+-- Bait per species (Shared.CompanionConfig.Bait); one is used per feed. Count lives in Profile.Materials.
+local BAIT = { Cat = "Catfish", Dog = "Chicken" }
+local function baitCount(species)
+    local id = BAIT[species]
+    local profile = getProfile()
+    local materials = profile and profile.Materials
+    if not id or type(materials) ~= "table" then return nil end -- unknown: keep feeding
+    return tonumber(materials[id]) or 0
 end
 
 -- Find physical companion model
@@ -278,6 +291,7 @@ local function createHud()
         barFill = barFill,
         statusLabel = statusLabel,
         etaLabel = etaLabel,
+        modeBtn = modeBtn,
     }
 end
 
@@ -427,6 +441,22 @@ local function performCareTick()
     -- Interact (nuzzle) mostly returns "Try again in a moment." and its 2 s Affection never paid Bond
     -- (logs companion_1794118105 / companion_1794118504); Feed raised Bond +0.012.
     local feeding = SETTINGS.MODE == "Feed"
+    if feeding and baitCount(species) == 0 then
+        local bait = BAIT[species] or "bait"
+        if SETTINGS.ON_EMPTY == "Interact" then
+            SETTINGS.MODE = "Interact"
+            feeding = false
+            if farm.gui and farm.gui.modeBtn then farm.gui.modeBtn.Text = "Interact" end
+            print("[CompanionAutofarm] Out of " .. bait .. "; switched to Interact")
+        else
+            farm.statusText = "Out of " .. bait .. "; stopped"
+            updateHud()
+            print("[CompanionAutofarm] Out of " .. bait .. "; stopping")
+            farm.running = false
+            if SETTINGS.STAND_STILL then root.Anchored = prevAnchored end
+            return false
+        end
+    end
     if feeding then kind = "Feed" end
     local success, reply = pcall(function()
         if feeding then
