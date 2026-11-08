@@ -3,7 +3,7 @@ local SETTINGS = {
     DESTROY = false,              -- true: remove running autofarm and stop
     AUTO_EQUIP = true,            -- auto-equip first owned companion if none equipped
     STAND_STILL = true,           -- anchor RootPart during cuddle (server checks Speed <= 0.8)
-    TELEPORT_TO_PET = true,       -- teleport to companion if > 13 studs away
+    TELEPORT_TO_PET = false,       -- teleport to companion if > 13 studs away
     CYCLE_DELAY = 3,              -- extra delay after each interaction (server reward lock is 8.0s from completion)
     SHOW_HUD = true,              -- show floating progress HUD
     STOP_ON_MAX = true,           -- auto-stop when 1.1500x (100% bond) reached
@@ -392,12 +392,17 @@ local function performCareTick()
     end
 
     -- Pick interaction kind matching status cue
-    local kind = "Affection"
-    if status == "AskPlay" then
-        kind = "Play"
-    elseif status == "AskExplore" then
-        kind = "Explore"
+    -- Interact pays only when answering the pet's own Ask cue (CompanionCare.Complete -> Requested);
+    -- unprompted nudges get "Try again in a moment." / BusyAnimal (log companion_1794119183).
+    -- Ask cues last ~0.5 s, so the main loop polls for them and calls this at once.
+    local ASK_KIND = { AskAffection = "Affection", AskPlay = "Play", AskExplore = "Explore", AskFood = "Feed" }
+    local kind = ASK_KIND[status]
+    if SETTINGS.MODE ~= "Feed" and not kind then
+        farm.statusText = "Waiting for an Ask cue..."
+        updateHud()
+        return false
     end
+    kind = kind or "Affection"
 
     local char = plr.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -440,7 +445,14 @@ local function performCareTick()
     -- Feed matches the game's own payload when grazing with bait equipped near the pet.
     -- Interact (nuzzle) mostly returns "Try again in a moment." and its 2 s Affection never paid Bond
     -- (logs companion_1794118105 / companion_1794118504); Feed raised Bond +0.012.
-    local feeding = SETTINGS.MODE == "Feed"
+    local feeding = SETTINGS.MODE == "Feed" or kind == "Feed"
+    if feeding and SETTINGS.MODE ~= "Feed" and baitCount(species) == 0 then
+        -- Interact mode, pet asked for food but there is no bait: nothing to answer with
+        farm.statusText = "Pet wants food; no " .. (BAIT[species] or "bait")
+        updateHud()
+        if SETTINGS.STAND_STILL then root.Anchored = prevAnchored end
+        return false
+    end
     if feeding and baitCount(species) == 0 then
         local bait = BAIT[species] or "bait"
         if SETTINGS.ON_EMPTY == "Interact" then
@@ -544,7 +556,16 @@ task.spawn(function()
             task.wait(SETTINGS.CYCLE_DELAY)
         else
             performCareTick()
-            task.wait(SETTINGS.CYCLE_DELAY)
+            if SETTINGS.MODE == "Feed" then
+                task.wait(SETTINGS.CYCLE_DELAY)
+            else
+                -- Interact: poll for the pet's short-lived Ask cue
+                local waitUntil = os.clock() + SETTINGS.CYCLE_DELAY
+                while farm.running and os.clock() < waitUntil
+                    and string.sub(tostring(plr:GetAttribute("CowCompanionStatus")), 1, 3) ~= "Ask" do
+                    task.wait(0.1)
+                end
+            end
         end
     end
 end)
