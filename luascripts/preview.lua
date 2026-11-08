@@ -1,4 +1,4 @@
--- Cow Hub [f1e9f0c] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [54e645e] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [f1e9f0c]",
+    Name = "Cow Hub [54e645e]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -4849,7 +4849,9 @@ end
 
 function aerial.checkHealth(now, rootPos)
     local currentHearts = dodge.getLocalPlayerHearts()
-    if currentHearts and dodge.lastRecordedHearts ~= nil and currentHearts < dodge.lastRecordedHearts then
+    -- Emergency only (hearts at or below 34% of normal); smaller hits go to dodge.process (Run / Teleport Away)
+    local low = currentHearts and dodge.normalPlayerHearts > 0 and currentHearts <= dodge.normalPlayerHearts * 0.34
+    if low and dodge.lastRecordedHearts ~= nil and currentHearts < dodge.lastRecordedHearts then
         if dodge.retreatOnThreat then
             if manatite and manatite.auto then
                 local retreated = manatite.retreatToSafeCrystal(now, rootPos)
@@ -4875,7 +4877,8 @@ function aerial.checkHealth(now, rootPos)
             aerial.cframe = CFrame.new(hoverPos) * root.CFrame.Rotation
             char:PivotTo(aerial.cframe)
             root.CFrame = aerial.cframe
-            root.Anchored = true
+            -- Not anchored: an anchored root doesn't replicate, so the server would keep the cow on the ground.
+            -- aerial.process re-pins the CFrame and zeroes velocity every frame instead.
             for _, part in ipairs(charBaseParts) do
                 part.AssemblyLinearVelocity = Vector3.zero
                 part.AssemblyAngularVelocity = Vector3.zero
@@ -4902,6 +4905,23 @@ function aerial.checkHealth(now, rootPos)
         end
     end
     dodge.lastRecordedHearts = currentHearts
+end
+
+-- Nearest alive mob within maxDistSq (2D) of pos, for retreats with no telegraphed attacker
+function dodge.nearestMob(pos, maxDistSq)
+    local best, bestSq = nil, maxDistSq
+    for _, mob in ipairs(cache.activeAuraMobs) do
+        if mob.Parent then
+            local mobPos = dodge.getMobAttackOrigin(mob)
+            if mobPos then
+                local dSq = get2DDistanceSq(pos, mobPos)
+                if dSq <= bestSq and dodge.isMobAlive(mob) then
+                    best, bestSq = mob, dSq
+                end
+            end
+        end
+    end
+    return best
 end
 
 function dodge.process(now, rootPos)
@@ -4986,10 +5006,19 @@ function dodge.process(now, rootPos)
         end
     end
 
+    if damageRetreatTriggered then
+        -- No telegraphed attacker: run from the nearest mob, and keep running long enough to get clear
+        if not attackingMobInstance then
+            attackingMobInstance = dodge.nearestMob(checkOrigin, dodge.detectionRadiusSq * 4)
+            dodge.currentAttackingMob = attackingMobInstance or dodge.currentAttackingMob
+        end
+    end
+
     local shouldRetreat = (attackingMobFound and attackingMobInstance) or damageRetreatTriggered
 
     if shouldRetreat then
-        dodge.lastWarningSeenTime = now
+        -- A damage-only retreat holds at least 2.5 s (0.6 s linger after now + 1.9)
+        dodge.lastWarningSeenTime = damageRetreatTriggered and not attackingMobFound and (now + 1.9) or math.max(now, dodge.lastWarningSeenTime)
 
         if dodge.retreatOnThreat then
             if manatite and manatite.auto then
@@ -5105,7 +5134,8 @@ function dodge.process(now, rootPos)
                     if humanoid.WalkSpeed ~= dodge.walkSpeed then
                         humanoid.WalkSpeed = dodge.walkSpeed
                     end
-                    local attackOrigin = (attackingMobInstance and dodge.getMobAttackOrigin(attackingMobInstance)) or (dodge.preDodgePos or rootPos)
+                    local fleeFrom = attackingMobInstance or (dodge.currentAttackingMob and dodge.currentAttackingMob.Parent and dodge.currentAttackingMob)
+                    local attackOrigin = (fleeFrom and dodge.getMobAttackOrigin(fleeFrom)) or (dodge.preDodgePos or rootPos)
                     local currentDist = get2DDistance(rootPos, attackOrigin)
                     if currentDist < dodge.retreatDistance then
                         local awayDir = rootPos - attackOrigin
