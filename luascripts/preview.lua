@@ -1,4 +1,4 @@
--- Cow Hub [54e645e] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [9fe1843] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [54e645e]",
+    Name = "Cow Hub [9fe1843]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -5084,7 +5084,7 @@ function dodge.process(now, rootPos)
                     away2D = (away2D.Magnitude > 0.1) and away2D.Unit or Vector3.new(0, 0, 1)
 
                     local rotatedAway = CFrame.Angles(0, math.rad(dodge.retreatAngle), 0):VectorToWorldSpace(away2D)
-                    humanoid:Move(rotatedAway, false)
+                    humanoid:MoveTo(rootPos + rotatedAway * dodge.retreatDistance) -- MoveTo: the ControlModule overwrites Move() every frame
                 end
             elseif dodge.method == "Teleport Away (Surface)" then
                 local attackOrigin = (attackingMobInstance and dodge.getMobAttackOrigin(attackingMobInstance)) or rootPos
@@ -5142,9 +5142,9 @@ function dodge.process(now, rootPos)
                         local away2D = Vector3.new(awayDir.X, 0, awayDir.Z)
                         away2D = (away2D.Magnitude > 0.1) and away2D.Unit or Vector3.new(0, 0, 1)
                         local rotatedAway = CFrame.Angles(0, math.rad(dodge.retreatAngle), 0):VectorToWorldSpace(away2D)
-                        humanoid:Move(rotatedAway, false)
+                        humanoid:MoveTo(rootPos + rotatedAway * dodge.retreatDistance) -- MoveTo: the ControlModule overwrites Move() every frame
                     else
-                        humanoid:Move(Vector3.zero, false)
+                        humanoid:MoveTo(rootPos) -- far enough: stop here
                     end
                 end
             end
