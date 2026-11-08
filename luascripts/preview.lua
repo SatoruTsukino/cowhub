@@ -1,4 +1,4 @@
--- Cow Hub [0c83925] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [78e5b16] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [0c83925]",
+    Name = "Cow Hub [78e5b16]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -5993,7 +5993,10 @@ function farm.processGrassChomp(now, rootPos)
             return true
         end
 
-        -- 0. Highest-value valid node in reach (Golden, fully grown); every bite costs the same chew time
+        -- 0. Highest-value valid node in reach (Golden, fully grown); every bite costs the same chew time.
+        -- Used only when it beats the game's own prediction (step 1): taking it on every tick cost ~10%
+        -- throughput and doubled OutOfRange (chomp_1794121346), while 97% of nodes are value 1 anyway.
+        local valueBest, valueBestId, valueBestValue = nil, nil, 0
         do
             local reachSq = chomp.REACH * chomp.REACH
             local best, bestId, bestValue, bestDistSq = nil, nil, 0, math.huge
@@ -6011,16 +6014,13 @@ function farm.processGrassChomp(now, rootPos)
                     end
                 end
             end
-            if best then
-                tryCandidate(best, bestId, "value")
-                chomp.target.value = bestValue
-            end
+            valueBest, valueBestId, valueBestValue = best, bestId, bestValue
         end
 
         -- 1. Primary: Game's native CowGrassPrediction SelectionBox in Camera (mouth/view target)
         local camera = workspace.CurrentCamera or workspace:FindFirstChildOfClass("Camera") or workspace:FindFirstChild("Camera")
         local predBox = camera and camera:FindFirstChild("CowGrassPrediction")
-        if predBox and not targetNodeId then
+        if predBox then
             local adornee = nil
             local pcallOk, propVal = pcall(function() return predBox.Adornee end)
             if pcallOk and propVal then
@@ -6036,6 +6036,17 @@ function farm.processGrassChomp(now, rootPos)
                     tryCandidate(resolved, id, "pred")
                 end
             end
+        end
+
+        -- Prediction loses only to a strictly better node (Golden or riper)
+        local predValue = targetNodeId and typeof(targetInstance) == "Instance" and farm.nodeValue(targetInstance) or nil
+        if valueBest and (not predValue or predValue < valueBestValue) then
+            targetNodeId = nil
+            if tryCandidate(valueBest, valueBestId, "value") then
+                chomp.target.value = valueBestValue
+            end
+        elseif predValue then
+            chomp.target.value = predValue
         end
 
         -- 2. Physical Downward Raycast: Directly detect grass beneath character
