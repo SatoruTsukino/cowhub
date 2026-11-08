@@ -1,4 +1,4 @@
--- Cow Hub [2b09dd6] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [11d1f3d] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [2b09dd6]",
+    Name = "Cow Hub [11d1f3d]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -519,8 +519,14 @@ local chomp = {
     rtt = 0.25,        -- EMA of GrazeResult round trip (s)
     target = { src = nil, dist = 0, dot = 1 },
     idleWhy = {},      -- per-tick tally of why nearby nodes failed chomp.canTarget
+    debug = false,
+    logBuf = {},
+    logPath = nil,
+    lastFlush = 0,
+    lastIdleLog = 0,
     stats = { sent = 0, accepted = 0, rejected = 0, cooldownRejects = 0, reasons = {} },
     calories = { sessionGained = 0, startTime = 0, activeDuration = 0, lastTimestamp = 0, lastCalories = nil, ratePerHour = 0 },
+    statConns = {},    -- golden probe: player attribute / leaderstats watchers (debug log only)
     natural = { held = false, lastTap = 0, lastEngage = 0, notGrazingSince = nil, rearmAt = 0, lastGrazing = nil, lastGameResult = 0, input = nil, lastScan = -math.huge, engaged = false },
 }
 
@@ -1349,7 +1355,7 @@ function afkRelog.triggerRejoin()
         pcall(function()
             qot([[
                 task.wait(3)
-                loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/cowhub.lua'))()
+                loadstring(game:HttpGet('https://raw.githubusercontent.com/SatoruTsukino/cowhub/refs/heads/main/luascripts/cowhub.lua'))()
             ]])
         end)
     end
@@ -1935,6 +1941,95 @@ end)
 -- ==========================
 -- chomp state table is declared next to `farm` (used by relog save/restore above)
 
+function chomp.log(event, data)
+    if not chomp.debug then return end
+    data = data or {}
+    data.ev = event
+    data.t = math.floor(os.clock() * 1000) / 1000
+    local ok, line = pcall(HttpService.JSONEncode, HttpService, data)
+    if ok then table.insert(chomp.logBuf, line) end
+end
+
+function chomp.flushLog(force)
+    if #chomp.logBuf == 0 then return end
+    local now = os.clock()
+    if not force and now - chomp.lastFlush < 2 then return end
+    chomp.lastFlush = now
+    if not writefile then table.clear(chomp.logBuf) return end
+    if not chomp.logPath then
+        chomp.logPath = resolveCowHubPath(string.format("chomp_%d.jsonl", os.time()), "chomplogs")
+    end
+    local chunk = table.concat(chomp.logBuf, "\n") .. "\n"
+    table.clear(chomp.logBuf)
+    pcall(function()
+        local exists = isfile and isfile(chomp.logPath)
+        if exists and appendfile then
+            appendfile(chomp.logPath, chunk)
+        else
+            local prev = (exists and readfile) and readfile(chomp.logPath) or ""
+            writefile(chomp.logPath, prev .. chunk)
+        end
+    end)
+end
+
+-- Golden probe: JSON-safe copy of a remote payload (Instances, Vector3, etc. -> tostring)
+function chomp.sanitize(v, depth)
+    local t = type(v)
+    if t == "nil" or t == "boolean" or t == "number" or t == "string" then return v end
+    if t == "table" and (depth or 0) < 3 then
+        local out = {}
+        for k, item in pairs(v) do out[tostring(k)] = chomp.sanitize(item, (depth or 0) + 1) end
+        return out
+    end
+    return typeof(v) .. ":" .. tostring(v)
+end
+
+-- Golden probe: node's Golden attribute as set by GrassRenderController from server modifiers
+function chomp.goldenState(node)
+    if not node or typeof(node) ~= "Instance" then return nil end
+    local golden = node:GetAttribute("Golden")
+    if golden == nil then golden = node:GetAttribute("golden") end
+    return golden
+end
+
+function chomp.findNodeById(nodeId)
+    local want = tostring(nodeId)
+    for _, node in ipairs(cache.getGrassNodes()) do
+        if tostring(cache.getNodeID(node)) == want then return node end
+    end
+    return nil
+end
+
+-- Golden probe: log every numeric player attribute / leaderstats change, so per-bite rewards
+-- can be read off the timeline (GrazeResult itself carries no reward fields)
+function chomp.watchStats(on)
+    for _, c in ipairs(chomp.statConns) do pcall(function() c:Disconnect() end) end
+    table.clear(chomp.statConns)
+    if not on then return end
+    local last = {}
+    local function track(key, value)
+        local prev = last[key]
+        last[key] = value
+        if type(value) == "number" and type(prev) == "number" and value ~= prev then
+            chomp.log("stat", { key = key, delta = value - prev, value = value })
+        end
+    end
+    for name, value in pairs(plr:GetAttributes()) do last["attr." .. name] = value end
+    table.insert(chomp.statConns, plr.AttributeChanged:Connect(function(name)
+        track("attr." .. name, plr:GetAttribute(name))
+    end))
+    local ls = plr:FindFirstChild("leaderstats")
+    if ls then
+        for _, v in ipairs(ls:GetDescendants()) do
+            if v:IsA("ValueBase") then
+                local key = "ls." .. v.Name
+                last[key] = v.Value
+                table.insert(chomp.statConns, v.Changed:Connect(function(value) track(key, value) end))
+            end
+        end
+    end
+end
+
 -- Fastest interval the server accepts right now (buffs read live from player attributes)
 function chomp.serverInterval(node)
     local base = math.clamp(tonumber(plr:GetAttribute("ChewCooldown")) or chomp.BASE, chomp.MIN, chomp.MAX_COOLDOWN)
@@ -2024,7 +2119,8 @@ function chomp.send(nodeId, node, now)
     chomp.serial += 1
     local serial = chomp.serial
     chomp.lastFire = now
-    chomp.pending[serial] = { NodeId = nodeId, SentAt = now }
+    local golden = chomp.goldenState(node)
+    chomp.pending[serial] = { NodeId = nodeId, SentAt = now, Golden = golden }
     -- Reserve until the server answers (the result handler sets the real skip), like the game's _grassReservations
     chomp.skip[nodeId] = now + 1.5
     if serial % 32 == 0 then
@@ -2039,6 +2135,16 @@ function chomp.send(nodeId, node, now)
     spiderLogger.isInternalFire = true
     pcall(function() chompEvent:FireServer(nodeId, nil, serial) end)
     spiderLogger.isInternalFire = false
+    if chomp.debug then
+        chomp.log("send", {
+            id = serial, node = tostring(nodeId), interval = interval, margin = chomp.margin,
+            golden = golden, src = chomp.target.src, dist = chomp.target.dist, dot = chomp.target.dot, value = chomp.target.value,
+            speed = root and Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z).Magnitude or 0,
+            lag = math.clamp(chomp.rtt * 0.5, 0.05, 0.3), rtt = chomp.rtt,
+            avail = node and typeof(node) == "Instance" and node:GetAttribute("Available") or nil,
+            chewCooldown = plr:GetAttribute("ChewCooldown"), mult = plr:GetAttribute("CowGrazingSpeedMultiplier"),
+        })
+    end
     return true
 end
 
@@ -2052,6 +2158,9 @@ do
             if not p then
                 -- Not ours: the game's own graze loop is biting (natural-mode evidence)
                 chomp.natural.lastGameResult = os.clock()
+                if chomp.debug then
+                    chomp.log("result_game", { golden = chomp.goldenState(chomp.findNodeById(res.NodeId)), res = chomp.sanitize(res) })
+                end
                 return
             end
             if p.NodeId ~= res.NodeId then return end
@@ -2080,6 +2189,13 @@ do
                     chomp.lastFire = now
                 end
             end
+            if chomp.debug then
+                chomp.log("result", {
+                    id = res.RequestId, ok = res.Accepted == true, reason = res.Reason,
+                    rttMs = math.floor((now - p.SentAt) * 1000), margin = chomp.margin,
+                    golden = p.Golden, res = chomp.sanitize(res),
+                })
+            end
         end))
     end
 end
@@ -2098,6 +2214,7 @@ function chomp.findInput(now)
     for _, t in ipairs(objs) do
         if type(t) == "table" and rawget(t, "_grazeSources") ~= nil and rawget(t, "_grazePressed") ~= nil then
             n.input = t
+            chomp.log("natural", { act = "input_found" })
             return t
         end
     end
@@ -2146,6 +2263,7 @@ function chomp.engage(now)
         n.engaged = true
         chomp.sendKey(true)
         task.delay(0.05, function() chomp.sendKey(false) end)
+        chomp.log("natural", { act = "tap", toggleSetting = true })
     else
         -- Hold setting: game latches _grazePressed, so release before re-press
         if n.held then
@@ -2157,6 +2275,7 @@ function chomp.engage(now)
             chomp.sendKey(true)
         end
         n.held = true
+        chomp.log("natural", { act = "hold", toggleSetting = false })
     end
 end
 
@@ -2165,6 +2284,7 @@ function chomp.release()
     if n.held then
         n.held = false
         chomp.sendKey(false)
+        chomp.log("natural", { act = "release" })
     end
     n.notGrazingSince = nil
 end
@@ -2178,6 +2298,7 @@ function chomp.stopNatural()
     if engaged and plr:GetAttribute("CowGrazeToggle") == true and chomp.isGrazing() then
         chomp.sendKey(true)
         task.delay(0.05, function() chomp.sendKey(false) end)
+        chomp.log("natural", { act = "untoggle" })
     end
 end
 
@@ -2190,6 +2311,7 @@ function chomp.tickNatural(now)
     local grazing, src = chomp.isGrazing()
     if grazing ~= n.lastGrazing then
         n.lastGrazing = grazing
+        chomp.log("graze", { on = grazing, src = src })
     end
     if grazing then
         n.notGrazingSince = nil
@@ -2217,6 +2339,7 @@ function chomp.onMobAttack(now)
     n.notGrazingSince = nil
     -- pressE() (cave mobs) sends an E release, so a held graze key is no longer held
     n.held = false
+    chomp.log("mob", {})
 end
 
 -- Calorie tracking for Auto-Chomp stats
@@ -2283,6 +2406,7 @@ end
 
 _G.CowHubChompCleanup = function()
     chomp.stopNatural()
+    chomp.flushLog(true)
 end
 
 -- ==========================
@@ -2294,6 +2418,7 @@ do
         if active == farm.botCheckActive then return end
         farm.botCheckActive = active
         if active then chomp.release() end
+        chomp.log("botcheck", { active = active })
         safeNotify({
             Title = active and "Bot Check Active" or "Bot Check Cleared",
             Content = active and "Autofarm paused until the human check is completed." or "Autofarm resumed.",
@@ -5574,9 +5699,11 @@ function farm.processMovement(dt, now, rootPos)
     if farm.collectBait then
         bait, baitPos = farm.findBait(rootPos, now)
         if bait ~= farm.baitTarget then
+            if chomp.debug then chomp.log("bait", { act = bait and "target" or "gone", name = bait and bait.Name or nil, class = bait and bait.ClassName or nil, dist = baitPos and math.sqrt(get2DDistanceSq(rootPos, baitPos)) or nil, held = farm.baitTarget and (now - farm.baitStart) or nil }) end
             farm.baitTarget = bait
             farm.baitStart = now
         elseif bait and now - farm.baitStart > 8 then
+            if chomp.debug then chomp.log("bait", { act = "timeout", name = bait.Name }) end
             farm.baitSkip[bait] = now + 30 -- not picked up in time; leave it for a while
             bait, baitPos = nil, nil
             farm.baitTarget = nil
@@ -5684,6 +5811,12 @@ function farm.processMovement(dt, now, rootPos)
             end
 
             local chosenNode = nearestNode or (not farm.collisionDetection and fallbackNode)
+            if chomp.debug then
+                if now - (chomp.lastPickLog or 0) >= 1 then
+                    chomp.lastPickLog = now
+                    chomp.log("pick", { inRadius = inRadius, edible = edible, cooled = cooled, walled = walled, chosen = chosenNode and cache.getNodeID(chosenNode) or nil, dist = chosenNode and math.sqrt(get2DDistanceSq(rootPos, cache.getNodePosition(chosenNode))) or nil, x = rootPos.X, z = rootPos.Z })
+                end
+            end
             if chosenNode then
                 farm.currentTargetNode = chosenNode
                 farm.currentNodeStartTime = now
@@ -5988,6 +6121,12 @@ function farm.processGrassChomp(now, rootPos)
             if best then
                 tryCandidate(best, bestId, "near")
             end
+            if chomp.debug then
+                if not best and now - chomp.lastIdleLog >= 1 then
+                    chomp.lastIdleLog = now
+                    chomp.log("idle", { why = why, speed = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z).Magnitude })
+                end
+            end
         end
 
         -- 5. Fire Chomp Request (pacing + wire shape owned by chomp.fire)
@@ -6175,6 +6314,7 @@ function updateHeartbeatConnection()
                 local now = os.clock()
                 local rootPos = getRootPos(root)
                 if not rootPos then return end
+                if chomp.debug then chomp.flushLog(false) end
                 if farm.botCheckActive then return end
                 -- Caravan raid owns the character while it runs: every farm below pauses
                 if caravan.active then return end
@@ -6202,6 +6342,21 @@ function updateHeartbeatConnection()
                     dodge.cleanup()
                 end
 
+                if chomp.debug then
+                    if now - (chomp.lastFarmLog or 0) >= 5 then
+                        chomp.lastFarmLog = now
+                        local tgt = farm.currentTargetNode
+                        chomp.log("farm", {
+                            on = farm.on == true, pattern = farm.pattern, radius = farm.radius,
+                            anchorDist = farm.anchorPos and math.sqrt(get2DDistanceSq(rootPos, farm.anchorPos)) or nil,
+                            manatite = (manatite and manatite.auto) == true, mithril = (mithril and mithril.auto) == true,
+                            dodging = dodge.isDodging == true, underground = dodge.isUnderground == true,
+                            onlyMature = farm.onlyMatureGrass, stuck = farm.stuckCounter, unsticking = farm.isUnsticking == true,
+                            target = tgt and tgt.Parent and cache.getNodeID(tgt) or nil,
+                            nodes = #cache.grassNodes,
+                        })
+                    end
+                end
 
                 -- 1. Movement Logic
                 if farm.on and not (manatite and manatite.auto) and not (mithril and mithril.auto) and farm.anchorPos and not dodge.isDodging and not dodge.isUnderground then
@@ -6339,6 +6494,7 @@ do
             if Value then
                 chomp.resetCalories()
             end
+            chomp.log("toggle", { autoChomp = Value, mode = chomp.mode })
             updateHeartbeatConnection()
         end,
     })
@@ -6421,12 +6577,14 @@ do
             if newMode == chomp.mode then return end
             if chomp.mode == "Natural" then chomp.stopNatural() end
             chomp.mode = newMode
+            chomp.log("mode", { mode = newMode })
         end,
     })
 
     ui.optionDropdown(MainTab, "Chomp Options", "Dropdown_ChompOptions", {
         { label = "Auto Max Speed", default = true, fn = function(Value)
             chomp.autoMax = Value
+            chomp.log("autoMax", { on = Value })
         end },
         { label = "Only While Moving", default = true, fn = function(Value)
             farm.chompOnlyWhileMoving = Value
@@ -6449,6 +6607,32 @@ do
         Callback = function(Option)
             local selection = tostring(type(Option) == "table" and Option[1] or Option)
             chomp.manualDelay = math.max(chomp.MIN, tonumber(string.match(selection, "(%d+%.?%d*)")) or chomp.MIN)
+        end,
+    })
+
+    MainTab:CreateToggle({
+        Name = "Chomp Debug Log (cowhub/chomplogs)",
+        CurrentValue = false,
+        Flag = "Toggle_ChompDebugLog",
+        Callback = function(Value)
+            if Value then
+                chomp.debug = true
+                chomp.logPath = nil
+                chomp.log("start", {
+                    placeId = game.PlaceId, jobId = game.JobId, mode = chomp.mode, autoMax = chomp.autoMax,
+                    manualDelay = chomp.manualDelay, toggleSetting = plr:GetAttribute("CowGrazeToggle") == true,
+                    chewCooldown = plr:GetAttribute("ChewCooldown"), mult = plr:GetAttribute("CowGrazingSpeedMultiplier"),
+                    statsBefore = chomp.stats,
+                })
+                chomp.flushLog(true)
+                chomp.watchStats(true)
+                safeNotify({ Title = "Chomp Debug Log", Content = "Writing to " .. tostring(chomp.logPath), Duration = 6 })
+            else
+                chomp.log("stop", { stats = chomp.stats })
+                chomp.watchStats(false)
+                chomp.flushLog(true)
+                chomp.debug = false
+            end
         end,
     })
 
@@ -14059,6 +14243,16 @@ do
         { label = "Loot Only", default = false, fn = function(Value) caravan.lootOnly = Value == true end },
     })
 
+    CaravanTab:CreateToggle({
+        Name = "Caravan Debug Log",
+        CurrentValue = false,
+        Flag = "Toggle_CaravanDebugLog",
+        Callback = function(Value)
+            caravan.debug = Value == true
+            if not caravan.debug then caravan.flushLog(true) end
+        end,
+    })
+
     do
         local card
         local title, body = "Caravan: --", "Waiting for caravan"
@@ -14460,6 +14654,7 @@ do
                         pcall(function() conn:Disconnect() end)
                     end
                 end
+                chomp.watchStats(false)
                 if mapOptimizer and mapOptimizer.stopStreamHook then
                     pcall(function() mapOptimizer.stopStreamHook() end)
                 end
