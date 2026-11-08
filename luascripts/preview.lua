@@ -1,4 +1,4 @@
--- Cow Hub [11d1f3d] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [2c879bc] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [11d1f3d]",
+    Name = "Cow Hub [2c879bc]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -2475,6 +2475,27 @@ function cache.getNodePosition(node)
     local rest = node:GetAttribute("RestCFrame")
     if typeof(rest) == "CFrame" then return rest.Position end
     return node:IsA("Model") and node:GetPivot().Position or node.Position
+end
+
+-- Grass visuals within radius of pos (direct children of the grass folder), from the engine's
+-- spatial index, as InputController:_findTarget does. Scanning the whole folder (up to 6000 visuals,
+-- each with live attribute reads) every tick caused frame hitches.
+local grassOverlap = OverlapParams.new()
+grassOverlap.FilterType = Enum.RaycastFilterType.Include
+local grassOverlapFolder = nil
+function cache.grassNear(pos, radius)
+    cache.getGrassNodes() -- keeps cache.grassFolder resolved
+    local folder = cache.grassFolder
+    if not folder then return {} end
+    if grassOverlapFolder ~= folder then
+        grassOverlapFolder = folder
+        grassOverlap.FilterDescendantsInstances = { folder }
+    end
+    local out = {}
+    for _, part in ipairs(workspace:GetPartBoundsInRadius(pos, radius, grassOverlap)) do
+        if part.Parent == folder then table.insert(out, part) end
+    end
+    return out
 end
 
 function cache.getGrassNodes()
@@ -5766,7 +5787,8 @@ function farm.processMovement(dt, now, rootPos)
             local nearestNode = nil
             local fallbackNode = nil
             local fallbackDistSq = math.huge
-            local grassNodes = cache.getGrassNodes()
+            -- Vertical slack: the farm radius is 2D, the spatial query is a sphere
+            local grassNodes = cache.grassNear(farm.anchorPos, farm.radius + 30)
             local inRadius, edible, cooled, walled = 0, 0, 0, 0
 
             for _, node in ipairs(grassNodes) do
@@ -6027,10 +6049,12 @@ function farm.processGrassChomp(now, rootPos)
         -- Used only when it beats the game's own prediction (step 1): taking it on every tick cost ~10%
         -- throughput and doubled OutOfRange (chomp_1794121346), while 97% of nodes are value 1 anyway.
         local valueBest, valueBestId, valueBestValue = nil, nil, 0
+        -- One spatial query per tick serves the value scan and the closest-node fallback (+4: sphere vs 2D reach)
+        local nearby = cache.grassNear(rootPos, chomp.REACH + 4)
         do
             local reachSq = chomp.REACH * chomp.REACH
             local best, bestId, bestValue, bestDistSq = nil, nil, 0, math.huge
-            for _, node in ipairs(cache.getGrassNodes()) do
+            for _, node in ipairs(nearby) do
                 if node.Parent then
                     local dSq = get2DDistanceSq(rootPos, cache.getNodePosition(node))
                     if dSq <= reachSq then
@@ -6101,7 +6125,7 @@ function farm.processGrassChomp(now, rootPos)
             local best, bestDistSq, bestId = nil, math.huge, nil
             local why = chomp.idleWhy
             table.clear(why)
-            for _, node in ipairs(cache.getGrassNodes()) do
+            for _, node in ipairs(nearby) do
                 if node and node.Parent then
                     local nodePos = cache.getNodePosition(node)
                     if nodePos then
