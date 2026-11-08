@@ -125,7 +125,7 @@ local function createHud()
 
     local card = Instance.new("Frame")
     card.Name = "Card"
-    card.Size = UDim2.new(0, 280, 0, 160)
+    card.Size = UDim2.new(0, 280, 0, 150)
     card.Position = UDim2.new(1, -295, 0, 120)
     card.BackgroundColor3 = Color3.fromRGB(18, 22, 28)
     card.BorderSizePixel = 0
@@ -216,7 +216,7 @@ local function createHud()
 
     local etaLabel = Instance.new("TextLabel")
     etaLabel.Name = "EtaLabel"
-    etaLabel.Size = UDim2.new(1, -16, 0, 16)
+    etaLabel.Size = UDim2.new(1, -85, 0, 16)
     etaLabel.Position = UDim2.new(0, 8, 0, 116)
     etaLabel.BackgroundTransparency = 1
     etaLabel.Font = Enum.Font.GothamMedium
@@ -245,6 +245,29 @@ local function createHud()
 
     stopBtn.MouseButton1Click:Connect(function()
         farm.destroy()
+    end)
+
+    -- Mode picker: click to switch Feed <-> Interact (read by the next care tick)
+    local modeBtn = Instance.new("TextButton")
+    modeBtn.Name = "ModeBtn"
+    modeBtn.Size = UDim2.new(0, 65, 0, 22)
+    modeBtn.Position = UDim2.new(1, -73, 0, 120)
+    modeBtn.BackgroundColor3 = Color3.fromRGB(45, 110, 190)
+    modeBtn.BorderSizePixel = 0
+    modeBtn.Font = Enum.Font.GothamBold
+    modeBtn.TextSize = 11
+    modeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    modeBtn.Text = SETTINGS.MODE
+    modeBtn.Parent = card
+
+    local modeCorner = Instance.new("UICorner")
+    modeCorner.CornerRadius = UDim.new(0, 4)
+    modeCorner.Parent = modeBtn
+
+    modeBtn.MouseButton1Click:Connect(function()
+        SETTINGS.MODE = SETTINGS.MODE == "Feed" and "Interact" or "Feed"
+        modeBtn.Text = SETTINGS.MODE
+        farm.statusText = "Mode: " .. SETTINGS.MODE -- shown on the next HUD refresh (updateHud is defined below)
     end)
 
     screen.Parent = parentGui
