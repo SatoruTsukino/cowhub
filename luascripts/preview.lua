@@ -1,4 +1,4 @@
--- Cow Hub [9fe1843] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [86bca44] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [9fe1843]",
+    Name = "Cow Hub [86bca44]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -1473,7 +1473,7 @@ function afkRelog.checkAndResumeState()
         pcall(function() Window:Set("Dropdown_ChompMode", { chomp.mode == "Natural" and "Natural (E Key)" or "Remote (Auto Max)" }) end)
         if f.ChompAutoMax ~= nil then
             chomp.autoMax = f.ChompAutoMax == true
-            ui.setOption("Dropdown_ChompOptions", "Auto Max Chomp Speed (Server Limit)", chomp.autoMax)
+            ui.setOption("Dropdown_ChompOptions", "Auto Max Speed", chomp.autoMax)
         end
         local manual = tonumber(f.ChompManualDelay) or tonumber(f.GrassChompDelay)
         if manual then
@@ -1481,11 +1481,11 @@ function afkRelog.checkAndResumeState()
         end
         if f.OnlyMatureGrass ~= nil then
             farm.onlyMatureGrass = f.OnlyMatureGrass
-            ui.setOption("Dropdown_ChompOptions", "Focus Only Mature Grass", f.OnlyMatureGrass)
+            ui.setOption("Dropdown_ChompOptions", "Mature Grass Only", f.OnlyMatureGrass)
         end
         if f.ChompOnlyWhileMoving ~= nil then
             farm.chompOnlyWhileMoving = f.ChompOnlyWhileMoving
-            ui.setOption("Dropdown_ChompOptions", "Chomp Only While Moving", f.ChompOnlyWhileMoving)
+            ui.setOption("Dropdown_ChompOptions", "Only While Moving", f.ChompOnlyWhileMoving)
         end
 
         if f.AutoChomp then
@@ -6582,17 +6582,17 @@ do
     })
 
     ui.optionDropdown(MainTab, "Chomp Options", "Dropdown_ChompOptions", {
-        { label = "Auto Max Chomp Speed (Server Limit)", default = true, fn = function(Value)
+        { label = "Auto Max Speed", default = true, fn = function(Value)
             chomp.autoMax = Value
             chomp.log("autoMax", { on = Value })
         end },
-        { label = "Chomp Only While Moving", default = true, fn = function(Value)
+        { label = "Only While Moving", default = true, fn = function(Value)
             farm.chompOnlyWhileMoving = Value
         end },
-        { label = "Focus Only Mature Grass", default = true, fn = function(Value)
+        { label = "Mature Grass Only", default = true, fn = function(Value)
             farm.onlyMatureGrass = Value
         end },
-        { label = "Collect Grazing Bait Drops", default = false, fn = function(Value)
+        { label = "Collect Bait Drops", default = false, fn = function(Value)
             farm.collectBait = Value
             farm.baitTarget = nil
         end },
@@ -6768,10 +6768,10 @@ do
     })
 
     ui.optionDropdown(MainTab, "Dodge Options", "Dropdown_DodgeOptions", {
-        { label = "Notify on Attack Dodge", default = false, fn = function(Value)
+        { label = "Notify on Dodge", default = false, fn = function(Value)
             dodge.notifyOnDodge = Value
         end },
-        { label = "Retreat on Armor / Hearts Decreased", default = true, fn = function(Value)
+        { label = "Retreat on Damage", default = true, fn = function(Value)
             dodge.dodgeOnHeartsDecreased = Value
         end },
     })
@@ -6856,7 +6856,7 @@ do
             penESP.show = Value
             penESP.update()
         end },
-        { label = "Team Chest (Dynamic)", default = false, fn = function(Value)
+        { label = "Team Chest", default = false, fn = function(Value)
             chestESP.show = Value
             chestESP.update()
         end },
@@ -6925,20 +6925,20 @@ do
     })
 
     ui.optionDropdown(MiningTab, "Manatite Options", "Dropdown_ManatiteOptions", {
-        { label = "Show ESP", default = false, fn = function(Value)
+        { label = "ESP", default = false, fn = function(Value)
             manatite.showESP = Value
             manatite.updateESP()
         end },
-        { label = "Anchor Root While Chomping", default = false, fn = function(Value)
+        { label = "Anchor Root", default = false, fn = function(Value)
             manatite.anchor = Value
             if not Value and root and not dodge.isUnderground then
                 pcall(function() root.Anchored = false end)
             end
         end },
-        { label = "Return to Pre-Farm Pos on Disable", default = false, fn = function(Value)
+        { label = "Return on Disable", default = false, fn = function(Value)
             manatite.returnOnDisable = Value
         end },
-        { label = "Retreat to Safe Crystal on Spider Threat", default = true, fn = function(Value)
+        { label = "Safe Crystal Retreat", default = true, fn = function(Value)
             dodge.retreatOnThreat = Value
             dodge.prioritizeMobsOverManatite = not Value
         end },
@@ -7030,17 +7030,17 @@ do
     })
 
     ui.optionDropdown(MiningTab, "Mithril Options", "Dropdown_MithrilOptions", {
-        { label = "Show ESP", default = false, fn = function(Value)
+        { label = "ESP", default = false, fn = function(Value)
             mithril.showESP = Value
             mithril.updateESP()
         end },
-        { label = "Anchor Root While Mining", default = false, fn = function(Value)
+        { label = "Anchor Root", default = false, fn = function(Value)
             mithril.anchor = Value
             if not Value and root and not dodge.isUnderground then
                 pcall(function() root.Anchored = false end)
             end
         end },
-        { label = "Return to Pre-Farm Pos on Disable", default = false, fn = function(Value)
+        { label = "Return on Disable", default = false, fn = function(Value)
             mithril.returnOnDisable = Value
         end },
     })
@@ -8427,16 +8427,10 @@ end
 
 function townAuction.teleportToStore()
     if caravan.active then return end -- caravan raid owns the character
-    local fitout = townAuction.getFitoutModel()
-    if not fitout then
-        Window:Notify({ Title = "Not Found", Content = "TownStoreFitout model not streamed in yet.", Duration = 4 })
-        return
-    end
     if root then
-        local targetPos = fitout:GetPivot().Position + Vector3.new(0, 3, 0)
         stopCharacterVelocity()
-        root.CFrame = CFrame.new(targetPos)
-        Window:Notify({ Title = "Teleported", Content = "Teleported to Buttercup Creamery Town Store.", Duration = 3 })
+        root.CFrame = CFrame.new(-1551, 706, 562)
+        Window:Notify({ Title = "Teleported", Content = "Teleported to the Town Auction.", Duration = 3 })
     end
 end
 
@@ -13163,14 +13157,14 @@ do
     end
 
     ui.optionDropdown(RaftingTab, "Voyage Options", "Dropdown_RaftVoyageOptions", {
-        { label = "Auto-Dismiss Chest Reward GUI", default = true, fn = function(Value)
+        { label = "Auto-Dismiss Reward", default = true, fn = function(Value)
             rafting.autoDismissRewardGui = Value
             rafting.autoAcceptRewards = Value
         end },
-        { label = "Auto-Continue After Docking & Chest", default = true, fn = function(Value)
+        { label = "Auto-Continue", default = true, fn = function(Value)
             rafting.autoContinueFromDock = Value
         end },
-        { label = "Collect All Loot Chests (Clearings & Caves)", default = true, fn = function(Value)
+        { label = "Collect All Chests", default = true, fn = function(Value)
             rafting.collectAllLootChests = Value
             rafting.updateCards()
         end },
@@ -13201,16 +13195,16 @@ do
     })
 
     ui.optionDropdown(RaftingTab, "Safety Options", "Dropdown_RaftSafetyOptions", {
-        { label = "Auto-Recover Overboard / Separated", default = true, fn = function(Value)
+        { label = "Auto-Recover", default = true, fn = function(Value)
             rafting.autoRecoverOverboard = Value
         end },
-        { label = "Auto-Boost (Sprint on Straights)", default = true, fn = function(Value)
+        { label = "Auto-Boost", default = true, fn = function(Value)
             rafting.autoBoost = Value
         end },
-        { label = "Auto-Evade Threats & Weather", default = true, fn = function(Value)
+        { label = "Auto-Evade", default = true, fn = function(Value)
             rafting.autoEvadeHobgoblins = Value
         end },
-        { label = "Auto-Repair Split Beams", default = true, fn = function(Value)
+        { label = "Auto-Repair Beams", default = true, fn = function(Value)
             rafting.autoRepair = Value
         end },
     })
@@ -14230,7 +14224,7 @@ do
     })
 
     ui.optionDropdown(CaravanTab, "Caravan Options", "Dropdown_CaravanOptions", {
-        { label = "Natural Mode (walk from the barn)", default = false, fn = function(Value)
+        { label = "Natural Mode", default = false, fn = function(Value)
             local on = Value == true
             if on ~= caravan.natural and caravan.active then
                 -- Switching mid-event: stop walking or keep the teleport-mode return point
@@ -14242,11 +14236,11 @@ do
             caravan.useGrumpy = Value == true
             if caravan.useGrumpy then caravan.grumpyState, caravan.grumpyMisses, caravan.grumpyUnanswered = "unknown", 0, 0 end
         end },
-        { label = "Loot Barrels (materials)", default = true, fn = function(Value)
+        { label = "Loot Barrels", default = true, fn = function(Value)
             caravan.grazeBarrels = Value == true
             if not caravan.grazeBarrels then caravan.barrelLock = nil end
         end },
-        { label = "Loot Only (skip scaring)", default = false, fn = function(Value) caravan.lootOnly = Value == true end },
+        { label = "Loot Only", default = false, fn = function(Value) caravan.lootOnly = Value == true end },
     })
 
     CaravanTab:CreateToggle({
@@ -14312,7 +14306,7 @@ do
             Callback = function() caravan.teleportBarn() end,
         })
         row:CreateButton({
-            Name = "Teleport to Town Store (Buttercup Creamery)",
+            Name = "Teleport to Town Auction",
             Callback = function()
                 townAuction.teleportToStore()
             end,
@@ -14346,7 +14340,7 @@ do
     SettingsTab:CreateSection({ Name = "Performance & Anti-Lag" })
 
     ui.optionDropdown(SettingsTab, "Performance", "Dropdown_Performance", {
-        { label = "Map & Asset Optimizer (Anti-Lag)", default = false, fn = function(Value)
+        { label = "Map Optimizer", default = false, fn = function(Value)
             mapOptimizer.enabled = Value
             if Value then
                 mapOptimizer.applyToWorld()
@@ -14363,28 +14357,14 @@ do
                 mapOptimizer.stopStreamHook()
             end
         end },
-        { label = "Auto-Clean Streamed Chunks", default = true, fn = function(Value)
+        { label = "Auto-Clean Chunks", default = true, fn = function(Value)
             mapOptimizer.autoCleanStreamed = Value
         end },
-        { label = "Disable 3D Rendering", default = false, fn = function(Value)
+        { label = "Disable 3D Render", default = false, fn = function(Value)
             pcall(function()
                 RunService:Set3dRenderingEnabled(not Value)
             end)
         end },
-    })
-
-    SettingsTab:CreateButton({
-        Name = "Preload Game Audio & Assets",
-        Callback = function()
-            mapOptimizer.preloadAssets()
-            if Window and Window.Notify then
-                Window:Notify({
-                    Title = "Asset Preloader",
-                    Content = "Preloaded game audio and interface assets into memory cache.",
-                    Duration = 2.5,
-                })
-            end
-        end,
     })
 
     SettingsTab:CreateToggle({
@@ -14410,7 +14390,7 @@ do
         end,
     })
 
-    SettingsTab:CreateSection({ Name = "AFK Anti-Cheat & Auto-Rejoin" })
+    SettingsTab:CreateSection({ Name = "AFK Auto-Rejoin" })
 
     SettingsTab:CreateToggle({
         Name = "Enable 6-Hour Auto-Rejoin & Resume",
@@ -14443,17 +14423,19 @@ do
         })
     end)
 
+    SettingsTab:CreateSection({ Name = "Rejoin & Config" })
+
     do
         local row = SettingsTab:CreateGroup()
         row:CreateButton({
-            Name = "Save State & Test Rejoin Now",
+            Name = "Test Rejoin",
             Callback = function()
                 afkRelog.triggerRejoin()
             end,
         })
 
         row:CreateButton({
-            Name = "Clear Saved Persistence File",
+            Name = "Clear Save",
             Callback = function()
                 local deleteFn = delfile or deletefile
                 if deleteFn then
@@ -14462,14 +14444,9 @@ do
                 Window:Notify({ Title = "Cleared", Content = "Saved persistence file removed.", Duration = 2 })
             end,
         })
-    end
 
-    SettingsTab:CreateSection({ Name = "Rayfield Gen2 Configuration Saving" })
-
-    do
-        local row = SettingsTab:CreateGroup()
         row:CreateButton({
-            Name = "Save Configuration (CowHubConfig.rfld)",
+            Name = "Save Config",
             Callback = function()
                 local success, err = pcall(function()
                     return Window:Save()
@@ -14492,7 +14469,7 @@ do
         })
 
         row:CreateButton({
-            Name = "Reload Configuration (CowHubConfig.rfld)",
+            Name = "Load Config",
             Callback = function()
                 local success, err = pcall(function()
                     return Window:Load()
@@ -14710,6 +14687,34 @@ do
             end)
         end,
     })
+
+    -- Gen2 buttons have no text-alignment option, so centre this label on the built GUI.
+    task.spawn(function()
+        local text = "Close Script & Destroy UI"
+        for _ = 1, 10 do
+            task.wait(0.5)
+            local roots = {}
+            if gethui then pcall(function() table.insert(roots, gethui()) end) end
+            pcall(function() table.insert(roots, game:GetService("CoreGui")) end)
+            for _, guiRoot in ipairs(roots) do
+                local ok, descendants = pcall(guiRoot.GetDescendants, guiRoot)
+                if ok then
+                    for _, label in ipairs(descendants) do
+                        if (label:IsA("TextLabel") or label:IsA("TextButton")) and label.Text == text then
+                            pcall(function()
+                                label.TextXAlignment = Enum.TextXAlignment.Center
+                                label.AutomaticSize = Enum.AutomaticSize.None
+                                label.AnchorPoint = Vector2.new(0, label.AnchorPoint.Y)
+                                label.Position = UDim2.new(0, 0, label.Position.Y.Scale, label.Position.Y.Offset)
+                                label.Size = UDim2.new(1, 0, label.Size.Y.Scale, label.Size.Y.Offset)
+                            end)
+                            return
+                        end
+                    end
+                end
+            end
+        end
+    end)
 end
 
 -- ==========================

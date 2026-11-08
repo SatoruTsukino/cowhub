@@ -1,4 +1,4 @@
--- Cow Hub [9fe1843] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [86bca44] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [9fe1843]",
+    Name = "Cow Hub [86bca44]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -1467,7 +1467,7 @@ function afkRelog.checkAndResumeState()
         pcall(function() Window:Set("Dropdown_ChompMode", { chomp.mode == "Natural" and "Natural (E Key)" or "Remote (Auto Max)" }) end)
         if f.ChompAutoMax ~= nil then
             chomp.autoMax = f.ChompAutoMax == true
-            ui.setOption("Dropdown_ChompOptions", "Auto Max Chomp Speed (Server Limit)", chomp.autoMax)
+            ui.setOption("Dropdown_ChompOptions", "Auto Max Speed", chomp.autoMax)
         end
         local manual = tonumber(f.ChompManualDelay) or tonumber(f.GrassChompDelay)
         if manual then
@@ -1475,11 +1475,11 @@ function afkRelog.checkAndResumeState()
         end
         if f.OnlyMatureGrass ~= nil then
             farm.onlyMatureGrass = f.OnlyMatureGrass
-            ui.setOption("Dropdown_ChompOptions", "Focus Only Mature Grass", f.OnlyMatureGrass)
+            ui.setOption("Dropdown_ChompOptions", "Mature Grass Only", f.OnlyMatureGrass)
         end
         if f.ChompOnlyWhileMoving ~= nil then
             farm.chompOnlyWhileMoving = f.ChompOnlyWhileMoving
-            ui.setOption("Dropdown_ChompOptions", "Chomp Only While Moving", f.ChompOnlyWhileMoving)
+            ui.setOption("Dropdown_ChompOptions", "Only While Moving", f.ChompOnlyWhileMoving)
         end
 
         if f.AutoChomp then
@@ -4724,7 +4724,9 @@ end
 
 function aerial.checkHealth(now, rootPos)
     local currentHearts = dodge.getLocalPlayerHearts()
-    if currentHearts and dodge.lastRecordedHearts ~= nil and currentHearts < dodge.lastRecordedHearts then
+    -- Emergency only (hearts at or below 34% of normal); smaller hits go to dodge.process (Run / Teleport Away)
+    local low = currentHearts and dodge.normalPlayerHearts > 0 and currentHearts <= dodge.normalPlayerHearts * 0.34
+    if low and dodge.lastRecordedHearts ~= nil and currentHearts < dodge.lastRecordedHearts then
         if dodge.retreatOnThreat then
             if manatite and manatite.auto then
                 local retreated = manatite.retreatToSafeCrystal(now, rootPos)
@@ -4750,7 +4752,8 @@ function aerial.checkHealth(now, rootPos)
             aerial.cframe = CFrame.new(hoverPos) * root.CFrame.Rotation
             char:PivotTo(aerial.cframe)
             root.CFrame = aerial.cframe
-            root.Anchored = true
+            -- Not anchored: an anchored root doesn't replicate, so the server would keep the cow on the ground.
+            -- aerial.process re-pins the CFrame and zeroes velocity every frame instead.
             for _, part in ipairs(charBaseParts) do
                 part.AssemblyLinearVelocity = Vector3.zero
                 part.AssemblyAngularVelocity = Vector3.zero
@@ -4777,6 +4780,23 @@ function aerial.checkHealth(now, rootPos)
         end
     end
     dodge.lastRecordedHearts = currentHearts
+end
+
+-- Nearest alive mob within maxDistSq (2D) of pos, for retreats with no telegraphed attacker
+function dodge.nearestMob(pos, maxDistSq)
+    local best, bestSq = nil, maxDistSq
+    for _, mob in ipairs(cache.activeAuraMobs) do
+        if mob.Parent then
+            local mobPos = dodge.getMobAttackOrigin(mob)
+            if mobPos then
+                local dSq = get2DDistanceSq(pos, mobPos)
+                if dSq <= bestSq and dodge.isMobAlive(mob) then
+                    best, bestSq = mob, dSq
+                end
+            end
+        end
+    end
+    return best
 end
 
 function dodge.process(now, rootPos)
@@ -4861,10 +4881,19 @@ function dodge.process(now, rootPos)
         end
     end
 
+    if damageRetreatTriggered then
+        -- No telegraphed attacker: run from the nearest mob, and keep running long enough to get clear
+        if not attackingMobInstance then
+            attackingMobInstance = dodge.nearestMob(checkOrigin, dodge.detectionRadiusSq * 4)
+            dodge.currentAttackingMob = attackingMobInstance or dodge.currentAttackingMob
+        end
+    end
+
     local shouldRetreat = (attackingMobFound and attackingMobInstance) or damageRetreatTriggered
 
     if shouldRetreat then
-        dodge.lastWarningSeenTime = now
+        -- A damage-only retreat holds at least 2.5 s (0.6 s linger after now + 1.9)
+        dodge.lastWarningSeenTime = damageRetreatTriggered and not attackingMobFound and (now + 1.9) or math.max(now, dodge.lastWarningSeenTime)
 
         if dodge.retreatOnThreat then
             if manatite and manatite.auto then
@@ -4930,7 +4959,7 @@ function dodge.process(now, rootPos)
                     away2D = (away2D.Magnitude > 0.1) and away2D.Unit or Vector3.new(0, 0, 1)
 
                     local rotatedAway = CFrame.Angles(0, math.rad(dodge.retreatAngle), 0):VectorToWorldSpace(away2D)
-                    humanoid:Move(rotatedAway, false)
+                    humanoid:MoveTo(rootPos + rotatedAway * dodge.retreatDistance) -- MoveTo: the ControlModule overwrites Move() every frame
                 end
             elseif dodge.method == "Teleport Away (Surface)" then
                 local attackOrigin = (attackingMobInstance and dodge.getMobAttackOrigin(attackingMobInstance)) or rootPos
@@ -4980,16 +5009,17 @@ function dodge.process(now, rootPos)
                     if humanoid.WalkSpeed ~= dodge.walkSpeed then
                         humanoid.WalkSpeed = dodge.walkSpeed
                     end
-                    local attackOrigin = (attackingMobInstance and dodge.getMobAttackOrigin(attackingMobInstance)) or (dodge.preDodgePos or rootPos)
+                    local fleeFrom = attackingMobInstance or (dodge.currentAttackingMob and dodge.currentAttackingMob.Parent and dodge.currentAttackingMob)
+                    local attackOrigin = (fleeFrom and dodge.getMobAttackOrigin(fleeFrom)) or (dodge.preDodgePos or rootPos)
                     local currentDist = get2DDistance(rootPos, attackOrigin)
                     if currentDist < dodge.retreatDistance then
                         local awayDir = rootPos - attackOrigin
                         local away2D = Vector3.new(awayDir.X, 0, awayDir.Z)
                         away2D = (away2D.Magnitude > 0.1) and away2D.Unit or Vector3.new(0, 0, 1)
                         local rotatedAway = CFrame.Angles(0, math.rad(dodge.retreatAngle), 0):VectorToWorldSpace(away2D)
-                        humanoid:Move(rotatedAway, false)
+                        humanoid:MoveTo(rootPos + rotatedAway * dodge.retreatDistance) -- MoveTo: the ControlModule overwrites Move() every frame
                     else
-                        humanoid:Move(Vector3.zero, false)
+                        humanoid:MoveTo(rootPos) -- far enough: stop here
                     end
                 end
             end
@@ -5464,6 +5494,32 @@ do
     end
 end
 
+-- Teleport the character; re-home the autofarm so it doesn't walk back to the old anchor
+function farm.teleportTo(target)
+    if not root or not char then return end
+    char:PivotTo(target)
+    root.CFrame = target
+    stopCharacterVelocity()
+    for _, part in ipairs(charBaseParts) do
+        part.AssemblyLinearVelocity = Vector3.zero
+        part.AssemblyAngularVelocity = Vector3.zero
+    end
+    if farm.on then
+        farm.anchorPos = target.Position
+        farm.currentTargetNode = nil
+        farm.currentNodeStartTime = 0
+        farm.nextRandomPos = nil
+    end
+end
+
+-- Calories a bite on this node earns relative to a full-grown plain node:
+-- maturity (GrowthProgress 0-1) x 2 when Golden (FoodConfig.Modifiers.Golden.Multiplier)
+function farm.nodeValue(node)
+    local progress = tonumber(node:GetAttribute("GrowthProgress") or node:GetAttribute("GrowProgress")) or 1
+    progress = math.clamp(progress, 0, 1)
+    return progress * (node:GetAttribute("Golden") == true and 2 or 1)
+end
+
 function farm.processMovement(dt, now, rootPos)
     farm.patternTimer = farm.patternTimer + (dt * farm.patternSpeed)
 
@@ -5595,7 +5651,9 @@ function farm.processMovement(dt, now, rootPos)
                             edible += 1
                             local nodeId = cache.getNodeID(node)
                             if nodeId then
-                                local distFromGhostSq = get2DDistanceSq(ghostPos, nodePos)
+                                -- Prefer Golden / fully grown grass: value 2 counts as half the distance
+                                local value = math.max(farm.nodeValue(node), 0.05)
+                                local distFromGhostSq = get2DDistanceSq(ghostPos, nodePos) / (value * value)
                                 local blacklistedAt = cache.nodeBlacklist[node]
                                 if blacklistedAt and now - blacklistedAt <= 10 then
                                     cooled += 1
@@ -5828,8 +5886,32 @@ function farm.processGrassChomp(now, rootPos)
             targetNodeId = id
             targetInstance = inst
             local t = chomp.target
-            t.src, t.dist, t.dot = src, dist, dot
+            t.src, t.dist, t.dot, t.value = src, dist, dot, nil
             return true
+        end
+
+        -- 0. Highest-value valid node in reach (Golden, fully grown); every bite costs the same chew time.
+        -- Used only when it beats the game's own prediction (step 1): taking it on every tick cost ~10%
+        -- throughput and doubled OutOfRange (chomp_1794121346), while 97% of nodes are value 1 anyway.
+        local valueBest, valueBestId, valueBestValue = nil, nil, 0
+        do
+            local reachSq = chomp.REACH * chomp.REACH
+            local best, bestId, bestValue, bestDistSq = nil, nil, 0, math.huge
+            for _, node in ipairs(cache.getGrassNodes()) do
+                if node.Parent then
+                    local dSq = get2DDistanceSq(rootPos, cache.getNodePosition(node))
+                    if dSq <= reachSq then
+                        local value = farm.nodeValue(node)
+                        if value > bestValue or (value == bestValue and dSq < bestDistSq) then
+                            local id = cache.getNodeID(node)
+                            if chomp.canTarget(node, id, rootPos, now) then
+                                best, bestId, bestValue, bestDistSq = node, id, value, dSq
+                            end
+                        end
+                    end
+                end
+            end
+            valueBest, valueBestId, valueBestValue = best, bestId, bestValue
         end
 
         -- 1. Primary: Game's native CowGrassPrediction SelectionBox in Camera (mouth/view target)
@@ -5851,6 +5933,17 @@ function farm.processGrassChomp(now, rootPos)
                     tryCandidate(resolved, id, "pred")
                 end
             end
+        end
+
+        -- Prediction loses only to a strictly better node (Golden or riper)
+        local predValue = targetNodeId and typeof(targetInstance) == "Instance" and farm.nodeValue(targetInstance) or nil
+        if valueBest and (not predValue or predValue < valueBestValue) then
+            targetNodeId = nil
+            if tryCandidate(valueBest, valueBestId, "value") then
+                chomp.target.value = valueBestValue
+            end
+        elseif predValue then
+            chomp.target.value = predValue
         end
 
         -- 2. Physical Downward Raycast: Directly detect grass beneath character
@@ -6332,16 +6425,16 @@ do
     })
 
     ui.optionDropdown(MainTab, "Chomp Options", "Dropdown_ChompOptions", {
-        { label = "Auto Max Chomp Speed (Server Limit)", default = true, fn = function(Value)
+        { label = "Auto Max Speed", default = true, fn = function(Value)
             chomp.autoMax = Value
         end },
-        { label = "Chomp Only While Moving", default = true, fn = function(Value)
+        { label = "Only While Moving", default = true, fn = function(Value)
             farm.chompOnlyWhileMoving = Value
         end },
-        { label = "Focus Only Mature Grass", default = true, fn = function(Value)
+        { label = "Mature Grass Only", default = true, fn = function(Value)
             farm.onlyMatureGrass = Value
         end },
-        { label = "Collect Grazing Bait Drops", default = false, fn = function(Value)
+        { label = "Collect Bait Drops", default = false, fn = function(Value)
             farm.collectBait = Value
             farm.baitTarget = nil
         end },
@@ -6491,10 +6584,10 @@ do
     })
 
     ui.optionDropdown(MainTab, "Dodge Options", "Dropdown_DodgeOptions", {
-        { label = "Notify on Attack Dodge", default = false, fn = function(Value)
+        { label = "Notify on Dodge", default = false, fn = function(Value)
             dodge.notifyOnDodge = Value
         end },
-        { label = "Retreat on Armor / Hearts Decreased", default = true, fn = function(Value)
+        { label = "Retreat on Damage", default = true, fn = function(Value)
             dodge.dodgeOnHeartsDecreased = Value
         end },
     })
@@ -6579,7 +6672,7 @@ do
             penESP.show = Value
             penESP.update()
         end },
-        { label = "Team Chest (Dynamic)", default = false, fn = function(Value)
+        { label = "Team Chest", default = false, fn = function(Value)
             chestESP.show = Value
             chestESP.update()
         end },
@@ -6648,20 +6741,20 @@ do
     })
 
     ui.optionDropdown(MiningTab, "Manatite Options", "Dropdown_ManatiteOptions", {
-        { label = "Show ESP", default = false, fn = function(Value)
+        { label = "ESP", default = false, fn = function(Value)
             manatite.showESP = Value
             manatite.updateESP()
         end },
-        { label = "Anchor Root While Chomping", default = false, fn = function(Value)
+        { label = "Anchor Root", default = false, fn = function(Value)
             manatite.anchor = Value
             if not Value and root and not dodge.isUnderground then
                 pcall(function() root.Anchored = false end)
             end
         end },
-        { label = "Return to Pre-Farm Pos on Disable", default = false, fn = function(Value)
+        { label = "Return on Disable", default = false, fn = function(Value)
             manatite.returnOnDisable = Value
         end },
-        { label = "Retreat to Safe Crystal on Spider Threat", default = true, fn = function(Value)
+        { label = "Safe Crystal Retreat", default = true, fn = function(Value)
             dodge.retreatOnThreat = Value
             dodge.prioritizeMobsOverManatite = not Value
         end },
@@ -6753,17 +6846,17 @@ do
     })
 
     ui.optionDropdown(MiningTab, "Mithril Options", "Dropdown_MithrilOptions", {
-        { label = "Show ESP", default = false, fn = function(Value)
+        { label = "ESP", default = false, fn = function(Value)
             mithril.showESP = Value
             mithril.updateESP()
         end },
-        { label = "Anchor Root While Mining", default = false, fn = function(Value)
+        { label = "Anchor Root", default = false, fn = function(Value)
             mithril.anchor = Value
             if not Value and root and not dodge.isUnderground then
                 pcall(function() root.Anchored = false end)
             end
         end },
-        { label = "Return to Pre-Farm Pos on Disable", default = false, fn = function(Value)
+        { label = "Return on Disable", default = false, fn = function(Value)
             mithril.returnOnDisable = Value
         end },
     })
@@ -8150,16 +8243,10 @@ end
 
 function townAuction.teleportToStore()
     if caravan.active then return end -- caravan raid owns the character
-    local fitout = townAuction.getFitoutModel()
-    if not fitout then
-        Window:Notify({ Title = "Not Found", Content = "TownStoreFitout model not streamed in yet.", Duration = 4 })
-        return
-    end
     if root then
-        local targetPos = fitout:GetPivot().Position + Vector3.new(0, 3, 0)
         stopCharacterVelocity()
-        root.CFrame = CFrame.new(targetPos)
-        Window:Notify({ Title = "Teleported", Content = "Teleported to Buttercup Creamery Town Store.", Duration = 3 })
+        root.CFrame = CFrame.new(-1551, 706, 562)
+        Window:Notify({ Title = "Teleported", Content = "Teleported to the Town Auction.", Duration = 3 })
     end
 end
 
@@ -12886,14 +12973,14 @@ do
     end
 
     ui.optionDropdown(RaftingTab, "Voyage Options", "Dropdown_RaftVoyageOptions", {
-        { label = "Auto-Dismiss Chest Reward GUI", default = true, fn = function(Value)
+        { label = "Auto-Dismiss Reward", default = true, fn = function(Value)
             rafting.autoDismissRewardGui = Value
             rafting.autoAcceptRewards = Value
         end },
-        { label = "Auto-Continue After Docking & Chest", default = true, fn = function(Value)
+        { label = "Auto-Continue", default = true, fn = function(Value)
             rafting.autoContinueFromDock = Value
         end },
-        { label = "Collect All Loot Chests (Clearings & Caves)", default = true, fn = function(Value)
+        { label = "Collect All Chests", default = true, fn = function(Value)
             rafting.collectAllLootChests = Value
             rafting.updateCards()
         end },
@@ -12924,16 +13011,16 @@ do
     })
 
     ui.optionDropdown(RaftingTab, "Safety Options", "Dropdown_RaftSafetyOptions", {
-        { label = "Auto-Recover Overboard / Separated", default = true, fn = function(Value)
+        { label = "Auto-Recover", default = true, fn = function(Value)
             rafting.autoRecoverOverboard = Value
         end },
-        { label = "Auto-Boost (Sprint on Straights)", default = true, fn = function(Value)
+        { label = "Auto-Boost", default = true, fn = function(Value)
             rafting.autoBoost = Value
         end },
-        { label = "Auto-Evade Threats & Weather", default = true, fn = function(Value)
+        { label = "Auto-Evade", default = true, fn = function(Value)
             rafting.autoEvadeHobgoblins = Value
         end },
-        { label = "Auto-Repair Split Beams", default = true, fn = function(Value)
+        { label = "Auto-Repair Beams", default = true, fn = function(Value)
             rafting.autoRepair = Value
         end },
     })
@@ -13953,7 +14040,7 @@ do
     })
 
     ui.optionDropdown(CaravanTab, "Caravan Options", "Dropdown_CaravanOptions", {
-        { label = "Natural Mode (walk from the barn)", default = false, fn = function(Value)
+        { label = "Natural Mode", default = false, fn = function(Value)
             local on = Value == true
             if on ~= caravan.natural and caravan.active then
                 -- Switching mid-event: stop walking or keep the teleport-mode return point
@@ -13965,11 +14052,11 @@ do
             caravan.useGrumpy = Value == true
             if caravan.useGrumpy then caravan.grumpyState, caravan.grumpyMisses, caravan.grumpyUnanswered = "unknown", 0, 0 end
         end },
-        { label = "Loot Barrels (materials)", default = true, fn = function(Value)
+        { label = "Loot Barrels", default = true, fn = function(Value)
             caravan.grazeBarrels = Value == true
             if not caravan.grazeBarrels then caravan.barrelLock = nil end
         end },
-        { label = "Loot Only (skip scaring)", default = false, fn = function(Value) caravan.lootOnly = Value == true end },
+        { label = "Loot Only", default = false, fn = function(Value) caravan.lootOnly = Value == true end },
     })
 
     do
@@ -14017,22 +14104,7 @@ do
         row:CreateButton({
             Name = "Teleport to Farming Area",
             Callback = function()
-                if not root or not char then return end
-                local target = CFrame.new(6269, 706, -185)
-                char:PivotTo(target)
-                root.CFrame = target
-                stopCharacterVelocity()
-                for _, part in ipairs(charBaseParts) do
-                    part.AssemblyLinearVelocity = Vector3.zero
-                    part.AssemblyAngularVelocity = Vector3.zero
-                end
-                -- Re-home the autofarm so it doesn't walk back to the old anchor
-                if farm.on then
-                    farm.anchorPos = target.Position
-                    farm.currentTargetNode = nil
-                    farm.currentNodeStartTime = 0
-                    farm.nextRandomPos = nil
-                end
+                farm.teleportTo(CFrame.new(6269, 706, -185))
             end,
         })
         row:CreateButton({
@@ -14040,7 +14112,7 @@ do
             Callback = function() caravan.teleportBarn() end,
         })
         row:CreateButton({
-            Name = "Teleport to Town Store (Buttercup Creamery)",
+            Name = "Teleport to Town Auction",
             Callback = function()
                 townAuction.teleportToStore()
             end,
@@ -14074,7 +14146,7 @@ do
     SettingsTab:CreateSection({ Name = "Performance & Anti-Lag" })
 
     ui.optionDropdown(SettingsTab, "Performance", "Dropdown_Performance", {
-        { label = "Map & Asset Optimizer (Anti-Lag)", default = false, fn = function(Value)
+        { label = "Map Optimizer", default = false, fn = function(Value)
             mapOptimizer.enabled = Value
             if Value then
                 mapOptimizer.applyToWorld()
@@ -14091,28 +14163,14 @@ do
                 mapOptimizer.stopStreamHook()
             end
         end },
-        { label = "Auto-Clean Streamed Chunks", default = true, fn = function(Value)
+        { label = "Auto-Clean Chunks", default = true, fn = function(Value)
             mapOptimizer.autoCleanStreamed = Value
         end },
-        { label = "Disable 3D Rendering", default = false, fn = function(Value)
+        { label = "Disable 3D Render", default = false, fn = function(Value)
             pcall(function()
                 RunService:Set3dRenderingEnabled(not Value)
             end)
         end },
-    })
-
-    SettingsTab:CreateButton({
-        Name = "Preload Game Audio & Assets",
-        Callback = function()
-            mapOptimizer.preloadAssets()
-            if Window and Window.Notify then
-                Window:Notify({
-                    Title = "Asset Preloader",
-                    Content = "Preloaded game audio and interface assets into memory cache.",
-                    Duration = 2.5,
-                })
-            end
-        end,
     })
 
     SettingsTab:CreateToggle({
@@ -14138,7 +14196,7 @@ do
         end,
     })
 
-    SettingsTab:CreateSection({ Name = "AFK Anti-Cheat & Auto-Rejoin" })
+    SettingsTab:CreateSection({ Name = "AFK Auto-Rejoin" })
 
     SettingsTab:CreateToggle({
         Name = "Enable 6-Hour Auto-Rejoin & Resume",
@@ -14171,17 +14229,19 @@ do
         })
     end)
 
+    SettingsTab:CreateSection({ Name = "Rejoin & Config" })
+
     do
         local row = SettingsTab:CreateGroup()
         row:CreateButton({
-            Name = "Save State & Test Rejoin Now",
+            Name = "Test Rejoin",
             Callback = function()
                 afkRelog.triggerRejoin()
             end,
         })
 
         row:CreateButton({
-            Name = "Clear Saved Persistence File",
+            Name = "Clear Save",
             Callback = function()
                 local deleteFn = delfile or deletefile
                 if deleteFn then
@@ -14190,14 +14250,9 @@ do
                 Window:Notify({ Title = "Cleared", Content = "Saved persistence file removed.", Duration = 2 })
             end,
         })
-    end
 
-    SettingsTab:CreateSection({ Name = "Rayfield Gen2 Configuration Saving" })
-
-    do
-        local row = SettingsTab:CreateGroup()
         row:CreateButton({
-            Name = "Save Configuration (CowHubConfig.rfld)",
+            Name = "Save Config",
             Callback = function()
                 local success, err = pcall(function()
                     return Window:Save()
@@ -14220,7 +14275,7 @@ do
         })
 
         row:CreateButton({
-            Name = "Reload Configuration (CowHubConfig.rfld)",
+            Name = "Load Config",
             Callback = function()
                 local success, err = pcall(function()
                     return Window:Load()
@@ -14437,6 +14492,34 @@ do
             end)
         end,
     })
+
+    -- Gen2 buttons have no text-alignment option, so centre this label on the built GUI.
+    task.spawn(function()
+        local text = "Close Script & Destroy UI"
+        for _ = 1, 10 do
+            task.wait(0.5)
+            local roots = {}
+            if gethui then pcall(function() table.insert(roots, gethui()) end) end
+            pcall(function() table.insert(roots, game:GetService("CoreGui")) end)
+            for _, guiRoot in ipairs(roots) do
+                local ok, descendants = pcall(guiRoot.GetDescendants, guiRoot)
+                if ok then
+                    for _, label in ipairs(descendants) do
+                        if (label:IsA("TextLabel") or label:IsA("TextButton")) and label.Text == text then
+                            pcall(function()
+                                label.TextXAlignment = Enum.TextXAlignment.Center
+                                label.AutomaticSize = Enum.AutomaticSize.None
+                                label.AnchorPoint = Vector2.new(0, label.AnchorPoint.Y)
+                                label.Position = UDim2.new(0, 0, label.Position.Y.Scale, label.Position.Y.Offset)
+                                label.Size = UDim2.new(1, 0, label.Size.Y.Scale, label.Size.Y.Offset)
+                            end)
+                            return
+                        end
+                    end
+                end
+            end
+        end
+    end)
 end
 
 -- ==========================
