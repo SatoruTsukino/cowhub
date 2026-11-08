@@ -2,7 +2,7 @@
 local SETTINGS = {
     DESTROY = false,              -- true: remove running autofarm and stop
     AUTO_EQUIP = true,            -- auto-equip first owned companion if none equipped
-    STAND_STILL = true,           -- anchor RootPart during cuddle (server checks Speed <= 0.8)
+    STAND_STILL = false,           -- anchor RootPart during cuddle (server checks Speed <= 0.8)
     TELEPORT_TO_PET = false,       -- teleport to companion if > 13 studs away
     CYCLE_DELAY = 3,              -- extra delay after each interaction (server reward lock is 8.0s from completion)
     SHOW_HUD = true,              -- show floating progress HUD
