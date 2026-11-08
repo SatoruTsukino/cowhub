@@ -399,7 +399,7 @@ local function performCareTick()
     refreshLiveStats()
     local bondBefore = farm.currentBond
 
-    local success = pcall(function()
+    local success, reply = pcall(function()
         return companionRequest:InvokeServer({
             Action = "Interact",
             Kind = kind,
@@ -408,6 +408,15 @@ local function performCareTick()
             TargetId = runtimeId,
         })
     end)
+
+    -- Server reply, for diagnosing refused interactions
+    local replyText = tostring(reply)
+    if type(reply) == "table" then
+        local parts = {}
+        for k, v in pairs(reply) do parts[#parts + 1] = tostring(k) .. "=" .. tostring(v) end
+        replyText = "{" .. table.concat(parts, ", ") .. "}"
+    end
+    print(string.format("[CompanionAutofarm] Interact %s -> ok=%s reply=%s status=%s", kind, tostring(success), replyText, tostring(plr:GetAttribute("CowCompanionStatus"))))
 
     -- The interaction runs while CowCompanionStatus == kind; moving cancels it (status -> None
     -- after ~2 s with no reward, log companion_1794117805). Stay still until it ends.
