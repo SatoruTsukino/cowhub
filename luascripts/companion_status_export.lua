@@ -10,7 +10,7 @@ local SETTINGS = {
 -- Companion Status Export
 -- Logs the equipped companion's state to cowhub/companionlogs/companion_<time>.jsonl:
 --   attr:     every change to a CowCompanion* player attribute (CowCompanionStatus = AskPlay, Affection, ...)
---   snapshot: the companion's profile record (CompanionCare.Bond, NextReward, Needs, ...) every SNAPSHOT_EVERY s
+--   snapshot: the companion's profile record (Care.Bond, Care.Needs, Care.Favorites, ...) every SNAPSHOT_EVERY s
 -- Profile comes from the game's live Store (Store:GetState().Profile.Companions.Owned[EquippedId]).
 
 if not game:IsLoaded() then
@@ -121,7 +121,8 @@ local function snapshot()
     local comps = profile and profile.Companions
     local id = plr:GetAttribute("CowCompanionId") or (type(comps) == "table" and comps.EquippedId)
     local record = type(comps) == "table" and type(comps.Owned) == "table" and id and comps.Owned[id] or nil
-    local care = type(record) == "table" and record.CompanionCare or nil
+    -- Profile record stores care as Care (the server-side runtime copy is CompanionCare)
+    local care = type(record) == "table" and (record.Care or record.CompanionCare) or nil
     emit("snapshot", {
         id = id,
         found = record ~= nil,
