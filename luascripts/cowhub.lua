@@ -1,4 +1,4 @@
--- Cow Hub [15536c2] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [bfd1eff] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [15536c2]",
+    Name = "Cow Hub [bfd1eff]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -73,6 +73,67 @@ local Window = Rayfield:CreateWindow({
     KeySystem = false
 })
 _G.CowHubWindow = Window
+
+-- ==========================
+-- OPTION DROPDOWNS (one multi-select dropdown in place of a cluster of on/off toggles)
+-- ==========================
+-- Each option is { label, default, fn }: fn is the old toggle's callback. The dropdown remembers
+-- which options are on, and on every change calls fn(true|false) only for options whose state
+-- flipped, so each behaves exactly like the toggle it replaced. Defaults apply without calling fn,
+-- as a toggle's CurrentValue did.
+local ui = { optionDropdowns = {} }
+
+function ui.optionDropdown(tab, name, flag, options)
+    local state, labels, initial = {}, {}, {}
+    for _, opt in ipairs(options) do
+        state[opt.label] = opt.default == true
+        table.insert(labels, opt.label)
+        if opt.default == true then table.insert(initial, opt.label) end
+    end
+    local entry = { options = options, state = state }
+    entry.handle = tab:CreateDropdown({
+        Name = name,
+        Options = labels,
+        CurrentOption = initial,
+        MultipleOptions = true,
+        Flag = flag,
+        Callback = function(selected)
+            if type(selected) ~= "table" then selected = { selected } end
+            local on = {}
+            for _, label in ipairs(selected) do on[label] = true end
+            for _, opt in ipairs(options) do
+                local want = on[opt.label] == true
+                if state[opt.label] ~= want then
+                    state[opt.label] = want
+                    opt.fn(want)
+                end
+            end
+        end,
+    })
+    ui.optionDropdowns[flag] = entry
+    return entry.handle
+end
+
+-- Turn one option of an option dropdown on or off, firing its callback (used by AFK resume).
+function ui.setOption(flag, label, value)
+    local entry = ui.optionDropdowns[flag]
+    if not entry then return end
+    local selected = {}
+    for _, opt in ipairs(entry.options) do
+        local on = entry.state[opt.label]
+        if opt.label == label then on = value == true end
+        if on then table.insert(selected, opt.label) end
+    end
+    pcall(function() entry.handle:Set(selected) end)
+    -- Set normally fires the callback above; if it did not, apply the change here.
+    value = value == true
+    if entry.state[label] ~= nil and entry.state[label] ~= value then
+        entry.state[label] = value
+        for _, opt in ipairs(entry.options) do
+            if opt.label == label then opt.fn(value) end
+        end
+    end
+end
 
 local function safeNotify(opts)
     if not Window or not opts then return end
@@ -1406,7 +1467,7 @@ function afkRelog.checkAndResumeState()
         pcall(function() Window:Set("Dropdown_ChompMode", { chomp.mode == "Natural" and "Natural (E Key)" or "Remote (Auto Max)" }) end)
         if f.ChompAutoMax ~= nil then
             chomp.autoMax = f.ChompAutoMax == true
-            pcall(function() Window:Set("Toggle_ChompAutoMax", chomp.autoMax) end)
+            ui.setOption("Dropdown_ChompOptions", "Auto Max Chomp Speed (Server Limit)", chomp.autoMax)
         end
         local manual = tonumber(f.ChompManualDelay) or tonumber(f.GrassChompDelay)
         if manual then
@@ -1414,11 +1475,11 @@ function afkRelog.checkAndResumeState()
         end
         if f.OnlyMatureGrass ~= nil then
             farm.onlyMatureGrass = f.OnlyMatureGrass
-            pcall(function() Window:Set("Toggle_OnlyMatureGrass", f.OnlyMatureGrass) end)
+            ui.setOption("Dropdown_ChompOptions", "Focus Only Mature Grass", f.OnlyMatureGrass)
         end
         if f.ChompOnlyWhileMoving ~= nil then
             farm.chompOnlyWhileMoving = f.ChompOnlyWhileMoving
-            pcall(function() Window:Set("Toggle_ChompOnlyMoving", f.ChompOnlyWhileMoving) end)
+            ui.setOption("Dropdown_ChompOptions", "Chomp Only While Moving", f.ChompOnlyWhileMoving)
         end
 
         if f.AutoChomp then
@@ -1453,17 +1514,17 @@ function afkRelog.checkAndResumeState()
             local ta = data.TownAuction
             if ta.AutoBidAll then
                 townAuction.autoBidAll = true
-                pcall(function() Window:Set("Toggle_TownAutoBidAll", true) end)
+                ui.setOption(townAuction.AUTO_BID_FLAG, townAuction.AUTO_BID_ALL, true)
             end
             if ta.AutoBidUnowned then
                 townAuction.autoBidUnowned = true
-                pcall(function() Window:Set("Toggle_TownAutoBidUnowned", true) end)
+                ui.setOption(townAuction.AUTO_BID_FLAG, townAuction.AUTO_BID_UNOWNED, true)
             end
             if type(ta.AutoBidActive) == "table" then
                 for slot, active in pairs(ta.AutoBidActive) do
                     if active then
                         townAuction.autoBidActive[slot] = true
-                        pcall(function() Window:Set("Toggle_TownAutoBid_" .. slot, true) end)
+                        ui.setOption(townAuction.AUTO_BID_FLAG, townAuction.autoBidLabel(slot), true)
                     end
                 end
             end
@@ -1473,7 +1534,7 @@ function afkRelog.checkAndResumeState()
         end
         if data.Auction and data.Auction.AutoBidUnowned then
             auction.autoBidUnowned = true
-            pcall(function() Window:Set("Toggle_AuctionAutoBidUnowned", true) end)
+            ui.setOption("Dropdown_AuctionAutoBid", "Unowned Skins", true)
         end
 
         if f.On then
@@ -6270,13 +6331,20 @@ do
         end,
     })
 
-    MainTab:CreateToggle({
-        Name = "Auto Max Chomp Speed (Server Limit)",
-        CurrentValue = true,
-        Flag = "Toggle_ChompAutoMax",
-        Callback = function(Value)
+    ui.optionDropdown(MainTab, "Chomp Options", "Dropdown_ChompOptions", {
+        { label = "Auto Max Chomp Speed (Server Limit)", default = true, fn = function(Value)
             chomp.autoMax = Value
-        end,
+        end },
+        { label = "Chomp Only While Moving", default = true, fn = function(Value)
+            farm.chompOnlyWhileMoving = Value
+        end },
+        { label = "Focus Only Mature Grass", default = true, fn = function(Value)
+            farm.onlyMatureGrass = Value
+        end },
+        { label = "Collect Grazing Bait Drops", default = false, fn = function(Value)
+            farm.collectBait = Value
+            farm.baitTarget = nil
+        end },
     })
 
     MainTab:CreateDropdown({
@@ -6348,15 +6416,6 @@ do
         end)
     end
 
-    MainTab:CreateToggle({
-        Name = "Chomp Only While Moving",
-        CurrentValue = true,
-        Flag = "Toggle_ChompOnlyMoving",
-        Callback = function(Value)
-            farm.chompOnlyWhileMoving = Value
-        end,
-    })
-
     MainTab:CreateDropdown({
         Name = "Mob Aura Speed",
         Options = {"Slow (1.0s)", "Normal (0.5s)", "Fast (0.1s)"},
@@ -6379,25 +6438,6 @@ do
         MultipleOptions = false,
         Flag = "Dropdown_Pattern",
         Callback = function(Option) farm.pattern = type(Option) == "table" and Option[1] or Option end,
-    })
-
-    MainTab:CreateToggle({
-        Name = "Focus Only Mature Grass",
-        CurrentValue = true,
-        Flag = "Toggle_OnlyMatureGrass",
-        Callback = function(Value)
-            farm.onlyMatureGrass = Value
-        end,
-    })
-
-    MainTab:CreateToggle({
-        Name = "Collect Grazing Bait Drops",
-        CurrentValue = false,
-        Flag = "Toggle_CollectBait",
-        Callback = function(Value)
-            farm.collectBait = Value
-            farm.baitTarget = nil
-        end,
     })
 
     MainTab:CreateDropdown({
@@ -6450,22 +6490,13 @@ do
         end,
     })
 
-    MainTab:CreateToggle({
-        Name = "Notify on Attack Dodge",
-        CurrentValue = false,
-        Flag = "Toggle_DodgeNotify",
-        Callback = function(Value)
+    ui.optionDropdown(MainTab, "Dodge Options", "Dropdown_DodgeOptions", {
+        { label = "Notify on Attack Dodge", default = false, fn = function(Value)
             dodge.notifyOnDodge = Value
-        end,
-    })
-
-    MainTab:CreateToggle({
-        Name = "Retreat on Armor / Hearts Decreased",
-        CurrentValue = true,
-        Flag = "Toggle_DodgeHearts",
-        Callback = function(Value)
+        end },
+        { label = "Retreat on Armor / Hearts Decreased", default = true, fn = function(Value)
             dodge.dodgeOnHeartsDecreased = Value
-        end,
+        end },
     })
 
     MainTab:CreateSlider({
@@ -6543,41 +6574,24 @@ do
 
     MainTab:CreateSection({ Name = "Visuals / ESP" })
 
-    MainTab:CreateToggle({
-        Name = "Show Pen Boundary (ESP)",
-        CurrentValue = false,
-        Flag = "Toggle_PenESP",
-        Callback = function(Value)
+    ui.optionDropdown(MainTab, "ESP", "Dropdown_ESP", {
+        { label = "Pen Boundary", default = false, fn = function(Value)
             penESP.show = Value
             penESP.update()
-        end,
-    })
-
-    MainTab:CreateToggle({
-        Name = "Show Team Chest ESP (Dynamic)",
-        CurrentValue = false,
-        Flag = "Toggle_ChestESP",
-        Callback = function(Value)
+        end },
+        { label = "Team Chest (Dynamic)", default = false, fn = function(Value)
             chestESP.show = Value
             chestESP.update()
-        end,
+        end },
     })
 
     MainTab:CreateSection({ Name = "Virtual Input Spammer (0.05s CD)" })
 
-    MainTab:CreateToggle({
-        Name = "Spam [E] Key",
-        CurrentValue = false,
-        Flag = "Toggle_Spam_E",
-        Callback = function(Value) HandleSpam("E", Value, 0.05) end,
+    ui.optionDropdown(MainTab, "Spam Keys", "Dropdown_SpamKeys", {
+        { label = "Spam [E] Key", default = false, fn = function(Value) HandleSpam("E", Value, 0.05) end },
+        { label = "Spam [Q] Key", default = false, fn = function(Value) HandleSpam("Q", Value, 0.05) end },
     })
 
-    MainTab:CreateToggle({
-        Name = "Spam [Q] Key",
-        CurrentValue = false,
-        Flag = "Toggle_Spam_Q",
-        Callback = function(Value) HandleSpam("Q", Value, 0.05) end,
-    })
 end
 
 -- Teleports get their own tab, second in the bar. Its buttons are added near the end of the script,
@@ -6633,14 +6647,24 @@ do
         end,
     })
 
-    MiningTab:CreateToggle({
-        Name = "Show Manatite ESP (Sea Maze)",
-        CurrentValue = false,
-        Flag = "Toggle_ManatiteESP",
-        Callback = function(Value)
+    ui.optionDropdown(MiningTab, "Manatite Options", "Dropdown_ManatiteOptions", {
+        { label = "Show ESP", default = false, fn = function(Value)
             manatite.showESP = Value
             manatite.updateESP()
-        end,
+        end },
+        { label = "Anchor Root While Chomping", default = false, fn = function(Value)
+            manatite.anchor = Value
+            if not Value and root and not dodge.isUnderground then
+                pcall(function() root.Anchored = false end)
+            end
+        end },
+        { label = "Return to Pre-Farm Pos on Disable", default = false, fn = function(Value)
+            manatite.returnOnDisable = Value
+        end },
+        { label = "Retreat to Safe Crystal on Spider Threat", default = true, fn = function(Value)
+            dodge.retreatOnThreat = Value
+            dodge.prioritizeMobsOverManatite = not Value
+        end },
     })
 
     MiningTab:CreateDropdown({
@@ -6658,37 +6682,6 @@ do
             else
                 manatite.order = "Nearest Available"
             end
-        end,
-    })
-
-    MiningTab:CreateToggle({
-        Name = "Anchor Root While Chomping",
-        CurrentValue = false,
-        Flag = "Toggle_ManatiteAnchor",
-        Callback = function(Value)
-            manatite.anchor = Value
-            if not Value and root and not dodge.isUnderground then
-                pcall(function() root.Anchored = false end)
-            end
-        end,
-    })
-
-    MiningTab:CreateToggle({
-        Name = "Return to Pre-Farm Pos on Disable",
-        CurrentValue = false,
-        Flag = "Toggle_ManatiteReturn",
-        Callback = function(Value)
-            manatite.returnOnDisable = Value
-        end,
-    })
-
-    MiningTab:CreateToggle({
-        Name = "Retreat to Safe Crystal on Spider Threat",
-        CurrentValue = true,
-        Flag = "Toggle_RetreatSafeCrystal",
-        Callback = function(Value)
-            dodge.retreatOnThreat = Value
-            dodge.prioritizeMobsOverManatite = not Value
         end,
     })
 
@@ -6759,14 +6752,20 @@ do
         end,
     })
 
-    MiningTab:CreateToggle({
-        Name = "Show Mithril ESP (Crystal Geode)",
-        CurrentValue = false,
-        Flag = "Toggle_MithrilESP",
-        Callback = function(Value)
+    ui.optionDropdown(MiningTab, "Mithril Options", "Dropdown_MithrilOptions", {
+        { label = "Show ESP", default = false, fn = function(Value)
             mithril.showESP = Value
             mithril.updateESP()
-        end,
+        end },
+        { label = "Anchor Root While Mining", default = false, fn = function(Value)
+            mithril.anchor = Value
+            if not Value and root and not dodge.isUnderground then
+                pcall(function() root.Anchored = false end)
+            end
+        end },
+        { label = "Return to Pre-Farm Pos on Disable", default = false, fn = function(Value)
+            mithril.returnOnDisable = Value
+        end },
     })
 
     MiningTab:CreateDropdown({
@@ -6782,27 +6781,6 @@ do
             else
                 mithril.order = "Nearest Available"
             end
-        end,
-    })
-
-    MiningTab:CreateToggle({
-        Name = "Anchor Root While Mining",
-        CurrentValue = false,
-        Flag = "Toggle_MithrilAnchor",
-        Callback = function(Value)
-            mithril.anchor = Value
-            if not Value and root and not dodge.isUnderground then
-                pcall(function() root.Anchored = false end)
-            end
-        end,
-    })
-
-    MiningTab:CreateToggle({
-        Name = "Return to Pre-Farm Pos on Disable (Mithril)",
-        CurrentValue = false,
-        Flag = "Toggle_MithrilReturn",
-        Callback = function(Value)
-            mithril.returnOnDisable = Value
         end,
     })
 
@@ -7294,14 +7272,14 @@ do
         do
             local row = tab:CreateGroup()
             row:CreateButton({
-                Name = "Bid Minimum / Next " .. lotName,
+                Name = "Min Bid",
                 Callback = function()
                     auction.executeBid(lotName, nil, true)
                 end,
             })
 
             row:CreateButton({
-                Name = "Bid Custom Amount (" .. lotName .. ")",
+                Name = "Custom Bid",
                 Callback = function()
                     local custom = auction.resolveCustomAmount(lotName)
                     if not custom then
@@ -7449,46 +7427,34 @@ do
 
     ScannerTab:CreateSection({ Name = "Auto Outbid (When Not Leading)" })
 
-    ScannerTab:CreateToggle({
-        Name = "Auto Outbid All Lots",
-        CurrentValue = false,
-        Flag = "Toggle_AutoBidAll",
-        Callback = function(Value)
-            auction.autoBidAll = Value
-            if Value then
-                for _, lotName in ipairs(auction.lotNames) do
-                    task.spawn(function() auction.checkAndAutoBidLot(lotName) end)
+    do
+        local autoBidOptions = {
+            { label = "All Lots", default = false, fn = function(Value)
+                auction.autoBidAll = Value
+                if Value then
+                    for _, lotName in ipairs(auction.lotNames) do
+                        task.spawn(function() auction.checkAndAutoBidLot(lotName) end)
+                    end
                 end
-            end
-        end,
-    })
-
-    ScannerTab:CreateToggle({
-        Name = "Auto Outbid Unowned Skins",
-        CurrentValue = false,
-        Flag = "Toggle_AuctionAutoBidUnowned",
-        Callback = function(Value)
-            auction.autoBidUnowned = Value
-            if Value then
-                for _, lotName in ipairs(auction.lotNames) do
-                    task.spawn(function() auction.checkAndAutoBidLot(lotName) end)
+            end },
+            { label = "Unowned Skins", default = false, fn = function(Value)
+                auction.autoBidUnowned = Value
+                if Value then
+                    for _, lotName in ipairs(auction.lotNames) do
+                        task.spawn(function() auction.checkAndAutoBidLot(lotName) end)
+                    end
                 end
-            end
-        end,
-    })
-
-    for _, lotName in ipairs(auction.lotNames) do
-        ScannerTab:CreateToggle({
-            Name = "Auto Outbid " .. lotName,
-            CurrentValue = false,
-            Flag = "Toggle_AutoBid_" .. lotName,
-            Callback = function(Value)
+            end },
+        }
+        for _, lotName in ipairs(auction.lotNames) do
+            table.insert(autoBidOptions, { label = lotName, default = false, fn = function(Value)
                 auction.autoBidActive[lotName] = Value
                 if Value then
                     task.spawn(function() auction.checkAndAutoBidLot(lotName) end)
                 end
-            end,
-        })
+            end })
+        end
+        ui.optionDropdown(ScannerTab, "Auto Outbid", "Dropdown_AuctionAutoBid", autoBidOptions)
     end
 
     ScannerTab:CreateInput({
@@ -8314,7 +8280,7 @@ function townAuction.setupSlotUI(tab, slotName)
     end)
 
     local isBuyNow = string.find(slotName, "BuyNow") ~= nil
-    local btnName = isBuyNow and ("Buy Now (" .. slotName .. ")") or ("Bid Minimum / Next " .. slotName)
+    local btnName = isBuyNow and "Buy Now" or "Min Bid"
     do
         local row = tab:CreateGroup()
         row:CreateButton({
@@ -8325,7 +8291,7 @@ function townAuction.setupSlotUI(tab, slotName)
         })
 
         row:CreateButton({
-            Name = "Bid Custom Amount (" .. slotName .. ")",
+            Name = "Custom Bid",
             Callback = function()
                 local custom = townAuction.resolveCustomAmount(slotName)
                 if not custom then
@@ -8336,6 +8302,14 @@ function townAuction.setupSlotUI(tab, slotName)
             end,
         })
     end
+end
+
+-- Option labels of the "Auto Outbid / Buy" dropdown, shared with the AFK resume path.
+townAuction.AUTO_BID_FLAG = "Dropdown_TownAutoBid"
+townAuction.AUTO_BID_ALL = "All Lots"
+townAuction.AUTO_BID_UNOWNED = "Unowned Lots"
+function townAuction.autoBidLabel(slotName)
+    return string.find(slotName, "BuyNow") ~= nil and (slotName .. " (Buy Now)") or slotName
 end
 
 -- ==========================
@@ -8387,48 +8361,34 @@ do
 
     TownAuctionTab:CreateSection({ Name = "Auto Outbid & Auto Buy (When Not Leading)" })
 
-    TownAuctionTab:CreateToggle({
-        Name = "Auto Outbid / Buy All Lots",
-        CurrentValue = false,
-        Flag = "Toggle_TownAutoBidAll",
-        Callback = function(Value)
-            townAuction.autoBidAll = Value
-            if Value then
-                for _, slotName in ipairs(townAuction.slots) do
-                    task.spawn(function() townAuction.checkAndAutoBidSlot(slotName) end)
+    do
+        local autoBidOptions = {
+            { label = townAuction.AUTO_BID_ALL, default = false, fn = function(Value)
+                townAuction.autoBidAll = Value
+                if Value then
+                    for _, slotName in ipairs(townAuction.slots) do
+                        task.spawn(function() townAuction.checkAndAutoBidSlot(slotName) end)
+                    end
                 end
-            end
-        end,
-    })
-
-    TownAuctionTab:CreateToggle({
-        Name = "Auto Outbid / Buy Unowned Lots",
-        CurrentValue = false,
-        Flag = "Toggle_TownAutoBidUnowned",
-        Callback = function(Value)
-            townAuction.autoBidUnowned = Value
-            if Value then
-                for _, slotName in ipairs(townAuction.slots) do
-                    task.spawn(function() townAuction.checkAndAutoBidSlot(slotName) end)
+            end },
+            { label = townAuction.AUTO_BID_UNOWNED, default = false, fn = function(Value)
+                townAuction.autoBidUnowned = Value
+                if Value then
+                    for _, slotName in ipairs(townAuction.slots) do
+                        task.spawn(function() townAuction.checkAndAutoBidSlot(slotName) end)
+                    end
                 end
-            end
-        end,
-    })
-
-    for _, slotName in ipairs(townAuction.slots) do
-        local isBuyNow = string.find(slotName, "BuyNow") ~= nil
-        local toggleName = isBuyNow and ("Auto Buy Now (" .. slotName .. ")") or ("Auto Outbid " .. slotName)
-        TownAuctionTab:CreateToggle({
-            Name = toggleName,
-            CurrentValue = false,
-            Flag = "Toggle_TownAutoBid_" .. slotName,
-            Callback = function(Value)
+            end },
+        }
+        for _, slotName in ipairs(townAuction.slots) do
+            table.insert(autoBidOptions, { label = townAuction.autoBidLabel(slotName), default = false, fn = function(Value)
                 townAuction.autoBidActive[slotName] = Value
                 if Value then
                     task.spawn(function() townAuction.checkAndAutoBidSlot(slotName) end)
                 end
-            end,
-        })
+            end })
+        end
+        ui.optionDropdown(TownAuctionTab, "Auto Outbid / Buy", townAuction.AUTO_BID_FLAG, autoBidOptions)
     end
 
     TownAuctionTab:CreateInput({
@@ -12925,14 +12885,18 @@ do
         })
     end
 
-    RaftingTab:CreateToggle({
-        Name = "Auto-Dismiss Chest Reward GUI (Accept / Okay)",
-        CurrentValue = true,
-        Flag = "Toggle_Rafting_DismissChestRewardGui",
-        Callback = function(Value)
+    ui.optionDropdown(RaftingTab, "Voyage Options", "Dropdown_RaftVoyageOptions", {
+        { label = "Auto-Dismiss Chest Reward GUI", default = true, fn = function(Value)
             rafting.autoDismissRewardGui = Value
             rafting.autoAcceptRewards = Value
-        end,
+        end },
+        { label = "Auto-Continue After Docking & Chest", default = true, fn = function(Value)
+            rafting.autoContinueFromDock = Value
+        end },
+        { label = "Collect All Loot Chests (Clearings & Caves)", default = true, fn = function(Value)
+            rafting.collectAllLootChests = Value
+            rafting.updateCards()
+        end },
     })
 
     RaftingTab:CreateButton({
@@ -12944,25 +12908,6 @@ do
             else
                 Window:Notify({ Title = "Chest GUI", Content = "No active reward popup found.", Duration = 2 })
             end
-        end,
-    })
-
-    RaftingTab:CreateToggle({
-        Name = "Auto-Continue After Docking & Chest",
-        CurrentValue = true,
-        Flag = "Toggle_Rafting_AutoContinue",
-        Callback = function(Value)
-            rafting.autoContinueFromDock = Value
-        end,
-    })
-
-    RaftingTab:CreateToggle({
-        Name = "Collect All Loot Chests (Clearings & Caves)",
-        CurrentValue = true,
-        Flag = "Toggle_Rafting_CollectAllLootChests",
-        Callback = function(Value)
-            rafting.collectAllLootChests = Value
-            rafting.updateCards()
         end,
     })
 
@@ -12978,31 +12923,19 @@ do
         end,
     })
 
-    RaftingTab:CreateToggle({
-        Name = "Auto-Recover Overboard / Separated",
-        CurrentValue = true,
-        Flag = "Toggle_Rafting_AutoRecoverOverboard",
-        Callback = function(Value)
+    ui.optionDropdown(RaftingTab, "Safety Options", "Dropdown_RaftSafetyOptions", {
+        { label = "Auto-Recover Overboard / Separated", default = true, fn = function(Value)
             rafting.autoRecoverOverboard = Value
-        end,
-    })
-
-    RaftingTab:CreateToggle({
-        Name = "Auto-Boost (Sprint on Straights)",
-        CurrentValue = true,
-        Flag = "Toggle_Rafting_AutoBoost",
-        Callback = function(Value)
+        end },
+        { label = "Auto-Boost (Sprint on Straights)", default = true, fn = function(Value)
             rafting.autoBoost = Value
-        end,
-    })
-
-    RaftingTab:CreateToggle({
-        Name = "Auto-Evade Threats & Weather",
-        CurrentValue = true,
-        Flag = "Toggle_Rafting_AutoEvadeHobgoblins",
-        Callback = function(Value)
+        end },
+        { label = "Auto-Evade Threats & Weather", default = true, fn = function(Value)
             rafting.autoEvadeHobgoblins = Value
-        end,
+        end },
+        { label = "Auto-Repair Split Beams", default = true, fn = function(Value)
+            rafting.autoRepair = Value
+        end },
     })
 
     RaftingTab:CreateSlider({
@@ -13014,15 +12947,6 @@ do
         Flag = "Slider_Rafting_MinBoostStamina",
         Callback = function(Value)
             rafting.minBoostStamina = Value
-        end,
-    })
-
-    RaftingTab:CreateToggle({
-        Name = "Auto-Repair Split Beams",
-        CurrentValue = true,
-        Flag = "Toggle_Rafting_AutoRepair",
-        Callback = function(Value)
-            rafting.autoRepair = Value
         end,
     })
 
@@ -14028,45 +13952,24 @@ do
         end,
     })
 
-    CaravanTab:CreateToggle({
-        Name = "Natural Mode (walk from the barn)",
-        CurrentValue = false,
-        Flag = "Toggle_CaravanNatural",
-        Callback = function(Value)
+    ui.optionDropdown(CaravanTab, "Caravan Options", "Dropdown_CaravanOptions", {
+        { label = "Natural Mode (walk from the barn)", default = false, fn = function(Value)
             local on = Value == true
             if on ~= caravan.natural and caravan.active then
                 -- Switching mid-event: stop walking or keep the teleport-mode return point
                 if not on then caravan.stopWalk() end
             end
             caravan.natural = on
-        end,
-    })
-
-    CaravanTab:CreateToggle({
-        Name = "Grumpy Moo",
-        CurrentValue = true,
-        Flag = "Toggle_CaravanGrumpy",
-        Callback = function(Value)
+        end },
+        { label = "Grumpy Moo", default = true, fn = function(Value)
             caravan.useGrumpy = Value == true
             if caravan.useGrumpy then caravan.grumpyState, caravan.grumpyMisses, caravan.grumpyUnanswered = "unknown", 0, 0 end
-        end,
-    })
-
-    CaravanTab:CreateToggle({
-        Name = "Loot Barrels (materials)",
-        CurrentValue = true,
-        Flag = "Toggle_CaravanGrazeBarrels",
-        Callback = function(Value)
+        end },
+        { label = "Loot Barrels (materials)", default = true, fn = function(Value)
             caravan.grazeBarrels = Value == true
             if not caravan.grazeBarrels then caravan.barrelLock = nil end
-        end,
-    })
-
-    CaravanTab:CreateToggle({
-        Name = "Loot Only (skip scaring)",
-        CurrentValue = false,
-        Flag = "Toggle_CaravanLootOnly",
-        Callback = function(Value) caravan.lootOnly = Value == true end,
+        end },
+        { label = "Loot Only (skip scaring)", default = false, fn = function(Value) caravan.lootOnly = Value == true end },
     })
 
     do
@@ -14170,11 +14073,8 @@ do
 
     SettingsTab:CreateSection({ Name = "Performance & Anti-Lag" })
 
-    SettingsTab:CreateToggle({
-        Name = "Map & Asset Optimizer (Anti-Lag)",
-        CurrentValue = false,
-        Flag = "Toggle_MapOptimizer",
-        Callback = function(Value)
+    ui.optionDropdown(SettingsTab, "Performance", "Dropdown_Performance", {
+        { label = "Map & Asset Optimizer (Anti-Lag)", default = false, fn = function(Value)
             mapOptimizer.enabled = Value
             if Value then
                 mapOptimizer.applyToWorld()
@@ -14190,16 +14090,15 @@ do
             else
                 mapOptimizer.stopStreamHook()
             end
-        end,
-    })
-
-    SettingsTab:CreateToggle({
-        Name = "Auto-Clean Streamed Chunks",
-        CurrentValue = true,
-        Flag = "Toggle_StreamCleaner",
-        Callback = function(Value)
+        end },
+        { label = "Auto-Clean Streamed Chunks", default = true, fn = function(Value)
             mapOptimizer.autoCleanStreamed = Value
-        end,
+        end },
+        { label = "Disable 3D Rendering", default = false, fn = function(Value)
+            pcall(function()
+                RunService:Set3dRenderingEnabled(not Value)
+            end)
+        end },
     })
 
     SettingsTab:CreateButton({
@@ -14213,17 +14112,6 @@ do
                     Duration = 2.5,
                 })
             end
-        end,
-    })
-
-    SettingsTab:CreateToggle({
-        Name = "Disable 3D Rendering",
-        CurrentValue = false,
-        Flag = "Toggle_3DRender",
-        Callback = function(Value)
-            pcall(function()
-                RunService:Set3dRenderingEnabled(not Value)
-            end)
         end,
     })
 
