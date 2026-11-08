@@ -1,4 +1,4 @@
--- Cow Hub [2da6a4a] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [15536c2] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [2da6a4a]",
+    Name = "Cow Hub [15536c2]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -299,6 +299,10 @@ local function findGrassFolder()
     return first
 end
 
+-- Forward-declared: updateWallRaycastFilter and the CharacterAdded handler below use these before
+-- their tables are built. Without this, Luau resolves them as (nil) globals.
+local cache, dodge, aerial, rafting
+
 local function updateWallRaycastFilter()
     local filter = {}
     if char then
@@ -472,7 +476,7 @@ local caravan = {
     active = false,
 }
 
-local dodge = {
+dodge = {
     auto = false,
     method = "Teleport Away (Surface)", -- "Underground", "Run Away (Surface)", "Teleport Away (Surface)"
     isDodging = false,
@@ -508,7 +512,7 @@ local dodge = {
     startTime = 0,
 }
 
-local aerial = {
+aerial = {
     active = false,
     startTime = 0,
     duration = 60,   -- seconds to hover before returning
@@ -519,7 +523,7 @@ local aerial = {
     lastTime = 0,
 }
 
-local cache = {
+cache = {
     nodeBlacklist = setmetatable({}, { __mode = "k" }),
     lastBlacklistCleanup = 0,
     nodeCleanNames = {},
@@ -8669,7 +8673,7 @@ end)
 -- ==========================
 -- FJORD RAFTING AUTOMATION SYSTEM
 -- ==========================
-local rafting = {
+rafting = {
     enabled = false,
     autoLoop = false,
     naturalMode = false,
