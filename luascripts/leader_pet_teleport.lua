@@ -183,11 +183,21 @@ local PET_CATALOG = {
     },
 }
 
+local RunService = game:GetService("RunService")
+
+local FOLDER_BY_SPECIES = { Dog = "LocalDogs", Cat = "LocalBarnCats" }
+local SEED_SEARCH_SECONDS = 15 -- after this with no seed match, fall back to nearest pet
+
 local app = {
     running = true,
     gui = nil,
     currentHighlight = nil,
     currentBillboard = nil,
+    highlightedModel = nil,
+    controllers = {}, -- [folderName] = DogController / BarnCatController (via getgc)
+    lastGcScan = {}, -- [folderName] = os.clock() of last scan
+    track = nil, -- { pet, statusLabel, startedAt, untilAt, lastStep, mode }
+    trackConn = nil,
 }
 _G.LeaderPetTeleport = app
 
@@ -201,11 +211,53 @@ local function clearHighlight()
         pcall(function() app.currentBillboard:Destroy() end)
         app.currentBillboard = nil
     end
+    app.highlightedModel = nil
 end
 
--- Find physical pet model in workspace around coordinates
+-- Dog/BarnCat controller table for a folder (getgc; cached, rescan at most every 3 s while missing)
+local function getController(folder, folderName)
+    local ctrl = app.controllers[folderName]
+    if ctrl and rawget(ctrl, "Folder") == folder then return ctrl end
+    app.controllers[folderName] = nil
+    if type(getgc) ~= "function" then return nil end
+    local now = os.clock()
+    if now - (app.lastGcScan[folderName] or -math.huge) < 3 then return nil end
+    app.lastGcScan[folderName] = now
+    local ok, objects = pcall(getgc, true)
+    if not ok or type(objects) ~= "table" then return nil end
+    for _, obj in ipairs(objects) do
+        if type(obj) == "table" and rawget(obj, "Folder") == folder and type(rawget(obj, "Actors")) == "table" then
+            app.controllers[folderName] = obj
+            return obj
+        end
+    end
+    return nil
+end
+
+-- Exact pet: the actor whose record Seed equals the habitat seed
+local function findPetModelBySeed(petData)
+    local folderName = FOLDER_BY_SPECIES[petData.species]
+    local folder = Workspace:FindFirstChild(folderName)
+    if not folder then return nil end
+    local ctrl = getController(folder, folderName)
+    local actors = ctrl and rawget(ctrl, "Actors")
+    if type(actors) ~= "table" then return nil end
+    for _, actor in pairs(actors) do
+        if type(actor) == "table" then
+            local model = rawget(actor, "Model")
+            local record = rawget(actor, "Record") or rawget(actor, "RenderRecord")
+            if typeof(model) == "Instance" and model.Parent == folder and type(record) == "table"
+                and tonumber(record.Seed) == petData.seed then
+                return model
+            end
+        end
+    end
+    return nil
+end
+
+-- Fallback guess: nearest pet model of the species near the habitat
 local function findPetModelAt(pos, species)
-    local folderName = if species == "Dog" then "LocalDogs" else "LocalBarnCats"
+    local folderName = FOLDER_BY_SPECIES[species]
     local folder = Workspace:FindFirstChild(folderName)
     if not folder then return nil end
 
@@ -228,9 +280,10 @@ local function findPetModelAt(pos, species)
 end
 
 -- Highlight target pet in world
-local function highlightPet(model, petData)
+local function highlightPet(model, petData, guessed)
     clearHighlight()
     if not model then return end
+    app.highlightedModel = model
 
     local hl = Instance.new("Highlight")
     hl.Name = "LeaderPetHighlight"
@@ -275,7 +328,7 @@ local function highlightPet(model, petData)
         title.Font = Enum.Font.GothamBold
         title.TextSize = 12
         title.TextColor3 = SETTINGS.HIGHLIGHT_COLOR
-        title.Text = "★ " .. petData.rank:upper() .. " ★"
+        title.Text = "★ " .. petData.rank:upper() .. " ★" .. (guessed and " (nearest guess)" or "")
         title.Parent = frame
 
         local details = Instance.new("TextLabel")
@@ -318,24 +371,67 @@ local function teleportToPet(petData, statusLabel)
     root.AssemblyAngularVelocity = Vector3.zero
 
     if statusLabel then
-        statusLabel.Text = "Teleported to " .. petData.id .. " (" .. petData.zone .. ")!"
+        statusLabel.Text = "Teleported to " .. petData.id .. " (" .. petData.zone .. "). Searching by seed..."
     end
 
-    -- Look for pet model nearby and highlight
-    task.spawn(function()
-        task.wait(0.2)
-        local model = findPetModelAt(petData.pos, petData.species)
-        if model then
-            highlightPet(model, petData)
-            if statusLabel then
-                statusLabel.Text = "★ Found & Highlighted " .. petData.variant .. " (" .. petData.rank .. ")!"
-            end
-        else
-            if statusLabel then
-                statusLabel.Text = "Arrived at habitat (Pet roaming nearby ~20s)"
-            end
-        end
-    end)
+    -- Track the pet until HIGHLIGHT_DURATION ends or the next teleport
+    clearHighlight()
+    local now = os.clock()
+    app.track = {
+        pet = petData,
+        statusLabel = statusLabel,
+        startedAt = now,
+        untilAt = now + (tonumber(SETTINGS.HIGHLIGHT_DURATION) or 300),
+        lastStep = -math.huge,
+        mode = nil,
+    }
+end
+
+local function setStatus(track, text)
+    if track.statusLabel and track.statusLabel.Text ~= text then
+        track.statusLabel.Text = text
+    end
+end
+
+-- Every 0.5 s: re-resolve the tracked pet; move the highlight if its model changed
+local function stepTrack()
+    local track = app.track
+    if not track then return end
+    local now = os.clock()
+    if now - track.lastStep < 0.5 then return end
+    track.lastStep = now
+
+    if now >= track.untilAt then
+        clearHighlight()
+        app.track = nil
+        setStatus(track, "Highlight expired for " .. track.pet.id .. ".")
+        return
+    end
+
+    local pet = track.pet
+    local model = findPetModelBySeed(pet)
+    local guessed = false
+    if not model and (type(getgc) ~= "function" or now - track.startedAt >= SEED_SEARCH_SECONDS) then
+        model = findPetModelAt(pet.pos, pet.species)
+        guessed = model ~= nil
+    end
+
+    if not model then
+        if app.highlightedModel then clearHighlight() end
+        setStatus(track, "Searching for " .. pet.id .. " (seed " .. pet.seed .. ")... pet not loaded / nearby")
+        return
+    end
+
+    local mode = guessed and "guess" or "seed"
+    if model ~= app.highlightedModel or mode ~= track.mode or not app.currentHighlight or not app.currentHighlight.Parent then
+        track.mode = mode
+        highlightPet(model, pet, guessed)
+    end
+    if guessed then
+        setStatus(track, "No seed match for " .. pet.id .. "; highlighting nearest " .. pet.species .. " (guess)")
+    else
+        setStatus(track, "★ " .. pet.rank .. " matched by seed " .. pet.seed .. " · highlighted")
+    end
 end
 
 -- Build GUI
@@ -544,10 +640,16 @@ end
 
 -- Initialize
 createGui()
+app.trackConn = RunService.Heartbeat:Connect(stepTrack)
 
 -- Cleanup
 function app.destroy()
     app.running = false
+    if app.trackConn then
+        pcall(function() app.trackConn:Disconnect() end)
+        app.trackConn = nil
+    end
+    app.track = nil
     clearHighlight()
     if app.gui then
         pcall(function() app.gui:Destroy() end)

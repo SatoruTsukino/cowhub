@@ -61,3 +61,6 @@ See every dog and barn cat. Highlight each one. Label shows overall trait (Dispo
 
 ### Phase 3: Companion Multiplier ESP fix
 - [x] Plan 3.1: Record before RenderRecord + sticky bond (no tamed/untamed flashing); cached Store, gated loop, write-on-change. Stub 10 s: getgc 601 -> 3, 0 untamed ticks. In-game check pending.
+
+### Phase 4: Leader Pet Teleport fix
+- [x] Plan 4.1: highlight by `Record.Seed` == habitat seed (getgc controller), re-resolved every 0.5 s for `HIGHLIGHT_DURATION`; nearest-pet fallback after 15 s labeled as guess. Catalog stats verified vs generator (all 60 homes; 4 gated). Stub 5/5 pass. In-game check pending: proves pet seed == home seed.
