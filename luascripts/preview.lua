@@ -1,4 +1,4 @@
--- Cow Hub [78e5b16] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [60f343d] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [78e5b16]",
+    Name = "Cow Hub [60f343d]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -5705,9 +5705,9 @@ function farm.processMovement(dt, now, rootPos)
                 if farm.autoChomp and (now - farm.lastRaycastChompTime >= chomp.getInterval()) then
                     farm.processGrassChomp(now, rootPos)
                 end
-                if not farm.currentTargetNode or (farm.currentNodeStartTime > 0 and (now - farm.currentNodeStartTime > 2.0)) then
-                    needNewNode = true
-                end
+                -- Arrived: move on at once (the node was just picked, so it is cooled for 10 s);
+                -- waiting here for this exact node to be bitten idled the cow up to 2 s
+                needNewNode = true
             elseif farm.onlyMatureGrass then
                 if not farm.isEdible(farm.currentTargetNode) then
                     cache.nodeBlacklist[farm.currentTargetNode] = now + 5
@@ -5738,6 +5738,8 @@ function farm.processMovement(dt, now, rootPos)
             local fallbackDistSq = math.huge
             local grassNodes = cache.getGrassNodes()
             local inRadius, edible, cooled, walled = 0, 0, 0, 0
+            local look = root and root.CFrame.LookVector or Vector3.new(0, 0, -1)
+            local lookX, lookZ = look.X, look.Z
 
             for _, node in ipairs(grassNodes) do
                 if node.Parent then
@@ -5747,12 +5749,22 @@ function farm.processMovement(dt, now, rootPos)
                         if not farm.onlyMatureGrass or farm.isEdible(node) then
                             edible += 1
                             local nodeId = cache.getNodeID(node)
+                            local skipUntil = nodeId and chomp.skip[nodeId]
                             if nodeId then
-                                -- Prefer Golden / fully grown grass: value 2 counts as half the distance
+                                -- Greedy: nearest edible node to the cow, so the walk stays on fresh grass
+                                -- (nearest-to-ghost crossed eaten ground: half of chomp_1794121946 idle).
+                                -- The ghost only biases the sweep direction; Golden / riper grass counts as closer.
                                 local value = math.max(farm.nodeValue(node), 0.05)
-                                local distFromGhostSq = get2DDistanceSq(ghostPos, nodePos) / (value * value)
+                                local offset = nodePos - rootPos
+                                local dCow = math.sqrt(offset.X * offset.X + offset.Z * offset.Z)
+                                local score = dCow + 0.35 * math.sqrt(get2DDistanceSq(ghostPos, nodePos))
+                                if dCow > 0.01 and (offset.X * lookX + offset.Z * lookZ) / dCow < 0 then
+                                    score += dCow * 0.5 -- behind: turning around costs bites (BehindCow)
+                                end
+                                local distFromGhostSq = score / value
                                 local blacklistedAt = cache.nodeBlacklist[node]
-                                if blacklistedAt and now - blacklistedAt <= 10 then
+                                -- Inside 4 studs the bite logic already has it; picking it would only re-arrive
+                                if dCow < 4 or (blacklistedAt and now - blacklistedAt <= 10) or (skipUntil and now < skipUntil) then
                                     cooled += 1
                                 else
                                     if distFromGhostSq < fallbackDistSq then
