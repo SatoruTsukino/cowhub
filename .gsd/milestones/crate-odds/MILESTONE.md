@@ -44,3 +44,4 @@ in the real crate layouts (Halloween / Caravan).
 
 ## Phases
 - [x] Phase 1 / Plan 1.1: Calculator engine + GUI + presets (built; verify pending)
+- [x] Phase 1 / Plan 1.2: Team chest presets, Cave / Clearing, tiers 1–4 (built; checkpoint pending)
