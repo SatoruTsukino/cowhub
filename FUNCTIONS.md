@@ -78,8 +78,8 @@ Primary CowHub script containing autofarm engines, mining, dodging, auction scan
 | [2651](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2651) | `cache.getCleanGrassName(nodeName)` | Strips numerical suffixes from grass model names. |
 | [2674](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2674) | `cache.extractGrassNodeId(target)` | Extracts node ID from interaction target instance. |
 | [2699](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2699) | `cache.getMobPayload(mobName)` | Retrieves cached network attack payload table for mob species. |
-| [preview 1944](file:///Users/jsph/cowhub/luascripts/preview.lua#L1944) | `chomp.log(event, data)` | **Staging only.** Buffers a debug JSON line while Chomp Debug Log is on. Stripped from cowhub.lua by `scripts/promote-preview.py`. |
-| [preview 1953](file:///Users/jsph/cowhub/luascripts/preview.lua#L1953) | `chomp.flushLog(force)` | **Staging only.** Writes buffered debug lines to `cowhub/chomplogs/` at most every 2 s. |
+| [preview 1952](file:///Users/jsph/cowhub/luascripts/preview.lua#L1952) | `chomp.log(event, data)` | **Staging only.** Buffers a debug JSON line while Chomp Debug Log is on. Stripped from cowhub.lua by `scripts/promote-preview.py`. |
+| [preview 1961](file:///Users/jsph/cowhub/luascripts/preview.lua#L1961) | `chomp.flushLog(force)` | **Staging only.** Writes buffered debug lines to `cowhub/chomplogs/` at most every 2 s. |
 | [2034](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2034) | `chomp.serverInterval(node)` | Fastest server-accepted bite interval from live ChewCooldown / grazing multiplier (wheat & node cooldown aware). |
 | [2049](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L2049) | `chomp.getInterval(node)` | Server interval + adaptive margin, floored at the manual delay when Auto Max is off. |
 | [352](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L352) | `findGrassFolder()` | Returns the `CowVirtualGrass` folder the game targets (`CowClientGrassRenderer`). |
@@ -163,7 +163,7 @@ Primary CowHub script containing autofarm engines, mining, dodging, auction scan
 | [4769](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4769) | `cache.sanitizeMemory(now)` | Runs periodic garbage collection and clears stale cache references. |
 | [4837](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4837) | `aerial.process(now, rootPos)` | Maintains emergency aerial hover position during low health. |
 | [4871](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4871) | `aerial.checkHealth(now, rootPos)` | Evaluates player heart drops to trigger aerial retreat. |
-| [preview 4932](file:///Users/jsph/cowhub/luascripts/preview.lua#L4932) | `dodge.nearestMob(pos, maxDistSq)` | Nearest alive aura mob, the flee origin for damage-only retreats; staging only (Plan 1.10). |
+| [preview 4951](file:///Users/jsph/cowhub/luascripts/preview.lua#L4951) | `dodge.nearestMob(pos, maxDistSq)` | Nearest alive aura mob, the flee origin for damage-only retreats; staging only (Plan 1.10). |
 | [4948](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L4948) | `dodge.process(now, rootPos)` | Executes main evasion step (underground retreat, blink, or run away). |
 | [5266](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5266) | `dodge.cleanup()` | Resets dodge state and restores original walkspeed / collision. |
 | [5311](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5311) | `dodge.checkNearbyThreat(now, rootPos, prioritizedMobThisFrame)` | Scans 3D radius for approaching hostile mobs. |
@@ -173,8 +173,8 @@ Primary CowHub script containing autofarm engines, mining, dodging, auction scan
 | [5522](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5522) | `farm.findClearEscapeDirection(rootPos)` | Subsystem helper / execution logic. |
 | [5568](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5568) | `farm.isEdible(node)` | Grass node edible by the server's rule (`Available == true`) (Plan 1.7). |
 | [5610](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5610) | `farm.findBait(rootPos, now)` | Closest GrazingBaitFind drop inside the farm radius (not over water, not skipped) (Plan 1.8). |
-| [preview 5644](file:///Users/jsph/cowhub/luascripts/preview.lua#L5644) | `farm.teleportTo(target)` | Teleport the character and re-home the autofarm anchor; staging only (Plan 1.9). |
-| [preview 5663](file:///Users/jsph/cowhub/luascripts/preview.lua#L5663) | `farm.nodeValue(node)` | Bite value: GrowthProgress × 2 when Golden; staging only (Plan 1.9). |
+| [preview 5663](file:///Users/jsph/cowhub/luascripts/preview.lua#L5663) | `farm.teleportTo(target)` | Teleport the character and re-home the autofarm anchor; staging only (Plan 1.9). |
+| [preview 5682](file:///Users/jsph/cowhub/luascripts/preview.lua#L5682) | `farm.nodeValue(node)` | Bite value: GrowthProgress × 2 when Golden; staging only (Plan 1.9). |
 | [5669](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5669) | `farm.processMovement(dt, now, rootPos)` | Controls character movement along farming patrol path. |
 | [5910](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L5910) | `farm.processMobAura(now, rootPos)` | Dispatches auto-attacks against hostile mobs in aura range. |
 | [6018](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6018) | `farm.processGrassChomp(now, rootPos)` | Directs raycast grass harvesting toward nearest target. |
