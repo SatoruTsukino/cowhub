@@ -1,4 +1,4 @@
--- Cow Hub [662ddbd] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [6d09eb9] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [662ddbd]",
+    Name = "Cow Hub [6d09eb9]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -1256,6 +1256,78 @@ do
 end
 
 -- ==========================
+-- PERSISTENT SETTINGS (CowHub_Settings.json)
+-- ==========================
+local speedToOption = {
+    [0.4] = "Very Slow (0.4x)",
+    [0.6] = "Slow (0.6x)",
+    [1.0] = "Normal (1.0x)",
+    [1.6] = "Fast (1.6x)",
+}
+
+local optionToSpeed = {
+    ["Very Slow (0.4x)"] = 0.4,
+    ["Slow (0.6x)"] = 0.6,
+    ["Normal (1.0x)"] = 1.0,
+    ["Fast (1.6x)"] = 1.6,
+}
+
+local settings = {
+    fileName = resolveCowHubPath("CowHub_Settings.json"),
+    data = {},
+}
+
+function settings.load()
+    if not (isfile and readfile and isfile(settings.fileName)) then
+        return
+    end
+    local success, content = pcall(function()
+        return readfile(settings.fileName)
+    end)
+    if not success or not content or content == "" then
+        return
+    end
+    local decodeSuccess, decoded = pcall(function()
+        return HttpService:JSONDecode(content)
+    end)
+    if decodeSuccess and type(decoded) == "table" then
+        settings.data = decoded
+
+        if decoded.WalkingSpeed then
+            local spd = tonumber(decoded.WalkingSpeed)
+            if spd and speedToOption[spd] then
+                farm.patternSpeed = spd
+            end
+        elseif decoded.WalkingSpeedOption then
+            local spd = optionToSpeed[decoded.WalkingSpeedOption]
+            if spd then
+                farm.patternSpeed = spd
+            end
+        end
+
+        if decoded.RetreatWalkSpeed then
+            local rSpd = tonumber(decoded.RetreatWalkSpeed)
+            if rSpd and rSpd >= 16 and rSpd <= 50 then
+                dodge.walkSpeed = rSpd
+            end
+        end
+    end
+end
+
+function settings.save()
+    if not writefile then return end
+    settings.data.WalkingSpeed = farm.patternSpeed
+    settings.data.WalkingSpeedOption = speedToOption[farm.patternSpeed] or "Normal (1.0x)"
+    settings.data.RetreatWalkSpeed = dodge.walkSpeed
+    pcall(function()
+        local encoded = HttpService:JSONEncode(settings.data)
+        writefile(settings.fileName, encoded)
+    end)
+end
+
+settings.load()
+
+-- ==========================
 -- 6-HOUR AFK AUTO-REJOIN & STATE PERSISTENCE SYSTEM
 -- ==========================
 local afkRelog = {
@@ -1310,6 +1382,7 @@ function afkRelog.saveState()
         Dodge = {
             Auto = dodge.auto == true,
             Method = dodge.method or "Teleport Away (Surface)",
+            WalkSpeed = dodge.walkSpeed or 26,
         },
         Manatite = {
             Auto = (manatite and manatite.auto) == true,
@@ -1475,6 +1548,11 @@ function afkRelog.checkAndResumeState()
         end
         if f.PatternSpeed then
             farm.patternSpeed = f.PatternSpeed
+            local opt = speedToOption[f.PatternSpeed]
+            if opt then
+                pcall(function() Window:Set("Dropdown_Speed", { opt }) end)
+            end
+            settings.save()
         end
         -- Chomp module (legacy GrassChompDelay maps to manual delay, floored at the server minimum)
         chomp.mode = (f.ChompMode == "Natural") and "Natural" or "Remote"
@@ -1510,9 +1588,20 @@ function afkRelog.checkAndResumeState()
             pcall(function() Window:Set("Toggle_Fish", true) end)
         end
 
-        if data.Dodge and data.Dodge.Auto then
-            dodge.auto = true
-            pcall(function() Window:Set("Toggle_AutoDodge", true) end)
+        if data.Dodge then
+            if data.Dodge.Auto then
+                dodge.auto = true
+                pcall(function() Window:Set("Toggle_AutoDodge", true) end)
+            end
+            if data.Dodge.Method then
+                dodge.method = data.Dodge.Method
+                pcall(function() Window:Set("Dropdown_DodgeMethod", data.Dodge.Method) end)
+            end
+            if data.Dodge.WalkSpeed then
+                dodge.walkSpeed = data.Dodge.WalkSpeed
+                pcall(function() Window:Set("Slider_DodgeSpeed", data.Dodge.WalkSpeed) end)
+                settings.save()
+            end
         end
         if data.Manatite and data.Manatite.Auto and manatite then
             manatite.auto = true
@@ -6796,7 +6885,7 @@ do
     MainTab:CreateDropdown({
         Name = "Walking Speed",
         Options = {"Very Slow (0.4x)", "Slow (0.6x)", "Normal (1.0x)", "Fast (1.6x)"},
-        CurrentOption = {"Normal (1.0x)"},
+        CurrentOption = { speedToOption[farm.patternSpeed] or "Normal (1.0x)" },
         MultipleOptions = false,
         Flag = "Dropdown_Speed",
         Callback = function(Option)
@@ -6806,6 +6895,7 @@ do
             elseif selection == "Normal (1.0x)" then farm.patternSpeed = 1.0
             elseif selection == "Fast (1.6x)" then farm.patternSpeed = 1.6
             end
+            settings.save()
         end,
     })
 
@@ -6894,10 +6984,11 @@ do
         Range = {16, 50},
         Increment = 1,
         Suffix = "studs/s",
-        CurrentValue = 26,
+        CurrentValue = dodge.walkSpeed or 26,
         Flag = "Slider_DodgeSpeed",
         Callback = function(Value)
             dodge.walkSpeed = Value
+            settings.save()
         end,
     })
 

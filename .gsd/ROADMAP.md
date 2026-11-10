@@ -43,6 +43,8 @@ updated: 2026-11-03T00:00:00Z
 - [x] Plan 1.5: Autofarm chomp calories/hr stat
 - [x] Plan 1.6: Remote chomp target validation — rejects 32% → 9.1%, throughput held (shipped to cowhub)
 - [x] Plan 1.11: Autofarm rebirth ETA stat
+- [x] Plan 1.12: Cut grass bite rejects without throughput loss (662ddbd)
+- [x] Plan 1.13: Persistent walkspeed settings
 
 ### Phase 2: Module Dumper
 **Status:** ⬜ Not Started
