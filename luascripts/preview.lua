@@ -1,4 +1,4 @@
--- Cow Hub [0abdb14] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [0ad519a] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [0abdb14]",
+    Name = "Cow Hub [0ad519a]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -6693,17 +6693,45 @@ do
                         calRateStr = "Calculating..."
                     end
 
+                    local rebirthEtaStr = "--"
+                    local progress = tonumber(plr:GetAttribute("CowGrowthProgress")) or 0
+                    local currentCal = chomp.getCalories() or 0
+                    local remainingCal = nil
+                    if progress >= 1.0 then
+                        remainingCal = 0
+                        rebirthEtaStr = "Ready! (100%)"
+                    elseif progress > 0 then
+                        local targetCal = currentCal / progress
+                        cal.lastTargetCal = targetCal
+                        remainingCal = math.max(0, targetCal - currentCal)
+                    elseif cal.lastTargetCal then
+                        remainingCal = math.max(0, cal.lastTargetCal - currentCal)
+                    end
+
+                    if progress < 1.0 then
+                        if cal.activeDuration < 3 or cal.ratePerHour <= 0 then
+                            rebirthEtaStr = "Calculating..."
+                        elseif remainingCal and cal.ratePerHour > 0 then
+                            local hours = remainingCal / cal.ratePerHour
+                            if hours < 1 then
+                                rebirthEtaStr = string.format("~%.2fh (%dm)", hours, math.max(1, math.ceil(hours * 60)))
+                            else
+                                rebirthEtaStr = string.format("~%.1fh (%.1f%%)", hours, progress * 100)
+                            end
+                        end
+                    end
+
                     local st = chomp.stats
                     local t = string.format("Chomp: %s%s", chomp.mode, farm.botCheckActive and " | PAUSED (bot check)" or "")
                     local reasons = {}
                     for r, c in pairs(st.reasons) do table.insert(reasons, { r, c }) end
                     table.sort(reasons, function(a, b) return a[2] > b[2] end)
                     for i, rc in ipairs(reasons) do reasons[i] = rc[1] .. " " .. rc[2] end
-                    local b = string.format("Interval: %.3fs (server %.3fs + margin %.3fs) | RTT %dms\nSent %d | OK %d | Rejected %d (%.0f%%)\nRejects: %s\nGrazing: %s\nAvg Calories/hr: %s",
+                    local b = string.format("Interval: %.3fs (server %.3fs + margin %.3fs) | RTT %dms\nSent %d | OK %d | Rejected %d (%.0f%%)\nRejects: %s\nGrazing: %s\nAvg Calories/hr: %s\nNext Rebirth: %s",
                         chomp.getInterval(), chomp.serverInterval(), chomp.margin, math.floor(chomp.rtt * 1000),
                         st.sent, st.accepted, st.rejected, st.sent > 0 and st.rejected / st.sent * 100 or 0,
                         #reasons > 0 and table.concat(reasons, ", ") or "none",
-                        tostring(chomp.isGrazing()), calRateStr)
+                        tostring(chomp.isGrazing()), calRateStr, rebirthEtaStr)
                     pcall(function()
                         if chomp.statusCard.SetTitle then
                             chomp.statusCard:SetTitle(t)
