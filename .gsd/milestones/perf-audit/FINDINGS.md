@@ -398,6 +398,30 @@ so a full vs empty comparison was not possible. The existing logs cover 4–10 p
 - `ClientEvent` traffic is ~2× higher at 10 players (≈30 vs 15–20 KB/s), but those sessions were also mostly rafting /
   caravan, so activity and player count can't be separated with this data. To repeat when a busier server exists.
 
+## Session 10: MicroProfiler capture (test 10, `microprofile-20261111-003850.gprx`, `scripts/mp_analyze.py`)
+
+62 frames during a Supply caravan, all calm (median 10.0 ms, max 11.5 ms). No hitch frame was in the capture, so this
+shows where the **steady** frame time goes. Read with Roblox LibMP (Python + wasmtime, scratch venv).
+
+| Work (per frame, average) | ms | Thread | Read |
+|---|---|---|---|
+| Render `Perform` → `Scene` | 6.4 | RBX Main | Engine draw submission |
+| ↳ `SceneUpdater::computeLightingPerform` | **2.5** | RBX Main | Largest single render scope. Lighting / light grid; fits the 84–148 lights in the field |
+| ↳ `RenderView` / `UpdateView` | 2.1 / 1.7 | RBX Main | Per-view culling and draw lists |
+| `Simulation` → **`gameStepped`** | **2.6** | workers | `RunService.Stepped` / `PreSimulation` callbacks (game Luau). Physics itself only 0.3 |
+| `Heartbeat` → **`deferredThreads`** | **2.0** | workers | Resumed / deferred Luau threads (`task.defer`, signal handlers) |
+| `RenderJob` → **`PreRender`** | **2.0** | workers | `RenderStepped` / `PreRender` callbacks (game Luau) |
+| `CullJob` → `queryOcclusion` | 1.2 | workers | Occlusion culling |
+| `LightGridCPU` updates | 0.4 | workers | Light grid chunks |
+| Lua GC | 0.3 | workers | |
+
+- **Game Luau takes ~6.6 ms per frame** in callbacks alone (Stepped 2.6 + deferred threads 2.0 + PreRender 2.0), while
+  physics is 0.3 ms. That is the biggest CPU item and matches the 26 RenderStepped + 24 Heartbeat + 17 BindToRenderStep
+  hooks in the client code (and `NPCDialogueUI`'s 15 idle RenderStepped connections). Suggest one scheduler that runs
+  far / offscreen systems at a lower rate, and disconnecting idle per-frame hooks.
+- **Lighting is the biggest render scope (2.5 ms)**, in line with the A/B results (shadows and lights).
+- Still needed: a dump that contains a hitch frame (pause right after a tall bar) to name what fills a 100 ms+ frame.
+
 ## Monitor caveats
 - Byte counts are estimates of the Luau payload, not wire size. Roblox compresses.
 - `Stats.DataReceiveKbps` reads 0 on this client, so incoming bandwidth comes from the remote estimates.
