@@ -435,6 +435,13 @@ Heavier moment: median 17.0 ms, p95 21.1 ms, max 26.1 ms (no 100 ms hitch caught
 
 - Here the main thread spends up to half of each frame **waiting on the GPU**, and shadow-map updates are ~2 ms of
   CPU on top. It confirms the A/B: in busy scenes the GPU (shadows) is the limit.
+### Third round (10 dumps, 00:47–00:49)
+Four dumps had a spike frame (68–77 ms; 004900, 004928–004931). In every one the main thread was busy only
+**6.9–9.8 ms** of the spike frame, and the worker threads show no long scope either (longest ~5 ms `queryOcclusion`;
+game Luau `Script_Bootstrap` ≤ 3.2 ms; `BarnCats.Client` 1.3 ms). The other ~60 ms is not in any profiled scope.
+The dumps were taken one per second in a burst, so the spike is most likely the previous dump being written
+(11–12 MB each) or the window losing focus, not game work. **These spikes are profiler artefacts, not game hitches.**
+
 - The 100 ms+ hitches were not caught in either capture. They most likely come from script / instance bursts
   (join snapshot, grass churn, cosmetics UI build, caravan teardown) that the event and churn data already point to.
 
