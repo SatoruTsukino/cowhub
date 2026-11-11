@@ -1,4 +1,4 @@
--- Cow Hub [e5f3850] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [0f18459] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [e5f3850]",
+    Name = "Cow Hub [0f18459]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -515,7 +515,15 @@ local chomp = {
     REACH = 8,         -- studs; game client targets <= Config.Grass.TargetDistance (9)
     CLOSE = 3,         -- studs; inside this the facing cone is ignored (game: 3.5)
     CONE_MARGIN = 10,  -- degrees trimmed off GrazeConeDegrees
-    skip = {},         -- nodeId -> os.clock() until which the node is not targeted
+    -- Value-scan tie-break: far side-on nodes (dist >= 5.75, dot < 0.5) rejected 20.5% vs ~4% elsewhere (Plan 1.12)
+    RISK_DIST = 5.75,
+    RISK_DOT = 0.5,
+    -- InvalidActorState breaker: this many in a row pauses sends for IAS_PAUSE s (215-reject streak, chomp_1794256657)
+    IAS_STREAK = 3,
+    IAS_PAUSE = 2,
+    iasStreak = 0,
+    blockUntil = 0,
+    skip = {},       -- nodeId -> os.clock() until which the node is not targeted
     rtt = 0.25,        -- EMA of GrazeResult round trip (s)
     target = { src = nil, dist = 0, dot = 1 },
     idleWhy = {},      -- per-tick tally of why nearby nodes failed chomp.canTarget
@@ -2203,6 +2211,7 @@ function chomp.fireBarrel(nodeId, part, now)
 end
 
 function chomp.send(nodeId, node, now)
+    if now < chomp.blockUntil then return false end
     local interval = chomp.getInterval(node)
     if now - chomp.lastFire < interval then return false end
     chomp.serial += 1
@@ -2257,6 +2266,16 @@ do
             local now = os.clock()
             chomp.rtt = chomp.rtt * 0.8 + math.clamp(now - p.SentAt, 0, 2) * 0.2
             local reason = res.Reason
+            if reason == "InvalidActorState" then
+                chomp.iasStreak += 1
+                if chomp.iasStreak >= chomp.IAS_STREAK then
+                    chomp.iasStreak = 0
+                    chomp.blockUntil = now + chomp.IAS_PAUSE
+                    if chomp.debug then chomp.log("ias_pause", { pause = chomp.IAS_PAUSE }) end
+                end
+            else
+                chomp.iasStreak = 0
+            end
             if res.Accepted == true or reason == "Consumed" or reason == "Unavailable" then
                 -- One bite consumes a node; regrow takes >= 15 s, so don't come back soon
                 chomp.skip[p.NodeId] = now + 10
@@ -6142,16 +6161,21 @@ function farm.processGrassChomp(now, rootPos)
         local nearby = cache.grassNear(rootPos, chomp.REACH + 4)
         do
             local reachSq = chomp.REACH * chomp.REACH
-            local best, bestId, bestValue, bestDistSq = nil, nil, 0, math.huge
+            -- Rank: higher value, then safe before risky (far + side-on), then closer (Plan 1.12)
+            local best, bestId, bestValue, bestDistSq, bestRisky = nil, nil, 0, math.huge, true
             for _, node in ipairs(nearby) do
                 if node.Parent then
                     local dSq = get2DDistanceSq(rootPos, cache.getNodePosition(node))
                     if dSq <= reachSq then
                         local value = farm.nodeValue(node)
-                        if value > bestValue or (value == bestValue and dSq < bestDistSq) then
+                        if value > bestValue or (value == bestValue and (bestRisky or dSq < bestDistSq)) then
                             local id = cache.getNodeID(node)
-                            if chomp.canTarget(node, id, rootPos, now) then
-                                best, bestId, bestValue, bestDistSq = node, id, value, dSq
+                            local ok, dist, dot = chomp.canTarget(node, id, rootPos, now)
+                            if ok then
+                                local risky = dist >= chomp.RISK_DIST and dot < chomp.RISK_DOT
+                                if value > bestValue or (bestRisky and not risky) or (risky == bestRisky and dSq < bestDistSq) then
+                                    best, bestId, bestValue, bestDistSq, bestRisky = node, id, value, dSq, risky
+                                end
                             end
                         end
                     end
