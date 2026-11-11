@@ -422,6 +422,23 @@ shows where the **steady** frame time goes. Read with Roblox LibMP (Python + was
 - **Lighting is the biggest render scope (2.5 ms)**, in line with the A/B results (shadows and lights).
 - Still needed: a dump that contains a hitch frame (pause right after a tall bar) to name what fills a 100 ms+ frame.
 
+### Second capture (`microprofile-20261111-004633.x.html`, 48 frames)
+Heavier moment: median 17.0 ms, p95 21.1 ms, max 26.1 ms (no 100 ms hitch caught again).
+
+| Main-thread scope (avg / worst frame) | ms |
+|---|---|
+| `Present` → **`waitOnGpu`** | **5.8 avg, up to 11.1** |
+| `Scene` | 6.1 avg |
+| `ShadowMapSystem::updatePerform` | **1.6–2.1** |
+| `SceneUpdater::computeLightingPerform` | 1.7–2.2 |
+| `RenderView` → `DefaultPass` | 1.7–2.1 |
+
+- Here the main thread spends up to half of each frame **waiting on the GPU**, and shadow-map updates are ~2 ms of
+  CPU on top. It confirms the A/B: in busy scenes the GPU (shadows) is the limit.
+- The 100 ms+ hitches were not caught in either capture. They most likely come from script / instance bursts
+  (join snapshot, grass churn, cosmetics UI build, caravan teardown) that the event and churn data already point to.
+
+
 ## Monitor caveats
 - Byte counts are estimates of the Luau payload, not wire size. Roblox compresses.
 - `Stats.DataReceiveKbps` reads 0 on this client, so incoming bandwidth comes from the remote estimates.
