@@ -43,4 +43,4 @@ fires a remote, moves the character or changes game state.
 - [x] Phase 1 / Plan 1.2: Capture sessions (rafting, autofarm, grazing, caravan, clean no-cowhub) → FINDINGS.md
 - [x] Phase 2 / Plan 2.1: Graphics A/B (6), long soak (1), menu leak test (2)
 - [x] Phase 2 / Plan 2.2: calibration (8), heap (9), quality sweep (7), join (3, autoexec timeline; in-place rejoin)
-- [ ] Phase 2 / Plan 2.3+: player count (4), events (5), MicroProfiler (10), BlueStacks mobile (11)
+- [ ] Phase 2 / Plan 2.3: player count (4), events (5), MicroProfiler (10), BlueStacks mobile (11) — in progress

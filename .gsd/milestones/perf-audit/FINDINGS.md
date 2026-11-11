@@ -358,6 +358,46 @@ player was already playable, so the stage times are bounded rather than measured
   injection on a fresh launch. That means putting `perf_join.lua` in the executor's autoexec folder, which needs
   the user's go-ahead.
 
+## Session 9: Plan 2.3: event windows (test 5)
+
+Every AUTO / manual event mark in all perf logs; 30 s after the event against the 60 s before it (averages over n events).
+
+| Event | n | Worst frame after / before | Hitches >100 ms per min after / before | In KB/s after / before | Instances added/s after / before |
+|---|---|---|---|---|---|
+| **Caravan Leaving** | 7 | 122 / 92 ms | **1.4 / 0.4** | **39.5 / 17.8** | 162 / 146 |
+| **Caravan Idle (packed up)** | 7 | 128 / 94 ms | **1.7 / 0.4** | **39.1 / 21.6** | 166 / 146 |
+| Caravan OnRoad (spawn) | 7 | 54 / 361 ms | 0.0 / 0.7 | 8.9 / 26.1 | 179 / 122 |
+| Caravan Stopped | 2 | 90 / 165 ms | 1.0 / 1.0 | 8.5 / 41.1 | 246 / 287 |
+| Round start | 20 | 70 / 109 ms | 0.5 / 0.6 | 18.1 / 19.6 | 41 / 36 |
+| Caravan traffic (any) | 32 | 110 / 143 ms | 0.7 / 0.7 | 21.2 / 19.6 | 33 / 29 |
+| Field event start | 2 | 60 / 152 ms | 0.0 / 1.0 | 4.6 / 31.0 | 45 / 16 |
+
+- **The caravan leaving / packing up is the one event that measurably hurts:** hitches go from 0.4 to 1.4–1.7 per
+  minute and incoming traffic doubles (~18–22 → ~39 KB/s) for the 30 s after. Likely the loot / crate reveal
+  messages and the convoy models being torn down at once. Suggest despawning the convoy over several frames and
+  sending the loot summary as one message.
+- Caravan arrival, rounds and field events show no extra hitching (their "before" windows were busier).
+- n is small for some rows (2); the caravan Leaving / Idle rows (n = 7 each) are the reliable ones.
+
+## Session 9b: player count (test 4), partial
+
+The public server list (`games.roblox.com/v1/games/82507849398215/servers/Public`) had **one** server (5 / 16 players),
+so a full vs empty comparison was not possible. The existing logs cover 4–10 players on the same server:
+
+| Players | Log | Duration | `Motion` msgs/s | `Motion` bytes/msg | `DogSnapshot`/s | `ClientEvent` KB/s |
+|---|---|---|---|---|---|---|
+| 4 | perf_1794384961 | 411 s | 28.5 | 94 | 4.2 | 14.6 |
+| 5 | perf_1794385383 | 657 s | 21.5 | 87 | 2.3 | 19.6 |
+| 6 | perf_1794378042 | 6,885 s | 24.8 | 88 | 3.5 | 15.3 |
+| 7 | perf_1794372688 | 1,143 s | 19.7 | 96 | 3.9 | 27.0 |
+| 10 | perf_1794370315 | 362 s | 21.8 | 98 | 4.1 | 30.6 |
+| 10 | perf_1794370676 | 1,972 s | 21.4 | 96 | 4.0 | 29.5 |
+
+- `Motion` is sent at a fixed ~20–28/s, batched: its payload grows only ~1–2 B per extra player (87 → 98 B). This
+  scales well.
+- `ClientEvent` traffic is ~2× higher at 10 players (≈30 vs 15–20 KB/s), but those sessions were also mostly rafting /
+  caravan, so activity and player count can't be separated with this data. To repeat when a busier server exists.
+
 ## Monitor caveats
 - Byte counts are estimates of the Luau payload, not wire size. Roblox compresses.
 - `Stats.DataReceiveKbps` reads 0 on this client, so incoming bandwidth comes from the remote estimates.
