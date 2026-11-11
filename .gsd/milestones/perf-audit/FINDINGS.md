@@ -458,6 +458,33 @@ menu button makes). Timed with `os.clock()` around the call:
   (join snapshot, grass churn, cosmetics UI build, caravan teardown) that the event and churn data already point to.
 
 
+## Session 11: BlueStacks mobile client (test 11, `bluestacks/perf_1794387947_4e923e40.log`)
+
+BlueStacks Air (Android 13, profile SM-G998B), **4 cores, 4 GB, 60 FPS cap**, viewport 960×540, quality Automatic.
+Same server (JobId 6f9973ee…, 7 players), no cowhub; monitor + auto-marker from an Android executor. 520 s: spawn,
+grazing, rounds, Supply caravan (arrive → leave), one CosmeticIndex open. An emulator on an M3 Pro is not a real
+phone, but it shows how the client behaves on a weaker CPU budget.
+
+| Metric | BlueStacks | Mac (clean client) |
+|---|---|---|
+| FPS (avg / p50) | **36.7 / 35.7** (cap 60) | 97–102 (cap 240, display 120) |
+| Render CPU ms (avg / p95) | **27.9 / 39.1** | 7–8 |
+| GPU ms (avg / p95) | 8.4 / 16.1 | 10–12 |
+| Worst frame per second (p50 / p95) | 44 / 86 ms | 22–24 / 31–44 ms |
+| Hitches > 100 ms | **2.0 per min** | 0.4–1.2 per min |
+| CosmeticIndex first open | **877 ms freeze** | 485 ms |
+| Memory | 1.72 GB (LuaHeap 550 MB, Internal 704, Gui 142, GraphicsTexture 33) | 3.2–3.6 GB (GraphicsTexture ~130–180) |
+| Instances | 146–154k | 131–147k |
+| Shadow casters / lights on (census) | 23,932 / 121 | 21–31k / 96–148 |
+
+- **On the weaker client the render CPU is the limit** (~28 ms a frame, 36 FPS), not the GPU (8 ms). That is draw
+  submission and culling work, which grows with the number of parts, shadow casters and lights. Those stayed at
+  Mac levels (24k shadow casters, 121 lights) even though the quality level is lower, so the game's content does not
+  scale down for weak devices.
+- **Hitches are 2–5× more frequent** and the cosmetics index freeze is nearly 0.9 s.
+- Memory is about half the Mac's, mostly from smaller textures, but the **Lua heap is the same ~550 MB**. Game
+  state does not shrink on mobile, which matters on 3–4 GB phones.
+
 ## Monitor caveats
 - Byte counts are estimates of the Luau payload, not wire size. Roblox compresses.
 - `Stats.DataReceiveKbps` reads 0 on this client, so incoming bandwidth comes from the remote estimates.
