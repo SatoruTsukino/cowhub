@@ -323,7 +323,25 @@ release the cosmetic index cards on close.
 - Levels above 10 were not tested. That would be the next step to find where Automatic lands.
 - Quality was restored to Automatic and the camera to Custom (checked).
 
-### Join (test 3, `join_*.json`), partial
+### Join (test 3, autoexec run, `join_*.json`)
+`perf_join.lua` ran from the executor's autoexec at injection. Roblox could not be quit from here, so this is again an
+in-place rejoin in the same process and server (5 players). Assets were already cached, so the times are a best case.
+
+| Stage | Since join | Received (cumulative) | Instances | Memory |
+|---|---|---|---|---|
+| Loaded | 2.31 s | 10.5 MB | 59,590 | 2.95 GB |
+| Character | 3.40 s | 10.6 MB | 60,075 | 3.01 GB |
+| First `Snapshot` | 3.48 s | 12.4 MB (**+1.85 MB** in 80 ms) | 60,097 | 3.03 GB |
+| First grass chunk | 3.62 s | 15.0 MB (**+2.55 MB**) | 66,497 | 3.09 GB |
+| Playable | 3.69 s | 15.0 MB | 66,644 | 3.10 GB |
+| +30 s | 33.2 s | 17.6 MB | 100,469 | 3.31 GB |
+
+- **The join Snapshot is ~1.8 MB** on the wire, the largest single message seen (compressed; the ~900 KB payload
+  estimate from session 1 is the in-game size). With the first grass burst (+2.6 MB) that is ~4.4 MB in 0.2 s right
+  as the player appears. The hitch is visible on join.
+- Streaming then adds ~34k instances and 2.6 MB more over the next 30 s.
+
+### Join (test 3, first try, `join_*.json`), partial
 Rejoined through `roblox://placeId=…` with the client still open: the running process rejoined in place (same
 server, JobId 6f9973ee…, 4 players). The join script could only be injected 23.8 s after the join, by which point the
 player was already playable, so the stage times are bounded rather than measured.
