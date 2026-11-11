@@ -442,6 +442,18 @@ game Luau `Script_Bootstrap` ≤ 3.2 ms; `BarnCats.Client` 1.3 ms). The other ~6
 The dumps were taken one per second in a burst, so the spike is most likely the previous dump being written
 (11–12 MB each) or the window losing focus, not game work. **These spikes are profiler artefacts, not game hitches.**
 
+### Triggered hitch: first CosmeticIndex open (`microprofile-20261111-005305.x.html`)
+`NavigationController:Open("CosmeticIndex")` was called from a script while the MicroProfiler ran (the same call the
+menu button makes). Timed with `os.clock()` around the call:
+
+- **The call blocked for 485 ms in one go** and created **25,398 GUI instances** (PlayerGui 30,926 → 56,324). That is
+  a ~0.5 s freeze the first time a player opens the cosmetics index.
+- The dump kept only 11 frames, and the 485 ms frame was not among them (the profiler drops very long frames from a
+  short dump). The frame after it (38 ms) shows the follow-on cost: `Heartbeat` 23 ms, with `delayedThreads` 16 ms,
+  `UpdateUILayouts` 3.8 ms and `Rebuild Z-order list` 3.0 ms, from laying out the new grid.
+- **Suggest:** build the cosmetics grid incrementally (a few dozen cards per frame) or virtualised. Never build all
+  25k instances inside the open call.
+
 - The 100 ms+ hitches were not caught in either capture. They most likely come from script / instance bursts
   (join snapshot, grass churn, cosmetics UI build, caravan teardown) that the event and churn data already point to.
 
