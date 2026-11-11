@@ -165,6 +165,107 @@ so it is render-bound at ~10 ms per frame (GPU 10–12 ms, render CPU 7–8 ms),
 - **Baseline client numbers for the dev report:** ~3.2–3.5 GB memory, 135k–147k instances in the field,
   ~670 instances created per second while grazing (`CowVirtualGrass`), GPU 10–12 ms average.
 
+## Session 4: graphics A/B at spawn (`ab_*.json`, Plan 2.1 test 6)
+
+Spawn area (-1842, 708, 308), 6 players, camera locked, 30 s per window, baseline windows before and after each
+variant. FPS sat at ~120 the whole run, so the display or cap limit was reached before the GPU limit. Costs here
+are what each feature would save if the GPU were the limit. All changes were restored and checked afterwards.
+
+| Variant | Changed | GPU Δ ms (base) | Render CPU Δ ms | Baseline spread ms | Read |
+|---|---|---|---|---|---|
+| Atmosphere density 0 | 1 (game reset it 29×) | **+4.66** (10.3) | **+2.26** | 1.6 | Fog is acting as distance culling: without it far terrain and props are drawn. Keep it; tune `Atmosphere` instead of lowering it. |
+| Point/Spot lights off | 59 | −1.08 (8.5) | −0.56 | 2.0 | Likely real but within noise at spawn; repeat in the field (84–148 lights) |
+| Bloom off | 1 | −0.67 (9.2) | −0.23 | 1.4 | Small |
+| GlobalShadows off | 1 | −0.59 (8.6) | −0.04 | 0.6 | Small at spawn |
+| ColorCorrection off | 2 | −0.45 (10.5) | −0.46 | 1.2 | Within noise |
+| CastShadow off (all parts) | 16,724 (+373 streamed in) | −0.27 (8.4) | −0.03 | 0.2 | Small at spawn |
+| Beams off | 17 | −0.17 (7.1) | −0.05 | 0.7 | Spawn has 17 Beams; the 2,088 aurora Beams are in the fjord |
+| Particles off | 59 | −0.04 (6.8) | −0.06 | 0.0 | None |
+
+Takeaways:
+- At spawn no single feature costs more than ~1 ms of GPU. The baseline itself moved between 6.8 and 11.1 ms over
+  the run, more than most effects. The field and the fjord are where the cost is, so the test has to be repeated there.
+- **Atmosphere is a net saving.** Turning its fog off cost +4.7 ms GPU and +2.3 ms render CPU. Suggest to the devs:
+  don't drop `Atmosphere` on low settings; use its density / haze as the cheap draw-distance limit.
+- A game controller keeps resetting `Atmosphere` (29 resets in 30 s) and lights (29), which fits the zone grading
+  controllers re-applying their settings every second.
+
+## Session 5: graphics A/B in the field (`ab_*.json`, label `field`)
+
+Field (-409, 709, 455), camera locked, 60 s per window. FPS 84–118 (cap 240), so here the GPU is the limit.
+The baseline still drifted between 9.4 and 12.8 ms GPU over the 18 min, so "spread" (the gap between the two
+baselines around each variant) is the noise bar for that variant.
+
+| Variant | Changed | GPU Δ ms | Render CPU Δ ms | Frame Δ ms | Spread (GPU / CPU) | Read |
+|---|---|---|---|---|---|---|
+| CastShadow off (all parts) | 34,071 (+284 streamed in) | **−2.48** | −1.05 | −0.45 | 2.85 / 1.34 | Lowest GPU of the run (8.85 ms vs every baseline ≥ 9.44). Likely −1 to −2.5 ms. |
+| Bloom off | 1 | **−1.87** | −0.89 | −1.05 | 1.17 / 0.59 | Real, ~1–2 ms |
+| Point/Spot lights off | 146 | −1.13 | −0.25 | −0.13 | 1.55 / 0.39 | Within noise again |
+| GlobalShadows off | 1 | −0.67 | **−1.09** | **−1.05** | 0.10 / 0.30 | **Most reliable result**: ~1 ms per frame, mostly render CPU |
+| Beams off | 17 | −0.59 | −0.74 | −0.57 | 0.57 / 0.06 | Small (only 17 Beams here) |
+| Atmosphere density 0 | 1 (reset 59×) | −0.59 | −0.29 | −0.49 | 1.03 / 0.88 | Neutral in the field, vs +4.7 ms at spawn: the fog only saves where the view is long |
+| Particles off | 9 | −0.32 | −0.12 | +0.10 | 0.90 / 0.41 | None |
+| ColorCorrection off | 2 | +0.73 | +0.79 | +0.96 | 1.28 / 1.21 | None (noise) |
+
+Takeaways for the dev report:
+- **Shadows are the biggest lever in the field:** per-part `CastShadow` on 34k parts costs about 1–2.5 ms GPU, and the
+  global shadow pass about 1 ms of frame time on its own. Turning `CastShadow` off on grass, small props and debris
+  keeps the look and recovers most of it.
+- **Bloom costs ~1–2 ms GPU.** Worth a lower-quality toggle.
+- Lights, Beams (in the field), particles and color correction are each under the noise floor (~1 ms).
+- After the restore, 1 light and 1 Beam read disabled; spawn read 0 / 0 before the run, so these are most likely
+  game-controlled (a zone controller), not left over from the test. Everything else matched.
+
+## Session 6: menu leak test (`perf_leak.lua`, `conn_probe_leak*_*.json`)
+
+Each menu opened and closed 10× through the game's own controllers (`NavigationController:Open(tab)` / `:Close()`,
+`SkinAuctionController`, `RaftYardController`, `GardenController`; `PlayerMailController` had no instance). A
+snapshot after GC followed each menu.
+
+| Point | PlayerGui instances | Gui memory | Visible GuiObjects | Lua heap |
+|---|---|---|---|---|
+| Before | 11,405 | 75 MB | 7,056 | 485 MB |
+| After Closet ×10 | 29,940 | 121 MB | 19,771 | 529 MB |
+| After CosmeticIndex ×10 | **54,206** | **181 MB** | 34,329 | 511 MB |
+| After the other 7 tabs | 35,882 | 138 MB | 21,745 | 501–535 MB |
+| After auction / raft yard / garden (+4 ScreenGuis) | 37,060 | 137 MB | 22,065 | 507–540 MB |
+| Pass 2: Closet, CosmeticIndex ×2 each | 55,374 (flat on repeats) | 183 MB | 34,651 | 509–550 MB |
+
+- **No per-cycle leak.** Repeating Closet / CosmeticIndex stays flat at 55,374 instances. Per-frame connections
+  stayed at 105–108 Heartbeat / 59–60 RenderStepped the whole test, and `ClientEvent` stayed at 21 listeners.
+- **But the cosmetics UI is never released.** Opening Closet or CosmeticIndex once builds **18–43k GUI instances
+  (+46–108 MB Gui memory)**. They stay in `PlayerGui` after the menu closes, still marked `Visible` (34k visible
+  GuiObjects with every menu closed). The client never got back to its 11.4k / 75 MB starting point. This is the
+  biggest single UI cost found.
+- **Suggest:** build the cosmetic grid lazily and virtualise it (only the rows on screen, reused as you scroll), and
+  destroy the grid when the menu closes or after a timeout. Or at least parent it to `nil` / disable its ScreenGui when
+  closed, so layout and memory don't carry it.
+- Skin auction and raft yard each create a ScreenGui once and keep it (+2 each). Small, cached, fine.
+
+## Session 7: 90-min long session (`perf_1794378042_352f17ea.log`, Plan 2.1 test 1)
+
+One client, no cowhub, 90 min on one server (6 players): spawn A/B (0–600 s), field A/B (~900–2000 s), menu
+leak test (~2370–3000 s), then normal play with auto-marks (grazing, fishing, river swim, caravan, rounds).
+The connection owners were probed every 5 min.
+
+| Time | Memory | Instances | LuaHeap | Gui | Internal | Heartbeat / RenderStepped |
+|---|---|---|---|---|---|---|
+| 0 min (spawn) | 2.82 GB | 96k | 411 MB | 33 MB | 735 MB | 104 / 60 |
+| 15 min (field loaded) | 3.31 GB | 141k | 479 MB | 74 MB | 986 MB | 101 / 59 |
+| 40 min (before menu test) | 3.49 GB | 144k | 518 MB | 76 MB | 1,004 MB | 106 / 59 |
+| 50 min (after cosmetics UI) | 3.78 GB | 188k | 514 MB | 183 MB | 1,028 MB | 105 / 60 |
+| 60–85 min (normal play) | 3.74–3.80 GB | 182–185k | 521–556 MB | 184 MB | 1,032–1,043 MB | 106–109 / 60–61 |
+| 90 min | 3.74 GB | 166k | 546 MB | 140 MB | 1,039 MB | 106 / 61 |
+
+- **No leak over 90 min.** Memory rises in steps when content loads (+0.5 GB when the field streams in,
+  +0.3 GB for the cosmetics UI), then stays flat (3.74–3.80 GB for the last 40 min). Per-frame connections stay
+  flat at 101–109 Heartbeat and 59–61 RenderStepped. `ClientEvent` went 21 → 22 listeners only because the
+  auto-marker connected one.
+- **The cosmetics UI is the one avoidable step:** +108 MB Gui and +44k instances held until about the 90 min
+  point, when Gui memory dropped to 140 MB, so some of it is released eventually.
+- **The 150+ Heartbeat seen in session 2 did not reappear.** That was a different, long-lived client that also had
+  cowhub loaded. It stays unexplained, but it is not the game growing over time.
+
 ## Monitor caveats
 - Byte counts are estimates of the Luau payload, not wire size. Roblox compresses.
 - `Stats.DataReceiveKbps` reads 0 on this client, so incoming bandwidth comes from the remote estimates.

@@ -20,6 +20,7 @@
       W,<t>,<json>                workspace churn per REPORT_INTERVAL: top classes and top models
       M,<t>,<json>                memory by Enum.DeveloperMemoryTag (MB)
       C,<t>,<json>                render census
+      P,<t>,<json>                per-frame connections by owning script (every PROBE_INTERVAL)
       E,<t>,<name>,<json>         event (start, env, mark, stop, error)
 
     Byte counts are estimates of the payload (Roblox does not expose per-remote wire size).
@@ -32,6 +33,7 @@ local CONFIG = {
     SAMPLE_INTERVAL = 1,
     REPORT_INTERVAL = 10,
     CENSUS_INTERVAL = 60,
+    PROBE_INTERVAL = 300,      -- per-frame connection owners (P line); needs getconnections
     FLUSH_INTERVAL = 2,
     SUMMARY_INTERVAL = 30,
     CENSUS_CHUNK = 2000,       -- instances per frame during a census
@@ -379,6 +381,37 @@ local function connectionCounts()
             out[name] = #getconnections(RunService[name])
         end)
     end
+    return out
+end
+
+-- Per-frame connections grouped by the script that owns the callback (P line)
+local function probeOwners()
+    if type(getconnections) ~= "function" then return nil end
+    local out = {}
+    for _, name in ipairs({ "Heartbeat", "RenderStepped", "Stepped", "PreSimulation" }) do
+        local ok, conns = pcall(getconnections, RunService[name])
+        if ok then
+            local groups = {}
+            for _, c in ipairs(conns) do
+                local key = "[foreign]"
+                local fn = c.Function
+                if fn then
+                    local okInfo, src, ln = pcall(debug.info, fn, "sl")
+                    if okInfo then
+                        local short = string.match(tostring(src), "([^%.]+%.[^%.]+)$") or tostring(src)
+                        local exec = isexecutorclosure and isexecutorclosure(fn)
+                        key = (if exec then "[exec] " else "") .. short .. ":" .. tostring(ln)
+                    end
+                end
+                groups[key] = (groups[key] or 0) + 1
+            end
+            out[name] = { total = #conns, top = topN(groups, 15) }
+        end
+    end
+    local okEvt, n = pcall(function()
+        return #getconnections(ReplicatedStorage.CowGame.Remotes.ClientEvent.OnClientEvent)
+    end)
+    if okEvt then out.clientEventListeners = n end
     return out
 end
 
@@ -761,6 +794,7 @@ task.spawn(function()
     local lastSample, lastFlush, lastSummary = os.clock(), os.clock(), os.clock()
     T.lastReport = os.clock()
     local lastCensus = os.clock() - CONFIG.CENSUS_INTERVAL + 5 -- first census after 5 s
+    local lastProbe = os.clock() - CONFIG.PROBE_INTERVAL + 10 -- first probe after 10 s
     while T.running do
         task.wait(CONFIG.SAMPLE_INTERVAL)
         if not T.running then break end
@@ -771,6 +805,11 @@ task.spawn(function()
         if now - T.lastReport >= CONFIG.REPORT_INTERVAL then
             report(now - T.lastReport)
             T.lastReport = now
+        end
+        if now - lastProbe >= CONFIG.PROBE_INTERVAL then
+            lastProbe = now
+            local ok, owners = pcall(probeOwners)
+            if ok and owners then line(string.format("P,%.2f,%s", elapsed(), jsonValue(owners))) end
         end
         if now - lastCensus >= CONFIG.CENSUS_INTERVAL then
             lastCensus = now

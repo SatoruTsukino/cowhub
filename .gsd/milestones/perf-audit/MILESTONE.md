@@ -1,7 +1,7 @@
 ---
 name: perf-audit
 version: v0.1
-status: complete
+status: executing
 created: 2026-11-10T00:00:00Z
 ---
 
@@ -41,3 +41,5 @@ fires a remote, moves the character or changes game state.
 ## Phases
 - [x] Phase 1 / Plan 1.1: Passive perf monitor script
 - [x] Phase 1 / Plan 1.2: Capture sessions (rafting, autofarm, grazing, caravan, clean no-cowhub) → FINDINGS.md
+- [x] Phase 2 / Plan 2.1: Graphics A/B (6), long soak (1), menu leak test (2)
+- [ ] Phase 2 / Plan 2.2+: join (3), player count (4), events (5), quality sweep (7), byte calibration (8), heap breakdown (9), MicroProfiler (10), BlueStacks mobile (11)
