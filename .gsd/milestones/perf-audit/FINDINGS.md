@@ -266,6 +266,80 @@ The connection owners were probed every 5 min.
 - **The 150+ Heartbeat seen in session 2 did not reappear.** That was a different, long-lived client that also had
   cowhub loaded. It stays unexplained, but it is not the game growing over time.
 
+## Session 8: Plan 2.2: byte calibration, heap breakdown, quality sweep (tests 8, 9, 7)
+
+### Byte calibration (`calibrate_*.json`, 120 s, field)
+| Counter | Per second |
+|---|---|
+| `totalBytesReceived` (wire) | **32.3 KB/s** (NetStream 28.2 KB/s) |
+| Remote payload estimate (monitor) | 17.2 KB/s, 32 msgs/s |
+| `totalBytesSent` (wire) | 6.9 KB/s, 65 packets/s |
+| Remote payload estimate, outgoing | 0.1 KB/s |
+| Dropped packets | 12 in 120 s |
+
+- Received bytes / remote estimate = **1.88**. Remote events are about half of downstream traffic; the rest is
+  instance and property replication (streaming, animals, players). The KB/s figures in this file are remote payloads
+  only. Multiply by ~1.9 for total downstream.
+- Outgoing is nearly all character replication and acks (remotes are under 2% of sent bytes).
+
+### Lua heap breakdown (`heap_*.json`, LuaHeap 530 MB)
+`getgc(true)`: 1.42M objects: 172k tables (1.46M entries), 39k functions, 189k userdata. Strings and buffers are not
+returned by `getgc`, so the tables below are probably ~50–100 MB of the 530 MB.
+
+| Table shape (keys) | Tables | Entries | Share | What it likely is |
+|---|---|---|---|---|
+| plain arrays | 49,367 | 654,635 | 44.9% | lists inside everything below |
+| `CreatedAt, CreatorName, CreatorUserId, SkinId, Source, UUID` | **16,668** | 116,676 | 8.0% | skin item records (inventory / market listings) |
+| `Count, Max, Mean, P50, P90, QuantileSamples` | 2,382 | 14,292 | 1.0% | performance telemetry stats kept in memory |
+| `AttemptId, Build, Journey, Outcome, Second, Source` | 1,188 | 13,068 | 0.9% | journey / attempt telemetry |
+| `At, Key, Ms(, Reason)` | 2,515 | 8,639 | 0.6% | timing logs |
+| `Deaths, GrassBites, HayPortions, ItemsCrafted, …` | 564 | 8,460 | 0.6% | session stat snapshots |
+| `AppliedGrassRendering, AppliedGroundPosition, …` (several) | ~1,400 | ~45,000 | 3.1% | grass / plant state per cell |
+| `Cells, Index, Kind, Moved, Part, Resized` | 2,127 | 17,016 | 1.2% | grass chunk records |
+
+Functions by owning script: `InstanceUtil` 3,939, **`CosmeticIndexCard` 2,894**, `CowGrowthVisual` 2,808,
+`BirdPerchCatalog` 2,385, `CowRig` 2,274, `AccessibilityController` 1,492, `CosmeticIndexPage` 827. The cosmetics
+UI closures are still alive long after the menu closed, matching session 6.
+
+Suggest: page skin records instead of holding ~16.7k at once; cap telemetry history (ring buffers, send and drop);
+release the cosmetic index cards on close.
+
+### Quality sweep (`ab_*.json`, label `quality`, field, 60 s windows)
+| Fixed level | GPU ms (vs Automatic) | Render CPU ms | Frame ms | FPS p50 |
+|---|---|---|---|---|
+| Automatic (baseline, 6 windows) | 8.0–11.3 | 6.8–8.1 | 8.4–11.1 | 91–120 |
+| 1 | 5.71 (−3.70) | 6.77 (−1.10) | 8.43 | 120 |
+| 3 | 4.88 (−3.83) | 6.25 (−1.04) | 8.50 | 120 |
+| 5 | 4.88 (−4.84) | 5.95 (−1.48) | 8.49 | 120 |
+| 7 | 5.29 (−5.21) | 5.92 (−1.79) | 8.54 | 120 |
+| 10 | 5.75 (−3.13) | 7.06 (−0.61) | 8.41 | 120 |
+
+- **Every fixed level from 1 to 10 hits the 120 FPS limit (8.4 ms frame) with the GPU at ~5–6 ms.** Automatic sits
+  4–5 ms higher and drops to 91–112 FPS. On this Mac, Automatic picks a level above 10 (the engine has 21 internal
+  levels), and that extra level is what costs the frames.
+- Levels 1–10 barely differ from each other here, and the primitive count did not change (~61k) at any level: on
+  this client the quality setting is not reducing what is drawn, only how it is shaded. The game's own content
+  (shadow casters, lights, the aurora) should scale with quality too. See the A/B results.
+- Levels above 10 were not tested. That would be the next step to find where Automatic lands.
+- Quality was restored to Automatic and the camera to Custom (checked).
+
+### Join (test 3, `join_*.json`), partial
+Rejoined through `roblox://placeId=…` with the client still open: the running process rejoined in place (same
+server, JobId 6f9973ee…, 4 players). The join script could only be injected 23.8 s after the join, by which point the
+player was already playable, so the stage times are bounded rather than measured.
+
+| Point | Since join | Received (cumulative) | Instances | Memory |
+|---|---|---|---|---|
+| Injection (already playable) | 23.8 s | **24.4 MB** | 134,660 | 3.56 GB* |
+| +30 s | 53.8 s | 25.5 MB (+35 KB/s) | 134,682 | 3.54 GB* |
+
+- **Joining downloads ~24 MB in the first ~24 s (~1 MB/s), then traffic drops to the normal ~35 KB/s.** Playable
+  in under 24 s on this connection.
+- *Memory carried over from the previous session in the same process, so it is not a fresh-join figure.
+- A precise stage timeline (time to character, first Snapshot, first grass chunk, playable) needs the script to run at
+  injection on a fresh launch. That means putting `perf_join.lua` in the executor's autoexec folder, which needs
+  the user's go-ahead.
+
 ## Monitor caveats
 - Byte counts are estimates of the Luau payload, not wire size. Roblox compresses.
 - `Stats.DataReceiveKbps` reads 0 on this client, so incoming bandwidth comes from the remote estimates.

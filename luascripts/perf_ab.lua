@@ -23,6 +23,7 @@ local opts = ...
 if type(opts) == "table" then
     CONFIG.MEASURE = tonumber(opts.measure) or CONFIG.MEASURE
     CONFIG.LABEL = opts.label and tostring(opts.label) or nil
+    CONFIG.MODE = opts.mode
 end
 
 if _G.CowPerfAB and _G.CowPerfAB.Stop then
@@ -34,6 +35,7 @@ local Lighting = game:GetService("Lighting")
 local HttpService = game:GetService("HttpService")
 local Stats = game:GetService("Stats")
 
+local VARIANTS
 local A = { running = true, saved = {}, results = {}, resets = 0, status = "starting" }
 
 ----------------------------------------------------------------------------------------------------
@@ -89,7 +91,7 @@ local function eachDescendant(root, class, fn)
     return n
 end
 
-local VARIANTS = {
+VARIANTS = {
     {
         name = "GlobalShadows off",
         apply = function()
@@ -141,6 +143,31 @@ local VARIANTS = {
         end,
     },
 }
+
+-- Quality sweep: opts.mode = "quality" replaces the variants with fixed graphics quality levels.
+-- QualityLevel is not an instance property, so it is saved and restored here rather than through save()/set().
+if CONFIG.MODE == "quality" then
+    local rendering = settings().Rendering
+    local original = rendering.QualityLevel
+    A.restoreQuality = function()
+        pcall(function() rendering.QualityLevel = original end)
+    end
+    VARIANTS = {}
+    for _, level in ipairs({ 1, 3, 5, 7, 10 }) do
+        local item = Enum.QualityLevel["Level" .. string.format("%02d", level)]
+        table.insert(VARIANTS, {
+            name = "Quality " .. level,
+            apply = function()
+                if rendering.QualityLevel ~= item then
+                    rendering.QualityLevel = item
+                    return 1
+                end
+                return 0
+            end,
+        })
+    end
+    A.originalQuality = original.Name
+end
 
 ----------------------------------------------------------------------------------------------------
 -- Measurement
@@ -211,6 +238,8 @@ local function measureWindow(name, apply)
         frameMs = summarize(frame),
         dtMs = summarize(dts),
         fps = summarize(fpsList),
+        primitives = stat("PrimitivesCount"),
+        instances = stat("InstanceCount"),
     }
 end
 
@@ -254,7 +283,7 @@ local function writeResults(final)
     local out = {
         final = final, placeId = game.PlaceId, jobId = game.JobId, startedAt = A.startedAt,
         position = A.position, viewport = A.viewport, quality = A.quality, resets = A.resets,
-        restore = A.restore, label = CONFIG.LABEL, measure = CONFIG.MEASURE, deltas = deltas, windows = windows,
+        restore = A.restore, originalQuality = A.originalQuality, label = CONFIG.LABEL, measure = CONFIG.MEASURE, deltas = deltas, windows = windows,
     }
     pcall(writefile, fileName, HttpService:JSONEncode(out))
 end
@@ -296,6 +325,7 @@ local function run()
             A.status = string.format("%d/%d %s", i, #VARIANTS, v.name)
             local result = measureWindow(v.name, v.apply)
             restoreAll()
+            if A.restoreQuality then A.restoreQuality() end
             if not result then break end
             table.insert(A.results, result)
             local base = measureWindow("baseline", nil)
@@ -308,6 +338,7 @@ local function run()
 
     if A.cameraConn then A.cameraConn:Disconnect() end
     local restored, failed = restoreAll()
+    if A.restoreQuality then A.restoreQuality() end
     pcall(function() camera.CameraType = A.cameraType or Enum.CameraType.Custom end)
     A.restore = { restored = restored, failed = failed, error = A.error }
     mark("run end")
