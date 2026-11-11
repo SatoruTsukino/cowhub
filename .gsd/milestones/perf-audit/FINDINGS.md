@@ -126,8 +126,7 @@ Stopped at t = 1732.
   fjord loads at the start of the run. It is not clear that cowhub caused them. Repeat with cowhub fully
   unloaded before blaming either side.
 - **Callback counts don't change when cowhub is turned off** (Heartbeat 150–156, RenderStepped 59–64 the whole
-  run). Either these are the game's own, or cowhub keeps its loops connected when its toggles are off. A capture in a
-  fresh server without cowhub loaded will tell which.
+  run). Session 3 and the connection probe show cowhub does not keep loops connected when toggled off (see below).
 
 ## Session 3: clean capture, cowhub never loaded (`perf_1794372688_d1883dd4.log`)
 
@@ -150,13 +149,18 @@ so it is render-bound at ~10 ms per frame (GPU 10–12 ms, render CPU 7–8 ms),
 - **Rafting hitches are the game's.** 1.2 per min clean. The 2.7 per min with cowhub came from big fjord loads,
   not from cowhub.
 - **cowhub's own cost, measured:**
-  - **+~50 Heartbeat connections** (104–109 clean vs 150–156). They stay connected when cowhub's toggles are off.
+  - ~~+~50 Heartbeat connections that stay connected when toggled off~~ **Disproved** (connection probe,
+    `cowhub/conn_probe.lua`, grouping `getconnections` by owning script). Clean 104 Heartbeat / 59 RenderStepped;
+    cowhub loaded, all toggles off: 105 / 59; features on: 110 / 63 (main loop L6413, raft L13001/L13013, chest ESP
+    L4460, + 4 from another loaded chunk, likely the UI library); features off: 108–109 / 62–63. The main loop and
+    raft loops disconnect. Chest ESP's Heartbeat stays only while `chestESP.show` is true (it calls `cleanup()` on
+    its first frame with `show` false), so it was still ticked. The 150–156 seen in session 2 did not come from
+    cowhub's toggled-off loops. Its source is unknown; that session ran 30+ min on a long-lived client.
   - **+~1.2 GB client memory** (3.2–3.5 GB clean vs 4.6–4.75 GB). Part of this may be session length (session 2 had
     run longer), but LuaHeap staying high suggests retained hub state.
   - `getfpscap()` read 60 in the cowhub sessions vs 240 clean. Check whether cowhub or a setting lowers it.
 
-  These matter for our own scripts, not for developer feedback. Follow-up for cowhub: disconnect loops when
-  their toggle is off.
+  These matter for our own scripts, not for developer feedback. No loop-lifecycle fix needed in cowhub.
 - **Memory over the clean run:** 3.29 → 3.58 GB in 19 min (field → fjord → field). It moves with the area loaded. Too short to call growth.
 - **Baseline client numbers for the dev report:** ~3.2–3.5 GB memory, 135k–147k instances in the field,
   ~670 instances created per second while grazing (`CowVirtualGrass`), GPU 10–12 ms average.
