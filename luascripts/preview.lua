@@ -1,4 +1,4 @@
--- Cow Hub [e895810] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [d55b5f1] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [e895810]",
+    Name = "Cow Hub [d55b5f1]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -518,8 +518,6 @@ local chomp = {
     -- Value-scan tie-break: far side-on nodes (dist >= 5.75, dot < 0.5) rejected 20.5% vs ~4% elsewhere (Plan 1.12)
     RISK_DIST = 5.75,
     RISK_DOT = 0.5,
-    skipRisky = false, -- A/B toggle: never send risky fallback bites (Plan 1.14)
-    riskySkips = 0,    -- risky fallback candidates dropped this session (logged on send)
     -- InvalidActorState breaker: this many in a row pauses sends for IAS_PAUSE s (215-reject streak, chomp_1794256657)
     IAS_STREAK = 3,
     IAS_PAUSE = 2,
@@ -1380,7 +1378,6 @@ function afkRelog.saveState()
             ChompManualDelay = chomp.manualDelay,
             OnlyMatureGrass = farm.onlyMatureGrass ~= false,
             ChompOnlyWhileMoving = farm.chompOnlyWhileMoving ~= false,
-            ChompSkipRisky = chomp.skipRisky == true,
         },
         Dodge = {
             Auto = dodge.auto == true,
@@ -1575,10 +1572,6 @@ function afkRelog.checkAndResumeState()
         if f.ChompOnlyWhileMoving ~= nil then
             farm.chompOnlyWhileMoving = f.ChompOnlyWhileMoving
             ui.setOption("Dropdown_ChompOptions", "Only While Moving", f.ChompOnlyWhileMoving)
-        end
-        if f.ChompSkipRisky ~= nil then
-            chomp.skipRisky = f.ChompSkipRisky == true
-            ui.setOption("Dropdown_ChompOptions", "Skip Risky Bites", chomp.skipRisky)
         end
 
         if f.AutoChomp then
@@ -2244,7 +2237,6 @@ function chomp.send(nodeId, node, now)
         chomp.log("send", {
             id = serial, node = tostring(nodeId), interval = interval, margin = chomp.margin,
             golden = golden, src = chomp.target.src, dist = chomp.target.dist, dot = chomp.target.dot, value = chomp.target.value,
-            skipRisky = chomp.skipRisky, riskySkips = chomp.riskySkips,
             speed = root and Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z).Magnitude or 0,
             lag = math.clamp(chomp.rtt * 0.5, 0.05, 0.3), rtt = chomp.rtt,
             avail = node and typeof(node) == "Instance" and node:GetAttribute("Available") or nil,
@@ -6154,11 +6146,6 @@ function farm.processGrassChomp(now, rootPos)
             end
             local ok, dist, dot = chomp.canTarget(inst, id, rootPos, now)
             if not ok then return false end
-            -- A/B (Plan 1.14): fallback far side-on nodes rejected ~21%; the game's prediction is exempt (3%)
-            if chomp.skipRisky and src ~= "pred" and dist >= chomp.RISK_DIST and dot < chomp.RISK_DOT then
-                chomp.riskySkips += 1
-                return false
-            end
             targetNodeId = id
             targetInstance = inst
             local t = chomp.target
@@ -6738,10 +6725,6 @@ do
         end },
         { label = "Only While Moving", default = true, fn = function(Value)
             farm.chompOnlyWhileMoving = Value
-        end },
-        { label = "Skip Risky Bites", default = false, fn = function(Value)
-            chomp.skipRisky = Value
-            chomp.log("skipRisky", { on = Value })
         end },
         { label = "Mature Grass Only", default = true, fn = function(Value)
             farm.onlyMatureGrass = Value
