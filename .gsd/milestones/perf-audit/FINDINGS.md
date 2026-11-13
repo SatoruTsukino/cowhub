@@ -485,6 +485,44 @@ phone, but it shows how the client behaves on a weaker CPU budget.
 - Memory is about half the Mac's, mostly from smaller textures, but the **Lua heap is the same ~550 MB**. Game
   state does not shrink on mobile, which matters on 3–4 GB phones.
 
+## Session 12: Fjord river stuck at the dock (Plan 3.1, not reproduced)
+
+Report: on some servers the raft stays at the dock and the fjord clearings show no trees or grass. Seen with cowhub
+loaded; it happened once in server `d30094f6`, the retry loaded, and two rejoins plus a client restart did not
+reproduce it. Probe: `luascripts/perf_river.lua` (`cowhub/perflogs/river_*.json`).
+
+How the river load works (client `RaftRiverLoader`, decompiled):
+1. Server sends `RaftRiverLoad` (~20 KB): `Box` 192×192×512 from the dock downstream, 237 `Required` river part ids,
+   237 `Regions`, 3 `Points`, `Serial`, `SessionId`, `Character`, later `Deck`.
+2. Client calls `RequestStreamAroundAsync(point, 5)` for each point, then `GetPartBoundsInBox(Box, Size)` and looks
+   for parts with attribute `CowRaftRiverPart` (ordinary streamed map parts: Map.Water, River Floor, docks, barn).
+3. It replies `RaftingRequest RiverReady { Loaded }` each second (`Step`), and the raft leaves only after
+   `Loaded=true`. If parts never stream in, it retries forever (`task.wait(1)`); there is no timeout, fallback or
+   message to the player.
+
+Successful load captured (cowhub on, 6 players, 4.0 GB client memory, StreamingEnabled, target radius 1024,
+min radius 64, `PauseOutsideLoadedArea`, `Opportunistic` stream-out):
+- 237 / 237 parts present when the first payload arrived; first reply `Loaded=false` only because `Deck` was not in
+  the payload yet; second payload (+3.2 s) with `Deck` → `Loaded=true` at once. Dock wait 3.5 s.
+- Server fjord state stayed `FjordContentState=Ready`, `FjordPreparationCompleted=22` (unchanged for 8.5 min).
+- Clearings stream with the player: 21–33 descendants each away from the fjord, 700–800 for Clearing_03–06 after
+  rafting.
+
+Reading: "stuck at dock + empty clearings" means the fjord area did not stream in on the client, so `Loaded` never
+became true. Server content was ready. Not yet known whether it follows memory pressure, cowhub, or the server.
+(`workspace.DistributedGameTime` counts from the client's join, so the earlier "22 h server" reading was wrong.)
+
+Suggestions for the devs:
+- Give the dock wait a timeout: after N seconds of `Loaded=false`, retry `RequestStreamAroundAsync` with a longer
+  timeout, then show "Loading the river…" and offer Leave instead of an endless wait.
+- Make the fjord river and clearings `Persistent` (or put the river parts in a persistent model) so they cannot be
+  streamed out, or call `RequestStreamAroundAsync` for every `Points` entry when the player enters the dock area,
+  before the raft starts.
+- Log `Loaded=false` sessions older than ~15 s on the server with the missing count, to find affected servers.
+
+To catch the next occurrence: put `perf_river.lua` in autoexec so every session records; the `pending` events list
+the missing ids, clearing counts and memory while stuck.
+
 ## Monitor caveats
 - Byte counts are estimates of the Luau payload, not wire size. Roblox compresses.
 - `Stats.DataReceiveKbps` reads 0 on this client, so incoming bandwidth comes from the remote estimates.
