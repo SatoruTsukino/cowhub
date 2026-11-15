@@ -1,4 +1,4 @@
--- Cow Hub [3bd46d1] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [abf6aaa] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [3bd46d1]",
+    Name = "Cow Hub [abf6aaa]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -154,7 +154,6 @@ local TeleportService = game:GetService("TeleportService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualUser = game:GetService("VirtualUser")
 local Lighting = game:GetService("Lighting")
-local ContentProvider = game:GetService("ContentProvider")
 local PathfindingService = game:GetService("PathfindingService")
 
 local successVIM, VirtualInput = pcall(function()
@@ -535,7 +534,7 @@ local chomp = {
     stats = { sent = 0, accepted = 0, rejected = 0, cooldownRejects = 0, reasons = {} },
     calories = { sessionGained = 0, startTime = 0, activeDuration = 0, lastTimestamp = 0, lastCalories = nil, ratePerHour = 0 },
     statConns = {},    -- golden probe: player attribute / leaderstats watchers (debug log only)
-    natural = { held = false, lastTap = 0, lastEngage = 0, notGrazingSince = nil, rearmAt = 0, lastGrazing = nil, lastGameResult = 0, input = nil, lastScan = -math.huge, engaged = false },
+    natural = { held = false, lastTap = 0, lastEngage = 0, notGrazingSince = nil, rearmAt = 0, lastGrazing = nil, lastGameResult = 0, input = nil, engaged = false },
 }
 
 -- Caravan raid (Plan 1.3). Declared early: the heartbeat, chomp.fire and the store teleport
@@ -624,13 +623,52 @@ cache = {
 }
 updateWallRaycastFilter()
 
+-- Bounded GC search for a private game table. filtergc (key-filtered, no full heap copy) when the
+-- executor has it, else one getgc(true) pass. Misses back off 5 s -> 120 s; a hit resets the backoff.
+-- state: any table (keeps gcNextAt / gcDelay); keys: keys the target must have; check(t) -> truthy on match
+local function gcFindTable(state, keys, check)
+    local now = os.clock()
+    if now < (state.gcNextAt or 0) then return nil end
+    local found, searched = nil, false
+    if type(filtergc) == "function" then
+        local ok, list = pcall(filtergc, "table", { Keys = keys }, false)
+        if ok and type(list) == "table" then
+            searched = true
+            for _, t in ipairs(list) do
+                if type(t) == "table" and check(t) then found = t break end
+            end
+        end
+    end
+    if not searched and type(getgc) == "function" then
+        local ok, objs = pcall(getgc, true)
+        if ok and type(objs) == "table" then
+            for _, t in ipairs(objs) do
+                if type(t) == "table" and check(t) then found = t break end
+            end
+        end
+        objs = nil
+    end
+    if found then
+        state.gcDelay, state.gcNextAt = nil, 0
+    else
+        state.gcDelay = math.min((state.gcDelay or 2.5) * 2, 120)
+        state.gcNextAt = now + state.gcDelay
+    end
+    return found
+end
+
 -- Cosmetic ownership shared by the Town Auction and Skin Auction: the game's live profile
 -- (UIController.Store) + CosmeticConfig.IsOwned / GetOwnedCount, as the Closet uses
 local cosmetics = {
     profileStore = nil,
-    profileScanAt = -math.huge,
     config = nil,
 }
+
+local function storeProfile(s)
+    local ok, state = pcall(function() return s:GetState() end)
+    if ok and type(state) == "table" and type(state.Profile) == "table" then return state.Profile end
+    return nil
+end
 
 function cosmetics.getProfile()
     local store = cosmetics.profileStore
@@ -639,22 +677,13 @@ function cosmetics.getProfile()
         if ok and type(state) == "table" and type(state.Profile) == "table" then return state.Profile end
         cosmetics.profileStore = nil
     end
-    local now = os.clock()
-    if type(getgc) ~= "function" or now - cosmetics.profileScanAt < 5 then return nil end
-    cosmetics.profileScanAt = now
-    local ok, objs = pcall(getgc, true)
-    if not ok or type(objs) ~= "table" then return nil end
-    for _, t in ipairs(objs) do
-        if type(t) == "table" and rawget(t, "Remotes") ~= nil and type(rawget(t, "Store")) == "table" then
-            local s = rawget(t, "Store")
-            local okState, state = pcall(function() return s:GetState() end)
-            if okState and type(state) == "table" and type(state.Profile) == "table" then
-                cosmetics.profileStore = s
-                return state.Profile
-            end
-        end
-    end
-    return nil
+    local owner = gcFindTable(cosmetics, { "Remotes", "Store" }, function(t)
+        local s = rawget(t, "Store")
+        return rawget(t, "Remotes") ~= nil and type(s) == "table" and storeProfile(s) ~= nil
+    end)
+    if not owner then return nil end
+    cosmetics.profileStore = rawget(owner, "Store")
+    return storeProfile(cosmetics.profileStore)
 end
 
 function cosmetics.getConfig()
@@ -793,8 +822,6 @@ local mapOptimizer = {
     disableParticles = true,
     optimizeTerrain = true,
     descendantConnection = nil,
-    preloaded = false,
-    lastPreloadTime = 0,
 }
 
 function mapOptimizer.optimizeInstance(inst)
@@ -896,26 +923,6 @@ function mapOptimizer.stopStreamHook()
         pcall(function() mapOptimizer.descendantConnection:Disconnect() end)
         mapOptimizer.descendantConnection = nil
     end
-end
-
-function mapOptimizer.preloadAssets()
-    local now = os.clock()
-    if now - mapOptimizer.lastPreloadTime < 8 then return end
-    mapOptimizer.lastPreloadTime = now
-
-    task.spawn(function()
-        local toPreload = {}
-        local pGui = plr and plr:FindFirstChildOfClass("PlayerGui")
-        if pGui then table.insert(toPreload, pGui) end
-
-        local cowGame = ReplicatedStorage:FindFirstChild("CowGame")
-        if cowGame then table.insert(toPreload, cowGame) end
-
-        pcall(function()
-            ContentProvider:PreloadAsync(toPreload)
-        end)
-        mapOptimizer.preloaded = true
-    end)
 end
 
 manatite = {
@@ -2315,18 +2322,14 @@ function chomp.findInput(now)
     local ctrl = n.input
     if ctrl and rawget(ctrl, "_grazeSources") ~= nil then return ctrl end
     n.input = nil
-    if type(getgc) ~= "function" or now - n.lastScan < 5 then return nil end
-    n.lastScan = now
-    local ok, objs = pcall(getgc, true)
-    if not ok or type(objs) ~= "table" then return nil end
-    for _, t in ipairs(objs) do
-        if type(t) == "table" and rawget(t, "_grazeSources") ~= nil and rawget(t, "_grazePressed") ~= nil then
-            n.input = t
-            chomp.log("natural", { act = "input_found" })
-            return t
-        end
+    local t = gcFindTable(n, { "_grazeSources", "_grazePressed" }, function(c)
+        return rawget(c, "_grazeSources") ~= nil and rawget(c, "_grazePressed") ~= nil
+    end)
+    if t then
+        n.input = t
+        chomp.log("natural", { act = "input_found" })
     end
-    return nil
+    return t
 end
 
 -- Returns grazing, source ("ctrl" | "attr" | "result" | "none")
@@ -4927,12 +4930,6 @@ function cache.sanitizeMemory(now)
         if mithril and mithril.cleanupBlacklist then
             mithril.cleanupBlacklist(now)
         end
-
-        pcall(function()
-            if collectgarbage then
-                collectgarbage("step", 500)
-            end
-        end)
     end
 end
 
@@ -14512,7 +14509,6 @@ do
             if Value then
                 mapOptimizer.applyToWorld()
                 mapOptimizer.startStreamHook()
-                mapOptimizer.preloadAssets()
                 if Window and Window.Notify then
                     Window:Notify({
                         Title = "Anti-Lag Optimizer Enabled",
@@ -14885,13 +14881,8 @@ do
 end
 
 -- ==========================
--- BOOT: Initialize 6-Hour AFK Timer, State Resume & Preloading
+-- BOOT: Initialize 6-Hour AFK Timer & State Resume
+-- (no asset preload: PreloadAsync on CowGame pulled every texture/mesh/sound into memory)
 -- ==========================
 afkRelog.startTimer()
 afkRelog.checkAndResumeState()
-task.spawn(function()
-    task.wait(1.5)
-    if mapOptimizer and mapOptimizer.preloadAssets then
-        mapOptimizer.preloadAssets()
-    end
-end)
