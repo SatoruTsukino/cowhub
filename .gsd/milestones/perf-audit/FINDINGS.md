@@ -533,3 +533,26 @@ the missing ids, clearing counts and memory while stuck.
 1. Idle in the main field with cowhub **off**, 10 min, to get a clean baseline.
 2. Caravan start → loot, with `Mark()`.
 3. A 30-min session for the memory growth trend.
+
+## Session 13: Plan 4.1 memory A/B (`memtest_runner.lua`, 2026-11-15)
+
+Four fresh clients, idle at spawn (run 4 farming), blank hub config, 600 s sample each. Medians of the last 300 s.
+Logs: `perf_1794772737_0c2f8804` (clean), `perf_1794773697_a5964667` (old idle), `perf_1794776542_f24ebc5d` (new idle),
+`perf_1794777588_693191d1` (new farm), with matching `heap_*.json`.
+
+| Run | Hub | Memory | LuaHeap | Gui | GraphicsMeshParts | Instances |
+|-----|-----|--------|---------|-----|-------------------|-----------|
+| clean | none | 2,739 MB | 480 | 74 | 16 | 129k |
+| old_idle | cowhub.lua @ e6f9674 | 2,778 MB | 475 | 83 | 39 | 134k |
+| new_idle | preview.lua @ abf6aaa | **2,734 MB** | 474 | 83 | 14 | 132k |
+| new_farm | preview.lua @ abf6aaa, Toggle_Farm | 2,863 MB | 531 | 87 | 19 | 138k |
+
+- **The hub at idle now costs nothing measurable** (new idle −5 MB vs clean). The boot `PreloadAsync` cost about
+  +25 MB mesh memory and ~+40 MB total. It was not the +1.2 GB seen in Session 2.
+- **Gui +9 MB** with either hub: the Rayfield window.
+- **Farm +129 MB vs idle is game content.** Heap diff (new idle → farm): growth is game tables (`array` +121k entries,
+  skin records `CreatedAt,CreatorName,…,UUID` +20k, `AppliedGrassRendering…` grass node state, `CFrame,Distance,Id,StableHash,TemplateId`)
+  and game controllers (`CowRig`, `CowGrowthVisual`, `GrassRenderController`). Hub-owned functions (`Opiumware`) stay flat: 3,048 → 3,168.
+  Memory crept 2,832 → 2,868 MB over 9 min while farming (field streaming). LuaHeap stayed in the 518–541 MB range.
+- **Session 2's +1.2 GB** came from the features in the saved config (rafting, chest ESP, mob aura, Trick or Treat)
+  and/or session length, not from loading the hub. To measure next if memory is still high: a run per feature with the runner.

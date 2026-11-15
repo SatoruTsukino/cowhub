@@ -45,3 +45,4 @@ fires a remote, moves the character or changes game state.
 - [x] Phase 2 / Plan 2.2: calibration (8), heap (9), quality sweep (7), join (3, autoexec timeline; in-place rejoin)
 - [x] Phase 2 / Plan 2.3: player count (4, partial: one server), events (5), MicroProfiler (10), BlueStacks mobile (11)
 - [~] Phase 3 / Plan 3.1: fjord river stuck at dock (probe built; success captured, failure not reproduced)
+- [x] Phase 4 / Plan 4.1: hub memory diet (boot preload removed, bounded getgc; Session 13 A/B)
