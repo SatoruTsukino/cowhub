@@ -141,3 +141,15 @@ CompanionConfig.Bait = {
   - Attributes: `ItemId` (string), `Scale` (number), `Palette` ("Natural" | "Sunlit" | "Moonlit").
   - Parented under `Workspace` (or drop containers).
 
+
+## Daily Rewards & Daily Quests (verified 2026-11-17)
+- Snapshot: `Remotes.GetSnapshot:InvokeServer()` → `DailyRewardOffer` (false | {CalendarDay, Claimed, Starter, Key}), `MooBucksReward`, `Profile.{DailyRewards, FishermanDailyQuest, RaftingDailyQuest, Materials, HasVisitedCaverns, FishermanQuestStage}`.
+- Daily gift: `CraftRequest:FireServer({Action="CollectDailyReward", CalendarDay, Claimed})` → ClientEvent `DailyRewardClaimResult {Ok, Code, Offer}`.
+- Large Cookie: `CraftRequest {Action="EatLargeCookie"}` / `"SaveLargeCookie"` (needs HasVisitedCaverns).
+- Moo Bucks 15-min rewards: server-side (`MooBucksRules.AdvanceTimed`), nothing to claim.
+- Fisherman daily (needs FishermanQuestStage=Completed): `FishermanQuestRequest:FireServer("DailyStatus"|"DailyAccept"|"DailyClaim", tostring(Day))` → ClientEvent `FishermanDailyQuestStatus {Quest}`. Available→Active (accept) → Ready (catch FishId ≥ TargetSize) → Claimed.
+- Sly Moon daily: `RaftingRequest:FireServer("DailyStatus"|"DailyAccept"|"DailyClaim", tostring(Day))` → `RaftingDailyStatus {Ok, Quest, Message}`. Accept/claim need cow beside Sly Moon (`Shared.SlyMoonSite.Model()`). Ready = open a Lv2-4 raft chest.
+- Reward boxes: `CraftRequest {Action="OpenFishermanBox"}` / `{Action="OpenSlyMoonBox"}` → `FishermanRewardBoxOpened` / `SlyMoonRewardBoxOpened`.
+- Furniture Store daily gift: server-handled ProximityPrompt `...TheHayloft.PorchAndGarden.FurnitureStoreDailyGift.Base.OpenChest` (CowTownService=FurnitureGift, hold 0.25, range 14). Reply ClientEvent `FurnitureGiftOpened {Ok, Day, Awards, WoodId, Message}`; gate `Profile.DailyRewards.LastFurnitureGiftDay < Day`. Scripted `fireproximityprompt` got no server reply in testing (prompt never reported PromptShown); a manual E press worked.
+- `GetSnapshot:InvokeServer()` can go unanswered (hung >8 min, 2026-11-18); read live state from UIController.Store (`cosmetics.profileStore`) instead.
+- Fisherman dock: `CowWorld.Geometry.FarmerHouses.FishermansForest_FishermansHouse.FishingRoute["07_FishingSpot"]` (-673, 700.5, 50).

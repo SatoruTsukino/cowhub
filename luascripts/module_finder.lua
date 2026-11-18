@@ -3,12 +3,16 @@
 -- then saves every loaded module whose source mentions a needle to cowhub/dumps/.
 -- Run after the world has loaded. Output: cowhub/dumps/module_finder_<time>.txt
 
+-- Phase 6.1 (dailies): quest claim payload, snapshot remote, daily offer / Moo Bucks shape
 local NEEDLES = {
-    "GrassRenderController.new",
-    "GrassRenderController",
-    "RequestRemote",
-    "Action =",
-    "ApplyGrassModifiers",
+    "GoalRequest",
+    "_requestSnapshot",
+    "DailyRewardOffer",
+    "MooBucksReward",
+    "QuestSubPage",
+    "ClaimGoal",
+    "ClaimQuest",
+    "DailyQuest",
 }
 local MAX_LINES_PER_FILE = 25
 
@@ -98,6 +102,19 @@ else
         elseif not getUpvalues then
             out("getupvalues unavailable: holder search skipped")
         end
+    end
+end
+
+-- ---------- Pass 1b: remote inventory ----------
+out("")
+out("== Remotes (CowGame.Remotes) ==")
+do
+    local cg = ReplicatedStorage:FindFirstChild("CowGame")
+    local rem = cg and cg:FindFirstChild("Remotes")
+    if rem then
+        for _, r in ipairs(rem:GetChildren()) do out("  %s [%s]", r.Name, r.ClassName) end
+    else
+        out("CowGame.Remotes not found")
     end
 end
 
