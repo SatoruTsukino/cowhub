@@ -1,4 +1,4 @@
--- Cow Hub [e035c26] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [a745021] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [e035c26]",
+    Name = "Cow Hub [a745021]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -11095,6 +11095,8 @@ function rafting.lootSingleSite(targetSite)
     if looted then
         rafting.lootedChestSites[targetSite.Id] = true
         rafting.visitedSites[targetSite.Id] = true
+        -- Dailies single-chest voyage: lets the owner end the run after this chest
+        if rafting.onChestLooted then pcall(rafting.onChestLooted, targetSite.Id) end
     end
     return looted
 end
@@ -11897,6 +11899,11 @@ function rafting.handleSnapshot(payload)
         end
 
         -- Log what is blocking steering if it goes quiet. The cause of a stall is otherwise invisible.
+        -- Steering idles on purpose while docked or looting; restart the quiet timer so undocking
+        -- isn't logged as a 10-30 s stall
+        if rafting.isLootingChest or rafting.isDockedState or rafting.status == "Docked" then
+            rafting.lastStepOkAt = os.clock()
+        end
         if rafting.enabled and not rafting.isLootingChest and not rafting.isCastingOff then
             local quiet = os.clock() - (rafting.lastStepOkAt or os.clock())
             if quiet > 1.5 and not rafting.stallLogged then
@@ -12765,15 +12772,45 @@ function rafting.startVoyage()
                 end
             end
 
-            -- Single debounced fallback after 5.0 seconds without moving
-            if (os.clock() - waitStart) > 5.0 then
+            -- Single debounced fallback after 5.0 seconds without moving. Aboard only: off the deck the server
+            -- answers "Join a raft first." / "Board the raft before setting sail." (18 in the logs)
+            if (os.clock() - waitStart) > 5.0 and currentDeck and isCowOnDeck(currentDeck) then
                 rafting.fireRemoteSafely("Sail", nil, 2.0)
                 rafting.fireRemoteSafely("Vote", nil, 2.0)
             end
 
             task.wait(1.5)
         end
+
+        -- Boarding watchdog: Start opens a muster session, but boarding needs the launch prompt. If the cow never
+        -- got aboard, the server holds the player on the raft team (pinned at the yard) until the muster is
+        -- cancelled; Return and Leave don't release it, Cancel does.
+        if rafting.enabled and not rafting.isSailing and not rafting.isEndingVoyageInProgress then
+            local reason = "Boarding failed: never got aboard"
+            local focusFn = isrbxactive or iswindowactive
+            local okF, active = pcall(function() return type(focusFn) == "function" and focusFn() end)
+            if okF and active == false then
+                reason = reason .. " (Roblox window unfocused: prompts can't fire)"
+            end
+            rafting.telemetryEvent("RaftBoardingFailed", { Deck = rafting.getRaftDeck() ~= nil })
+            rafting.releaseMuster()
+            rafting.statusText = reason
+            rafting.updateCards()
+            rafting.onSessionEnded(reason)
+        end
     end)
+end
+
+-- Leave a session that is still mustering (not sailing): only Cancel releases the raft team
+function rafting.releaseMuster()
+    local lp = Players.LocalPlayer
+    if lp and lp:GetAttribute("CowRaftingTeam") ~= nil and not rafting.isSailing then
+        rafting.fireRemoteSafely("Cancel", nil, 1.0)
+        local t0 = os.clock()
+        while lp:GetAttribute("CowRaftingTeam") ~= nil and os.clock() - t0 < 5 do task.wait(0.25) end
+        return lp:GetAttribute("CowRaftingTeam") == nil
+    end
+    return true
 end
 
 function rafting.onSessionEnded(reason)
@@ -12893,10 +12930,27 @@ function rafting.endVoyage()
     rafting.isSailing = false
     rafting.status = "Idle"
 
+    local mustering = not rafting.isSailing and Players.LocalPlayer:GetAttribute("CowRaftingTeam") ~= nil
     sendRaftKey(Enum.KeyCode.H, 0.25)
     triggerRaftingCommand("Return")
     task.wait(0.2)
     rafting.fireRemoteSafely("Return", nil, 1.0)
+    if mustering then
+        rafting.releaseMuster()
+    else
+        -- Mid-river with the cow off the raft, the server refuses Return ("All surviving crew must board first")
+        -- and the session stays open. Only then: back onto the deck and ask again.
+        task.spawn(function()
+            local lp = Players.LocalPlayer
+            task.wait(4)
+            if lp:GetAttribute("CowRaftingTeam") ~= nil and not isCowOnDeck(rafting.getRaftDeck()) then
+                rafting.telemetryEvent("RaftReturnReboard", {})
+                rafting.teleportToDeck()
+                task.wait(1.5)
+                rafting.fireRemoteSafely("Return", nil, 1.0)
+            end
+        end)
+    end
     -- No teleport here: the session is still open until the server ends it, and pulling the cow off a sailing
     -- raft was followed by a death and a respawn elsewhere. scheduleLoopRestart (via onSessionEnded) brings the
     -- cow back once the session has closed, and startVoyage teleports it to the launch if it is far away.
@@ -13213,15 +13267,15 @@ do
     RaftingTab:CreateSection({ Name = "Target Sites Selection by Level & River Bank" })
 
     RaftingTab:CreateDropdown({
-        Name = "Zone 1: Level 1 & 2 Sites (Upper Fjord - Reach 1)",
+        Name = "Zone 1: Level 1 Sites (Upper Fjord - Reach 1)",
         Options = {
             "[Left] Clearing 01 (Level 1, North Bank)",
-            "[Left] Cubby 01 Cave (Level 2, North Bank)",
+            "[Left] Cubby 01 Cave (Level 1, North Bank)",
             "[Right] Cubby 02 Cave (Level 1, South Bank)",
-            "[Right] Clearing 02 (Level 2, South Bank)"
+            "[Right] Clearing 02 (Level 1, South Bank)"
         },
         CurrentOption = {
-            "[Right] Clearing 02 (Level 2, South Bank)"
+            "[Right] Clearing 02 (Level 1, South Bank)"
         },
         MultipleOptions = true,
         Flag = "Dropdown_Rafting_Zone1",
@@ -13231,15 +13285,15 @@ do
     })
 
     RaftingTab:CreateDropdown({
-        Name = "Zone 2: Level 3 Sites (Mid-Fjord Canyon - Reach 3)",
+        Name = "Zone 2: Level 2 Sites (Mid-Fjord Canyon - Reach 3)",
         Options = {
-            "[Left] Clearing 03 (Level 3, North Bank)",
-            "[Center] Cubby 03 Cave (Level 3, Center/South Bank)",
-            "[Right] Clearing 04 (Level 3, South Bank)"
+            "[Left] Clearing 03 (Level 2, North Bank)",
+            "[Center] Cubby 03 Cave (Level 2, Center/South Bank)",
+            "[Right] Clearing 04 (Level 2, South Bank)"
         },
         CurrentOption = {
-            "[Left] Clearing 03 (Level 3, North Bank)",
-            "[Right] Clearing 04 (Level 3, South Bank)"
+            "[Left] Clearing 03 (Level 2, North Bank)",
+            "[Right] Clearing 04 (Level 2, South Bank)"
         },
         MultipleOptions = true,
         Flag = "Dropdown_Rafting_Zone2",
@@ -13249,19 +13303,19 @@ do
     })
 
     RaftingTab:CreateDropdown({
-        Name = "Zone 3: Level 4 Delta Sites (Lower Fjord - Reach 5)",
+        Name = "Zone 3: Level 3 Delta Sites (Lower Fjord - Reach 5)",
         Options = {
-            "[Far-Left] Clearing 05 (Level 4, North 1 Channel)",
-            "[Left] Cubby 04 Cave (Level 4, North 2 Channel)",
-            "[Mid-Left] Clearing 06 (Level 4, North-Center Channel)",
-            "[Mid-Right] Clearing 07 (Level 4, South-Center Channel)",
-            "[Far-Right] Clearing 08 (Level 4, South 1 Channel)"
+            "[Far-Left] Clearing 05 (Level 3, North 1 Channel)",
+            "[Left] Cubby 04 Cave (Level 3, North 2 Channel)",
+            "[Mid-Left] Clearing 06 (Level 3, North-Center Channel)",
+            "[Mid-Right] Clearing 07 (Level 3, South-Center Channel)",
+            "[Far-Right] Clearing 08 (Level 3, South 1 Channel)"
         },
         CurrentOption = {
-            "[Far-Left] Clearing 05 (Level 4, North 1 Channel)",
-            "[Mid-Left] Clearing 06 (Level 4, North-Center Channel)",
-            "[Mid-Right] Clearing 07 (Level 4, South-Center Channel)",
-            "[Far-Right] Clearing 08 (Level 4, South 1 Channel)"
+            "[Far-Left] Clearing 05 (Level 3, North 1 Channel)",
+            "[Mid-Left] Clearing 06 (Level 3, North-Center Channel)",
+            "[Mid-Right] Clearing 07 (Level 3, South-Center Channel)",
+            "[Far-Right] Clearing 08 (Level 3, South 1 Channel)"
         },
         MultipleOptions = true,
         Flag = "Dropdown_Rafting_Zone3",
@@ -14475,6 +14529,17 @@ do
                 townAuction.teleportToStore()
             end,
         })
+        row:CreateButton({
+            Name = "Teleport to Fisherman Dock",
+            Callback = function()
+                -- Dock end of the Fisherman's walking route; fixed fallback if the house hasn't streamed in
+                local ok, spot = pcall(function()
+                    return workspace.CowWorld.Geometry.FarmerHouses.FishermansForest_FishermansHouse.FishingRoute["07_FishingSpot"]
+                end)
+                local pos = ok and spot and spot.Position or Vector3.new(-673, 700.5, 50)
+                farm.teleportTo(CFrame.new(pos + Vector3.new(0, 3.5, 0), pos + Vector3.new(10, 3.5, 0)))
+            end,
+        })
     end
 
     TeleportsTab:CreateSection({ Name = "Fjord Rafting" })
@@ -14493,6 +14558,607 @@ do
             end,
         })
     end
+end
+
+-- ==========================
+-- DAILIES: queued daily gift, Large Cookie, Furniture Store gift chest, Fisherman / Sly Moon daily quests,
+-- quest reward boxes. While the queue has work, other automation is paused and restored afterwards.
+-- Wire shapes from decompiled client: UIController (CollectDailyReward), CraftingController
+-- (EatLargeCookie / OpenFishermanBox / OpenSlyMoonBox), FishermanQuestController and
+-- RaftingDialogueController (DailyStatus / DailyAccept / DailyClaim, Day as string).
+-- Moo Bucks 15-min rewards are granted server-side; nothing to claim.
+-- ==========================
+local dailies = {
+    enabled = false,
+    gift = true,
+    cookie = true,
+    cookieMode = "Eat",          -- "Eat" | "Save"
+    furniture = true,
+    fisherman = true,
+    slyMoon = true,
+    openBoxes = true,
+    fishUntilReady = true,
+    autoRaft = true,
+    fishOwned = false,           -- dailies switched auto-fish on
+    raftOwned = false,           -- dailies started the current voyage
+    raftStartedAt = 0,
+    raftChestDone = false,
+    raftAttempts = { day = -1, n = 0 },
+    furnitureTries = { day = -1, n = 0 },
+    MAX_RAFT_ATTEMPTS = 3,
+    RAFT_TIMEOUT = 900,
+    paused = nil,                -- list of toggle flags dailies switched off
+    interval = 60,
+    status = "Idle",
+    statusCard = nil,
+    QUEST_REMOTES = { Fisherman = "FishermanQuestRequest", SlyMoon = "RaftingRequest" },
+    BOXES = { FishermanRewardBox = "OpenFishermanBox", SlyMoonRewardBox = "OpenSlyMoonBox" },
+    TALK_RANGE = 8,
+    PAUSE_FILE = "DailiesPaused.json",
+    -- Sly Moon daily counts Lv2-4 chests (RaftingDailyRules MinLevel 2, MaxLevel 4). Levels are the server's
+    -- (TeamChestSnapshot Level): zone 1 = Lv1, zone 2 = Lv2, zone 3 = Lv3, zone 4 = Lv4
+    RAFT_SITES = {
+        Clearing_03 = true, Cave_Cubby03 = true, Clearing_04 = true,
+        Clearing_05 = true, Clearing_07 = true, Clearing_06 = true, Cave_Cubby04 = true, Clearing_08 = true,
+        Clearing_09 = true, Cave_11 = true, Clearing_10 = true, Cave_12 = true, Cave_Cubby05 = true,
+    },
+}
+
+-- Automation paused while the daily queue runs. Auto-dodge stays on: it is the safety net.
+dailies.PAUSABLE = {
+    { flag = "Toggle_CaravanAutofarm", on = function() return caravan.enabled == true end },
+    { flag = "Toggle_Rafting_AutoLoop", on = function() return rafting.autoLoop == true end },
+    { flag = "Toggle_Rafting_Enabled", on = function() return rafting.enabled == true end },
+    { flag = "Toggle_ManatiteFarm", on = function() return (manatite and manatite.auto) == true end },
+    { flag = "Toggle_MithrilFarm", on = function() return (mithril and mithril.auto) == true end },
+    { flag = "Toggle_MobAura", on = function() return farm.autoChompMobs == true end },
+    { flag = "Toggle_Chomp", on = function() return farm.autoChomp == true end },
+    { flag = "Toggle_Fish", on = function() return farm.autoFish == true end },
+    { flag = "Toggle_Farm", on = function() return farm.on == true end },
+}
+
+function dailies.setStatus(text)
+    dailies.status = text
+    if dailies.statusCard then
+        pcall(function()
+            if dailies.statusCard.SetTitle then
+                dailies.statusCard:Set(text)
+            else
+                dailies.statusCard:Set({ Title = "Dailies", Content = text })
+            end
+        end)
+    end
+end
+
+function dailies.setFlag(flag, on)
+    pcall(function() Window:Set(flag, on) end)
+end
+
+function dailies.pausePath()
+    return resolveCowHubPath(dailies.PAUSE_FILE)
+end
+
+function dailies.savePaused()
+    if not writefile then return end
+    pcall(writefile, dailies.pausePath(), HttpService:JSONEncode(dailies.paused or {}))
+end
+
+-- A rejoin mid-queue leaves the paused list on disk; pick it up so the farms still come back
+function dailies.loadPaused()
+    if dailies.paused or not (isfile and readfile) then return end
+    local path = dailies.pausePath()
+    local ok, data = pcall(function() return isfile(path) and HttpService:JSONDecode(readfile(path)) end)
+    if ok and type(data) == "table" and #data > 0 then dailies.paused = data end
+end
+
+function dailies.pauseOthers()
+    if dailies.paused then return end
+    local paused = {}
+    -- A voyage the user started is brought home first: pulling the cow off a sailing raft has killed it before
+    if rafting.enabled and not dailies.raftOwned and rafting.isSailing then
+        dailies.setStatus("Pausing: returning current voyage to dock")
+        pcall(rafting.endVoyage)
+    end
+    for _, p in ipairs(dailies.PAUSABLE) do
+        if p.on() and not (p.flag == "Toggle_Fish" and dailies.fishOwned) then
+            table.insert(paused, p.flag)
+            dailies.setFlag(p.flag, false)
+        end
+    end
+    if caravan.active then
+        dailies.setStatus("Pausing: waiting for caravan raid handback")
+        local t0 = os.clock()
+        while caravan.active and os.clock() - t0 < 90 do task.wait(1) end
+    end
+    dailies.paused = paused
+    dailies.homeCF = root and getRootCFrame(root) or nil
+    dailies.savePaused()
+end
+
+function dailies.resumeOthers()
+    if dailies.fishOwned then
+        dailies.fishOwned = false
+        dailies.setFlag("Toggle_Fish", false)
+    end
+    if not dailies.paused then return end
+    local list = dailies.paused
+    dailies.paused = nil
+    dailies.savePaused()
+    -- Back to where the cow was when the queue took over, so resumed farms pick up in place
+    if dailies.homeCF and root then
+        setRootCFrame(dailies.homeCF, root)
+        stopCharacterVelocity()
+        task.wait(0.3)
+    end
+    dailies.homeCF = nil
+    -- Reverse order: farm before its sub-toggles, rafting enabled before auto-loop
+    for i = #list, 1, -1 do dailies.setFlag(list[i], true) end
+    if #list > 0 then
+        safeNotify({ Title = "Dailies", Content = "Daily queue done. Resumed: " .. table.concat(list, ", "), Duration = 5 })
+    end
+end
+
+-- Daily state from the game's live client store (UIController.Store, shared with cosmetics). GetSnapshot is
+-- only a fallback: the server can leave it unanswered, which hung the whole queue.
+function dailies.snapshot()
+    if cosmetics.getProfile() and cosmetics.profileStore then
+        local ok, state = pcall(function() return cosmetics.profileStore:GetState() end)
+        if ok and type(state) == "table" and type(state.Profile) == "table" then
+            return { Profile = state.Profile, DailyRewardOffer = state.Runtime and state.Runtime.DailyRewardOffer }
+        end
+    end
+    local fn = cowRemotes:FindFirstChild("GetSnapshot")
+    if not fn then return nil end
+    local result
+    local thread = task.spawn(function()
+        local ok, snap = pcall(fn.InvokeServer, fn)
+        result = ok and type(snap) == "table" and snap or false
+    end)
+    local t0 = os.clock()
+    while result == nil and os.clock() - t0 < 6 do task.wait(0.2) end
+    if result == nil then pcall(task.cancel, thread) end
+    return result or nil
+end
+
+function dailies.fire(remoteName, ...)
+    local r = cowRemotes:FindFirstChild(remoteName)
+    if not r then return false end
+    return pcall(r.FireServer, r, ...)
+end
+
+function dailies.npcModel(questId)
+    local world = workspace:FindFirstChild("CowWorld")
+    if questId == "Fisherman" then
+        local dyn = world and world:FindFirstChild("Dynamic")
+        local npcs = dyn and dyn:FindFirstChild("AmbientNPCs")
+        return npcs and npcs:FindFirstChild("Fisherman")
+    end
+    local ok, model = pcall(function()
+        return require(ReplicatedStorage.CowGame.Shared.SlyMoonSite).Model()
+    end)
+    if ok and typeof(model) == "Instance" then return model end
+    local deco = world and world:FindFirstChild("Decorations")
+    local preview = deco and deco:FindFirstChild("RaftingPreview")
+    return preview and preview:FindFirstChild("SlyMoon")
+end
+
+-- Run fn standing beside pos, then return to where the cow was
+function dailies.atPos(pos, fn)
+    local r = root
+    if not (pos and r) then return false end
+    local here = getRootCFrame(r)
+    local far = here and (here.Position - pos).Magnitude > dailies.TALK_RANGE
+    if far then
+        setRootCFrame(CFrame.new(pos + Vector3.new(4, 2, 0), pos), r)
+        stopCharacterVelocity()
+        task.wait(0.6)
+    end
+    fn()
+    task.wait(1.2)
+    if far and here then
+        setRootCFrame(here, r)
+        stopCharacterVelocity()
+    end
+    return true
+end
+
+function dailies.atNpc(questId, fn)
+    local model = dailies.npcModel(questId)
+    return model and dailies.atPos(model:GetPivot().Position, fn) or false
+end
+
+function dailies.furnitureChest()
+    local ok, base = pcall(function()
+        return workspace.CowWorld.Geometry["Cow Town"].RoundaboutVillage.TheHayloft.PorchAndGarden.FurnitureStoreDailyGift.Base
+    end)
+    local prompt = ok and base and base:FindFirstChild("OpenChest")
+    return ok and base or nil, prompt
+end
+
+-- The chest's prompt is handled on the server; its reply is ClientEvent "FurnitureGiftOpened" {Ok, Day, Awards}.
+-- Scripted fireproximityprompt was not acted on in testing, so each method is tried until the server answers:
+-- fireproximityprompt, the prompt's own hold API, then a real E key press (what a player does).
+-- ProximityPrompts (raft launch, gift chest) never show while the Roblox window is unfocused, so
+-- neither scripted triggers nor key presses reach the server then
+function dailies.windowActive()
+    local fn = isrbxactive or iswindowactive
+    if type(fn) ~= "function" then return true end
+    local ok, active = pcall(fn)
+    return not ok or active ~= false
+end
+
+function dailies.openFurnitureChest(today)
+    local base, prompt = dailies.furnitureChest()
+    if not (base and prompt and prompt.Enabled) then return false end
+    if not dailies.windowActive() then
+        dailies.setStatus("Furniture chest: waiting for the Roblox window to be focused")
+        return false
+    end
+    if dailies.furnitureTries.day ~= today then dailies.furnitureTries = { day = today, n = 0 } end
+    if dailies.furnitureTries.n >= 3 then return false end
+    dailies.furnitureTries.n += 1
+    dailies.setStatus("Opening Furniture Store daily chest")
+
+    local reply
+    local ev = cowRemotes:FindFirstChild("ClientEvent")
+    local conn = ev and ev.OnClientEvent:Connect(function(name, data)
+        if name == "FurnitureGiftOpened" then reply = type(data) == "table" and data or {} end
+    end)
+    local function waitReply(sec)
+        local t0 = os.clock()
+        while not reply and os.clock() - t0 < sec do task.wait(0.2) end
+        return reply ~= nil
+    end
+    local hold = (prompt.HoldDuration or 0) + 0.15
+    local method
+    dailies.atPos(base.Position, function()
+        task.wait(0.8)
+        if fireproximityprompt then pcall(fireproximityprompt, prompt) end
+        if waitReply(3) then method = "fireproximityprompt" return end
+        pcall(function()
+            prompt:InputHoldBegin()
+            task.wait(hold)
+            prompt:InputHoldEnd()
+        end)
+        if waitReply(3) then method = "InputHold" return end
+        local r = root
+        if r then setRootCFrame(CFrame.new(r.Position, Vector3.new(base.Position.X, r.Position.Y, base.Position.Z)), r) end
+        sendRaftKey(Enum.KeyCode.E, hold)
+        if waitReply(3) then method = "E key" end
+    end)
+    if conn then conn:Disconnect() end
+    if reply and reply.Ok ~= false then
+        dailies.furnitureTries.n = 99
+        safeNotify({ Title = "Dailies", Content = "Furniture Store daily gift opened (" .. tostring(method) .. ").", Duration = 4 })
+        return true
+    end
+    dailies.setStatus("Furniture chest: no server reply" .. (reply and (" (" .. tostring(reply.Message or reply.Code) .. ")") or ""))
+    return false
+end
+
+function dailies.claimQuest(questId, quest)
+    local remote = dailies.QUEST_REMOTES[questId]
+    local day = tostring(quest.Day)
+    if quest.State == "Available" then
+        dailies.setStatus(questId .. " daily: accepting")
+        dailies.atNpc(questId, function() dailies.fire(remote, "DailyAccept", day) end)
+    elseif quest.State == "Ready" then
+        dailies.setStatus(questId .. " daily: claiming")
+        dailies.atNpc(questId, function() dailies.fire(remote, "DailyClaim", day) end)
+        safeNotify({ Title = "Dailies", Content = questId .. " daily quest claimed.", Duration = 4 })
+    end
+end
+
+function dailies.raftSiteSelected()
+    pcall(rafting.ensureDynamicSites)
+    for id in pairs(dailies.RAFT_SITES) do
+        local site = rafting.sitesById and rafting.sitesById[id]
+        if site and rafting.isSiteSelected(site) then return true end
+    end
+    return false
+end
+
+function dailies.raftAttemptsLeft(day)
+    if dailies.raftAttempts.day ~= day then dailies.raftAttempts = { day = day, n = 0 } end
+    return dailies.raftAttempts.n < dailies.MAX_RAFT_ATTEMPTS
+end
+
+-- Server session still open: snapshots keep coming while the raft exists. An owned voyage counts as live
+-- through the walk to the launch and boarding (no session snapshots yet), unless it already returned.
+dailies.BOARD_GRACE = 90
+function dailies.voyageLive()
+    if rafting.isSailing == true then return true end
+    if plr:GetAttribute("CowRaftingTeam") ~= nil then return true end
+    if rafting.lastSessionSnapAt ~= nil and os.clock() - rafting.lastSessionSnapAt < 6 then return true end
+    return dailies.raftOwned and not dailies.raftChestDone
+        and os.clock() - dailies.raftStartedAt < dailies.BOARD_GRACE
+end
+
+function dailies.stopOwnedVoyage(reason)
+    rafting.onChestLooted = nil
+    if dailies.voyageLive() then pcall(rafting.endVoyage) end
+    pcall(rafting.stopSteeringLoop)
+    rafting.enabled = false
+    dailies.raftOwned = false
+    if reason then dailies.setStatus("Sly Moon voyage: " .. reason) end
+end
+
+function dailies.startOwnedVoyage(day)
+    dailies.raftAttempts.n += 1
+    dailies.raftOwned = true
+    dailies.raftChestDone = false
+    dailies.raftStartedAt = os.clock()
+    rafting.autoLoop = false
+    -- One qualifying chest, then straight back to dock
+    rafting.onChestLooted = function(siteId)
+        if dailies.raftOwned and dailies.RAFT_SITES[siteId] and not dailies.raftChestDone then
+            dailies.raftChestDone = true
+            dailies.setStatus("Sly Moon voyage: chest at " .. siteId .. ", returning to dock")
+            task.spawn(rafting.endVoyage)
+        end
+    end
+    dailies.setStatus(string.format("Sly Moon voyage %d/%d: starting", dailies.raftAttempts.n, dailies.MAX_RAFT_ATTEMPTS))
+    task.spawn(rafting.startVoyage)
+end
+
+-- Returns true while a long activity (owned voyage / fishing) still has to run.
+-- One at a time: the voyage is short and bounded, so it goes first; fishing for the target size has no bound.
+function dailies.questActivity(profile, fq, rq)
+    if dailies.raftOwned then
+        local elapsed = os.clock() - dailies.raftStartedAt
+        if type(rq) == "table" and rq.State ~= "Active" then
+            if dailies.voyageLive() then return true end
+            dailies.stopOwnedVoyage("done")
+        elseif elapsed > dailies.RAFT_TIMEOUT then
+            dailies.stopOwnedVoyage("timed out")
+        elseif not dailies.voyageLive() then
+            dailies.stopOwnedVoyage("ended before a Lv2-4 chest")
+        else
+            return true
+        end
+    end
+
+    local wantRaft = dailies.slyMoon and dailies.autoRaft and type(rq) == "table" and rq.State == "Active"
+    if wantRaft and not dailies.windowActive() then
+        dailies.setStatus("Sly Moon voyage: waiting for the Roblox window to be focused")
+        wantRaft = false
+    end
+    if wantRaft and dailies.raftSiteSelected() and dailies.raftAttemptsLeft(rq.Day) then
+        if dailies.fishOwned then
+            dailies.fishOwned = false
+            dailies.setFlag("Toggle_Fish", false)
+        end
+        dailies.startOwnedVoyage(rq.Day)
+        return true
+    end
+
+    local fishing = dailies.fisherman and dailies.fishUntilReady and type(fq) == "table" and fq.State == "Active"
+    if fishing then
+        dailies.goFishingSpot()
+        if not farm.autoFish then
+            dailies.fishOwned = true
+            dailies.setFlag("Toggle_Fish", true)
+        end
+        dailies.setStatus(string.format("Fishing for daily: %s >= %.1f cm", tostring(fq.FishId), tonumber(fq.TargetSize) or 0))
+        return true
+    elseif dailies.fishOwned then
+        dailies.fishOwned = false
+        dailies.setFlag("Toggle_Fish", false)
+    end
+
+    if wantRaft then
+        dailies.setStatus(dailies.raftSiteSelected() and "Sly Moon daily: out of voyage attempts today"
+            or "Sly Moon daily: select a Lv2-4 site in Fjord Rafting")
+    end
+    return false
+end
+
+-- Auto-fish only casts within 50 studs of a spot; stand beside the nearest one if none is in range
+function dailies.goFishingSpot()
+    local r = root
+    local here = r and getRootPos(r)
+    if not here then return end
+    local best, bestD = nil, math.huge
+    for _, spot in ipairs(cache.getFishingSpots()) do
+        local pos = spot.Parent and cache.getSpotPosition(spot)
+        if pos then
+            local d = get2DDistanceSq(here, pos)
+            if d < bestD then best, bestD = pos, d end
+        end
+    end
+    if best and bestD > 40 * 40 then
+        setRootCFrame(CFrame.new(best + Vector3.new(0, 4, 8), best), r)
+        stopCharacterVelocity()
+    end
+end
+
+function dailies.boxesOwned(profile)
+    local mats = profile.Materials or {}
+    local n = 0
+    for boxId in pairs(dailies.BOXES) do n += tonumber(mats[boxId]) or 0 end
+    return n
+end
+
+-- Anything for the queue to do right now?
+function dailies.hasWork(snap, today)
+    local p = snap.Profile or {}
+    local dr = type(p.DailyRewards) == "table" and p.DailyRewards or {}
+    local fq, rq = p.FishermanDailyQuest, p.RaftingDailyQuest
+    local function quick(q) return type(q) == "table" and (q.State == "Available" or q.State == "Ready") end
+    if dailies.raftOwned or dailies.fishOwned then return true end
+    if dailies.gift and type(snap.DailyRewardOffer) == "table" and not snap.DailyRewardOffer.Starter then return true end
+    if dailies.cookie and dr.CookiePending then return true end
+    -- Prompt-driven steps only count while the window is focused, so an unfocused AFK client keeps farming
+    local focused = dailies.windowActive()
+    if focused and dailies.furniture and (tonumber(dr.LastFurnitureGiftDay) or today) < today
+        and not (dailies.furnitureTries.day == today and dailies.furnitureTries.n >= 3) then return true end
+    if dailies.fisherman and p.FishermanQuestStage == "Completed" then
+        if quick(fq) then return true end
+        if dailies.fishUntilReady and type(fq) == "table" and fq.State == "Active" then return true end
+    end
+    if dailies.slyMoon then
+        if quick(rq) then return true end
+        if focused and dailies.autoRaft and type(rq) == "table" and rq.State == "Active"
+            and dailies.raftAttemptsLeft(rq.Day) and dailies.raftSiteSelected() then return true end
+    end
+    if dailies.openBoxes and dailies.boxesOwned(p) > 0 then return true end
+    return false
+end
+
+function dailies.tick()
+    local snap = dailies.snapshot()
+    if not snap then dailies.setStatus("Snapshot unavailable") return end
+    local today = math.floor(workspace:GetServerTimeNow() / 86400)
+
+    if not dailies.hasWork(snap, today) then
+        dailies.resumeOthers()
+        local p = snap.Profile or {}
+        local fq, rq = p.FishermanDailyQuest, p.RaftingDailyQuest
+        dailies.setStatus(string.format("Queue idle | Fisherman %s | Sly Moon %s | %s",
+            type(fq) == "table" and fq.State or "?", type(rq) == "table" and rq.State or "?", os.date("%H:%M:%S")))
+        return
+    end
+    dailies.pauseOthers()
+    -- A voyage pause can take a moment; read fresh state before acting
+    if not dailies.raftOwned then snap = dailies.snapshot() or snap end
+    local profile = snap.Profile or {}
+    local dr = type(profile.DailyRewards) == "table" and profile.DailyRewards or {}
+    local fq, rq = profile.FishermanDailyQuest, profile.RaftingDailyQuest
+    local busyRaft = dailies.raftOwned and dailies.voyageLive()
+
+    -- Quick, stand-still steps (never while the owned raft is out)
+    if not busyRaft then
+        local offer = snap.DailyRewardOffer
+        if dailies.gift and type(offer) == "table" and not offer.Starter then
+            dailies.setStatus("Collecting daily gift")
+            dailies.fire("CraftRequest", { Action = "CollectDailyReward", CalendarDay = offer.CalendarDay, Claimed = offer.Claimed })
+            task.wait(1.5)
+        end
+        if dailies.cookie and dr.CookiePending then
+            local save = dailies.cookieMode == "Save" and profile.HasVisitedCaverns == true
+            dailies.fire("CraftRequest", { Action = save and "SaveLargeCookie" or "EatLargeCookie" })
+            task.wait(1.5)
+        end
+        if dailies.furniture and (tonumber(dr.LastFurnitureGiftDay) or today) < today then
+            dailies.openFurnitureChest(today)
+        end
+        if dailies.fisherman and profile.FishermanQuestStage == "Completed" and type(fq) == "table" then
+            dailies.claimQuest("Fisherman", fq)
+        end
+        if dailies.slyMoon and type(rq) == "table" then dailies.claimQuest("SlyMoon", rq) end
+        if dailies.openBoxes then
+            local mats = profile.Materials or {}
+            for boxId, action in pairs(dailies.BOXES) do
+                for _ = 1, math.min(tonumber(mats[boxId]) or 0, 10) do
+                    if not dailies.enabled then break end
+                    dailies.fire("CraftRequest", { Action = action })
+                    task.wait(2)
+                end
+            end
+        end
+    end
+
+    -- Long activities read fresh quest states (accepts above change them)
+    local fresh = dailies.snapshot()
+    local fp = fresh and fresh.Profile or profile
+    local busy = dailies.questActivity(fp, fp.FishermanDailyQuest, fp.RaftingDailyQuest)
+    if not busy and fresh and not dailies.hasWork(fresh, today) then
+        dailies.resumeOthers()
+        dailies.setStatus("Daily queue done | " .. os.date("%H:%M:%S"))
+    end
+end
+
+_G.CowHubDailies = dailies -- preview debug handle (executor-side tests)
+
+-- Token, not _G.CowHubLoaded: a re-run sets CowHubLoaded again, so only the token stops the old loop
+function dailies.alive(token)
+    return dailies.enabled and _G.CowHubLoaded and _G.CowHubDailiesToken == token
+end
+
+function dailies.start()
+    if dailies.running then return end
+    dailies.running = true
+    dailies.loadPaused()
+    local token = {}
+    _G.CowHubDailiesToken = token
+    task.spawn(function()
+        while dailies.alive(token) do
+            local ok, err = pcall(dailies.tick)
+            if not ok then dailies.setStatus("Error: " .. tostring(err)) end
+            -- Poll faster while an activity runs so the voyage / fishing stop promptly
+            local wait = (dailies.raftOwned or dailies.fishOwned) and 10 or dailies.interval
+            local t = 0
+            while t < wait and dailies.alive(token) do
+                t += task.wait(1)
+            end
+        end
+        if _G.CowHubDailiesToken == token then
+            if dailies.raftOwned then pcall(dailies.stopOwnedVoyage, "stopped") end
+            pcall(dailies.resumeOthers)
+        end
+        dailies.running = false
+    end)
+end
+
+-- ==========================
+-- UI SETUP: Dailies Tab
+-- ==========================
+do
+    local DailiesTab = Window:CreateTab({ Name = "Dailies", Icon = 4483362458 })
+
+    DailiesTab:CreateSection({ Name = "Daily Rewards & Quests" })
+
+    if DailiesTab.CreateText then
+        pcall(function() dailies.statusCard = DailiesTab:CreateText({ name = "Dailies", text = dailies.status }) end)
+    end
+    if not dailies.statusCard and DailiesTab.CreateParagraph then
+        pcall(function() dailies.statusCard = DailiesTab:CreateParagraph({ Title = "Dailies", Content = dailies.status }) end)
+    end
+
+    DailiesTab:CreateToggle({
+        Name = "Auto Dailies (pauses other farms until done)",
+        CurrentValue = false,
+        Flag = "Toggle_Dailies",
+        Callback = function(Value)
+            dailies.enabled = Value
+            if Value then dailies.start() else dailies.setStatus("Idle") end
+        end,
+    })
+
+    ui.optionDropdown(DailiesTab, "Daily Queue", "Dropdown_DailiesQueue", {
+        { label = "Daily Gift", default = true, fn = function(Value) dailies.gift = Value end },
+        { label = "Large Cookie", default = true, fn = function(Value) dailies.cookie = Value end },
+        { label = "Furniture Store Chest", default = true, fn = function(Value) dailies.furniture = Value end },
+        { label = "Fisherman Daily", default = true, fn = function(Value) dailies.fisherman = Value end },
+        { label = "Auto-Fish Until Fisherman Ready", default = true, fn = function(Value) dailies.fishUntilReady = Value end },
+        { label = "Sly Moon Daily", default = true, fn = function(Value) dailies.slyMoon = Value end },
+        { label = "Auto-Raft Sly Moon Daily", default = true, fn = function(Value) dailies.autoRaft = Value end },
+        { label = "Open Quest Boxes", default = true, fn = function(Value) dailies.openBoxes = Value end },
+    })
+
+    DailiesTab:CreateDropdown({
+        Name = "Large Cookie",
+        Options = { "Eat", "Save" },
+        CurrentOption = { "Eat" },
+        MultipleOptions = false,
+        Flag = "Dropdown_DailiesCookie",
+        Callback = function(Options)
+            dailies.cookieMode = (type(Options) == "table" and Options[1]) or Options or "Eat"
+        end,
+    })
+
+    DailiesTab:CreateButton({
+        Name = "Run Once Now",
+        Callback = function()
+            task.spawn(function()
+                local was = dailies.enabled
+                dailies.enabled = true
+                local ok, err = pcall(dailies.tick)
+                dailies.enabled = was
+                if not ok then dailies.setStatus("Error: " .. tostring(err)) end
+            end)
+        end,
+    })
 end
 
 -- ==========================
