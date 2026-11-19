@@ -1,4 +1,4 @@
--- Cow Hub [84bced0] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [c911953] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [84bced0]",
+    Name = "Cow Hub [c911953]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -6574,8 +6574,8 @@ end
 -- ==========================
 -- UI SETUP: Main Farming Tab
 -- ==========================
+local MainTab = Window:CreateTab({ Name = "Autofarm", Icon = 4483362458 })
 do
-    local MainTab = Window:CreateTab({ Name = "Autofarm", Icon = 4483362458 })
 
     MainTab:CreateSection({ Name = "Main Toggles" })
 
@@ -15156,6 +15156,492 @@ do
                 dailies.enabled = was
                 if not ok then dailies.setStatus("Error: " .. tostring(err)) end
             end)
+        end,
+    })
+end
+
+-- ==========================
+-- NORTH RIVER BAKEHOUSE (Auto Bread Maker)
+-- ==========================
+-- Automates dough mixing, kneading, and baking at CowWorld.Decorations.NorthRiverOutfitters["North River Bakehouse"].
+-- Wire protocol from BakehouseController: ProximityPrompt "FieldRaidMixingTable" opens a session via
+-- ClientEvent("FieldRaid", {Kind="Bakehouse", Stage="Choose", Token, Step=0, Stock}).
+-- Actions sent via FieldRaidRequest:FireServer("Bakehouse", {Token, Action, Step, Recipe}):
+--   Stage "Choose" -> Action "Mix"   -> Stage "Knead" (Step 0)
+--   Stage "Knead"  -> Action "Knead" -> Stage "Knead" (Step 1..2) -> Stage "Ready" (Step 3)
+--   Stage "Ready"  -> Action "Bake"  -> Stage "Done"  (consumes grain, grants 1 bread brick)
+--   Stage "Done"   -> Action "Again" -> Stage "Choose" (new Token) or Action "Close" when finished.
+-- ==========================
+local bake = {
+    enabled = false,
+    running = false,
+    recipe = "Hardtack",
+    mode = "Maximum",            -- "Custom" | "Maximum"
+    customAmount = 1,
+    bakedCount = 0,
+    status = "Idle",
+    statusCard = nil,
+    recipeDropdown = nil,
+    stock = nil,                 -- latest { WheatGrain, BarleyGrain, OatGrain, RyeGrain }
+    packet = nil,                -- latest Bakehouse packet from ClientEvent
+    packetSeq = 0,
+    config = nil,
+    order = { "Hardtack", "OatZwieback", "Pumpernickel" },
+    recipes = {
+        Hardtack = { Name = "Hardtack", Ingredients = { WheatGrain = 4, BarleyGrain = 2 } },
+        OatZwieback = { Name = "Oat Zwieback", Ingredients = { WheatGrain = 3, OatGrain = 3 } },
+        Pumpernickel = { Name = "Pumpernickel", Ingredients = { RyeGrain = 5, BarleyGrain = 1 } },
+    },
+    grainNames = { WheatGrain = "Wheat", BarleyGrain = "Barley", OatGrain = "Oats", RyeGrain = "Rye" },
+    grainOrder = { "WheatGrain", "BarleyGrain", "OatGrain", "RyeGrain" },
+    kneadsPerLoaf = 3,
+    labelToId = {},
+}
+
+function bake.loadConfig()
+    if bake.config then return end
+    local ok, cfg = pcall(function()
+        return require(ReplicatedStorage.CowGame.Shared.CraftingConfig)
+    end)
+    if ok and type(cfg) == "table" then
+        bake.config = cfg
+        if type(cfg.BreadOrder) == "table" and #cfg.BreadOrder > 0 then bake.order = cfg.BreadOrder end
+        if type(cfg.Breads) == "table" then bake.recipes = cfg.Breads end
+        if type(cfg.RaidGrains) == "table" then bake.grainNames = cfg.RaidGrains end
+        if type(cfg.RaidGrainOrder) == "table" then bake.grainOrder = cfg.RaidGrainOrder end
+        if type(cfg.KneadsPerLoaf) == "number" then bake.kneadsPerLoaf = cfg.KneadsPerLoaf end
+    end
+    if not bake.recipes[bake.recipe] and bake.order[1] then
+        bake.recipe = bake.order[1]
+    end
+end
+
+function bake.getStock()
+    if type(bake.stock) == "table" then return bake.stock end
+    local snap = dailies.snapshot()
+    local p = snap and snap.Profile
+    if type(p) == "table" then
+        local g = (type(p.FieldRaid) == "table" and p.FieldRaid.Grains) or p.RaidGrains or p.Grains or p.Materials
+        if type(g) == "table" then
+            for _, k in ipairs(bake.grainOrder) do
+                if type(g[k]) == "number" then return g end
+            end
+        end
+    end
+    return nil
+end
+
+function bake.affordable(recipeId, stock)
+    stock = stock or bake.getStock()
+    local def = bake.recipes[recipeId]
+    if not (def and type(def.Ingredients) == "table") then return 0 end
+    if type(stock) ~= "table" then return nil end
+    local maxCount = math.huge
+    for grain, needed in pairs(def.Ingredients) do
+        if type(needed) == "number" and needed > 0 then
+            local owned = tonumber(stock[grain]) or 0
+            local can = math.floor(owned / needed)
+            if can < maxCount then maxCount = can end
+        end
+    end
+    return maxCount == math.huge and 0 or maxCount
+end
+
+function bake.recipeCostText(recipeId)
+    local def = bake.recipes[recipeId]
+    if not (def and type(def.Ingredients) == "table") then return "" end
+    local parts = {}
+    for _, grain in ipairs(bake.grainOrder) do
+        local n = def.Ingredients[grain]
+        if type(n) == "number" and n > 0 then
+            table.insert(parts, string.format("%d %s", n, bake.grainNames[grain] or grain))
+        end
+    end
+    return table.concat(parts, " + ")
+end
+
+function bake.optionLabel(recipeId, stock)
+    local def = bake.recipes[recipeId]
+    local name = (def and def.Name) or recipeId
+    local can = bake.affordable(recipeId, stock)
+    if can ~= nil then
+        return string.format("%s (%d makeable)", name, can)
+    end
+    local cost = bake.recipeCostText(recipeId)
+    return cost ~= "" and string.format("%s (%s)", name, cost) or name
+end
+
+function bake.buildOptions(stock)
+    bake.loadConfig()
+    local opts = {}
+    local currentLabel
+    for _, id in ipairs(bake.order) do
+        local def = bake.recipes[id]
+        local name = (def and def.Name) or id
+        local label = bake.optionLabel(id, stock)
+        bake.labelToId[label] = id
+        bake.labelToId[name] = id
+        bake.labelToId[id] = id
+        table.insert(opts, label)
+        if id == bake.recipe then currentLabel = label end
+    end
+    return opts, currentLabel or opts[1]
+end
+
+function bake.parseRecipeOption(opt)
+    local raw = type(opt) == "table" and opt[1] or opt
+    if type(raw) ~= "string" then return bake.recipe end
+    if bake.labelToId[raw] then return bake.labelToId[raw] end
+    for _, id in ipairs(bake.order) do
+        local def = bake.recipes[id]
+        local name = (def and def.Name) or id
+        if raw:sub(1, #name) == name or raw:find(id, 1, true) then
+            return id
+        end
+    end
+    return bake.recipe
+end
+
+function bake.stockSummary(stock)
+    stock = stock or bake.getStock()
+    if type(stock) ~= "table" then return "Stock: open oven once to read grain" end
+    local parts = {}
+    for _, id in ipairs(bake.order) do
+        local def = bake.recipes[id]
+        local name = (def and def.Name) or id
+        local can = bake.affordable(id, stock) or 0
+        table.insert(parts, string.format("%s: %d", name, can))
+    end
+    local grains = {}
+    for _, g in ipairs(bake.grainOrder) do
+        table.insert(grains, string.format("%s %d", bake.grainNames[g] or g, tonumber(stock[g]) or 0))
+    end
+    return "Makeable: " .. table.concat(parts, " | ") .. "\nGrains: " .. table.concat(grains, " · ")
+end
+
+function bake.setStatus(text)
+    bake.status = text
+    if bake.statusCard then
+        local full = text .. "\n" .. bake.stockSummary()
+        pcall(function()
+            if bake.statusCard.SetTitle then
+                bake.statusCard:SetTitle("Auto Bakehouse")
+                bake.statusCard:Set(full)
+            else
+                bake.statusCard:Set({ Title = "Auto Bakehouse", Content = full })
+            end
+        end)
+    end
+end
+
+function bake.station()
+    local ok, model = pcall(function()
+        return workspace.CowWorld.Decorations.NorthRiverOutfitters["North River Bakehouse"]
+    end)
+    if not (ok and model) then return nil, nil, nil end
+    local tablePart = model:FindFirstChild("MixingTable")
+    local prompt = (tablePart and tablePart:FindFirstChild("FieldRaidMixingTable"))
+        or model:FindFirstChildWhichIsA("ProximityPrompt", true)
+    return model, tablePart, prompt
+end
+
+function bake.send(action, pkt)
+    pkt = pkt or bake.packet
+    if not (pkt and pkt.Token) then return false end
+    return dailies.fire("FieldRaidRequest", "Bakehouse", {
+        Token = pkt.Token,
+        Action = action,
+        Step = pkt.Step or 0,
+        Recipe = bake.recipe,
+    })
+end
+
+function bake.alive(token)
+    return bake.enabled and _G.CowHubLoaded and _G.CowHubBakeToken == token
+end
+
+function bake.openSession(token, tablePart, prompt)
+    -- If a Bakehouse Choose session is already open at this station, reuse it
+    if bake.packet and bake.packet.Stage == "Choose" and bake.packet.Token then
+        return bake.packet
+    end
+    local startSeq = bake.packetSeq
+    local function waitChoose(sec)
+        local t0 = os.clock()
+        while os.clock() - t0 < sec and bake.alive(token) do
+            if bake.packetSeq > startSeq and bake.packet and bake.packet.Stage ~= "Closed" then
+                return bake.packet
+            end
+            task.wait(0.1)
+        end
+        return nil
+    end
+
+    local hold = ((prompt and prompt.HoldDuration) or 0.12) + 0.15
+    if prompt and fireproximityprompt then
+        pcall(fireproximityprompt, prompt)
+        local p = waitChoose(2.5)
+        if p then return p end
+    end
+    if prompt then
+        pcall(function()
+            prompt:InputHoldBegin()
+            task.wait(hold)
+            prompt:InputHoldEnd()
+        end)
+        local p = waitChoose(2.5)
+        if p then return p end
+    end
+    if dailies.windowActive() then
+        local r = root
+        if r and tablePart then
+            setRootCFrame(CFrame.new(r.Position, Vector3.new(tablePart.Position.X, r.Position.Y, tablePart.Position.Z)), r)
+        end
+        sendRaftKey(Enum.KeyCode.E, hold)
+        local p = waitChoose(2.5)
+        if p then return p end
+    end
+    return nil
+end
+
+function bake.waitPacket(token, prevSeq, checkFn, timeout)
+    local t0 = os.clock()
+    while os.clock() - t0 < (timeout or 5) and bake.alive(token) do
+        if bake.packetSeq > prevSeq and bake.packet then
+            if bake.packet.Message or bake.packet.Stage == "Closed" or checkFn(bake.packet) then
+                return bake.packet
+            end
+        end
+        task.wait(0.05)
+    end
+    return nil
+end
+
+function bake.run(token)
+    bake.loadConfig()
+    local model, tablePart, prompt = bake.station()
+    if not (model and tablePart and prompt) then
+        bake.setStatus("Bakehouse not streamed in; teleporting to North River Bakehouse")
+        local r = root
+        if r then
+            setRootCFrame(CFrame.new(Vector3.new(-318.3, 706.5, -198.6), Vector3.new(-318.3, 704.6, -202.6)), r)
+            stopCharacterVelocity()
+            task.wait(1.5)
+        end
+        model, tablePart, prompt = bake.station()
+        if not (model and tablePart and prompt) then
+            bake.setStatus("Stopped: North River Bakehouse not found")
+            return
+        end
+    end
+
+    dailies.pauseOthers()
+    local stopReason = "Stopped"
+    local ev = cowRemotes:FindFirstChild("ClientEvent")
+    local conn = ev and ev.OnClientEvent:Connect(function(name, data)
+        if name == "FieldRaid" and type(data) == "table" and data.Kind == "Bakehouse" then
+            bake.packet = data
+            bake.packetSeq += 1
+            if type(data.Stock) == "table" then
+                bake.stock = data.Stock
+                if bake.recipeDropdown and bake.recipeDropdown.Refresh then
+                    local opts, cur = bake.buildOptions(data.Stock)
+                    pcall(function() bake.recipeDropdown:Refresh(opts, cur) end)
+                end
+            end
+        end
+    end)
+
+    local targetPos = tablePart.Position
+    dailies.atPos(targetPos, function()
+        task.wait(0.4)
+        bake.setStatus("Opening Mixing Table...")
+        local pkt = bake.openSession(token, tablePart, prompt)
+        if not pkt then
+            stopReason = dailies.windowActive() and "No reply from Mixing Table prompt" or "Focus the Roblox window to trigger Mixing Table prompt"
+            return
+        end
+
+        local target
+        if bake.mode == "Maximum" then
+            target = bake.affordable(bake.recipe, pkt.Stock) or 0
+        else
+            target = math.max(1, math.floor(tonumber(bake.customAmount) or 1))
+        end
+
+        local def = bake.recipes[bake.recipe]
+        local breadName = (def and def.Name) or bake.recipe
+        if target <= 0 then
+            stopReason = "Not enough grain for " .. breadName
+            return
+        end
+
+        bake.bakedCount = 0
+        while bake.alive(token) and bake.bakedCount < target do
+            local canNow = bake.affordable(bake.recipe, pkt.Stock)
+            if canNow ~= nil and canNow <= 0 then
+                stopReason = string.format("Out of grain after %d / %d %s", bake.bakedCount, target, breadName)
+                break
+            end
+
+            -- 1. Choose -> Mix
+            if pkt.Stage == "Choose" then
+                bake.setStatus(string.format("Mixing %s (%d / %d)", breadName, bake.bakedCount + 1, target))
+                local seq = bake.packetSeq
+                bake.send("Mix", pkt)
+                pkt = bake.waitPacket(token, seq, function(p) return p.Stage == "Knead" or p.Stage == "Ready" end, 5)
+                if not pkt then stopReason = "Timed out on Mix" break end
+                if pkt.Message then stopReason = pkt.Message break end
+                if pkt.Stage == "Closed" then stopReason = "Bakehouse closed" break end
+            end
+
+            -- 2. Knead x3 -> Ready
+            while bake.alive(token) and pkt and pkt.Stage == "Knead" do
+                local curStep = tonumber(pkt.Step) or 0
+                bake.setStatus(string.format("Kneading %s (%d/%d) · loaf %d/%d",
+                    breadName, curStep + 1, bake.kneadsPerLoaf, bake.bakedCount + 1, target))
+                local seq = bake.packetSeq
+                bake.send("Knead", pkt)
+                pkt = bake.waitPacket(token, seq, function(p)
+                    return p.Stage == "Ready" or (p.Stage == "Knead" and (tonumber(p.Step) or 0) > curStep)
+                end, 5)
+                if not pkt then stopReason = "Timed out on Knead" break end
+                if pkt.Message then stopReason = pkt.Message break end
+                if pkt.Stage == "Closed" then stopReason = "Bakehouse closed" break end
+            end
+            if not (pkt and pkt.Stage == "Ready") then break end
+
+            -- 3. Ready -> Bake -> Done
+            bake.setStatus(string.format("Baking %s (%d / %d)", breadName, bake.bakedCount + 1, target))
+            do
+                local seq = bake.packetSeq
+                bake.send("Bake", pkt)
+                pkt = bake.waitPacket(token, seq, function(p) return p.Stage == "Done" end, 5)
+                if not pkt then stopReason = "Timed out on Bake" break end
+                if pkt.Message then stopReason = pkt.Message break end
+                if pkt.Stage == "Closed" then stopReason = "Bakehouse closed" break end
+            end
+
+            bake.bakedCount += 1
+            bake.setStatus(string.format("Baked %d / %d %s", bake.bakedCount, target, breadName))
+
+            if bake.bakedCount >= target or not bake.alive(token) then
+                stopReason = string.format("Done: baked %d %s", bake.bakedCount, breadName)
+                break
+            end
+
+            -- 4. Done -> Again -> Choose
+            do
+                local seq = bake.packetSeq
+                bake.send("Again", pkt)
+                pkt = bake.waitPacket(token, seq, function(p) return p.Stage == "Choose" end, 5)
+                if not pkt then stopReason = "Timed out on Again" break end
+                if pkt.Message then stopReason = pkt.Message break end
+                if pkt.Stage == "Closed" then stopReason = "Bakehouse closed" break end
+            end
+        end
+
+        if bake.packet and bake.packet.Token and bake.packet.Stage ~= "Closed" then
+            pcall(bake.send, "Close", bake.packet)
+        end
+    end)
+
+    if conn then conn:Disconnect() end
+    pcall(dailies.resumeOthers)
+    bake.setStatus(stopReason)
+    safeNotify({ Title = "Auto Bakehouse", Content = stopReason, Duration = 4 })
+end
+
+function bake.start()
+    if bake.running then return end
+    bake.running = true
+    local token = {}
+    _G.CowHubBakeToken = token
+    task.spawn(function()
+        local ok, err = pcall(bake.run, token)
+        if not ok then
+            bake.setStatus("Error: " .. tostring(err))
+        end
+        bake.running = false
+        if bake.enabled then
+            bake.enabled = false
+            dailies.setFlag("Toggle_AutoBake", false)
+        end
+    end)
+end
+
+_G.CowHubBake = bake
+
+-- ==========================
+-- UI SETUP: Autofarm -> North River Bakehouse Section
+-- ==========================
+do
+    MainTab:CreateSection({ Name = "North River Bakehouse (Auto Bread Maker)" })
+
+    if MainTab.CreateText then
+        pcall(function() bake.statusCard = MainTab:CreateText({ name = "Auto Bakehouse", text = bake.status }) end)
+    end
+    if not bake.statusCard and MainTab.CreateParagraph then
+        pcall(function() bake.statusCard = MainTab:CreateParagraph({ Title = "Auto Bakehouse", Content = bake.status }) end)
+    end
+    bake.setStatus("Idle")
+
+    local initialOptions, initialChoice = bake.buildOptions()
+    bake.recipeDropdown = MainTab:CreateDropdown({
+        Name = "Bread Recipe",
+        Options = initialOptions,
+        CurrentOption = { initialChoice },
+        MultipleOptions = false,
+        Flag = "Dropdown_BakeRecipe",
+        Callback = function(Option)
+            bake.recipe = bake.parseRecipeOption(Option)
+            local def = bake.recipes[bake.recipe]
+            bake.setStatus("Selected: " .. ((def and def.Name) or bake.recipe))
+        end,
+    })
+
+    MainTab:CreateDropdown({
+        Name = "Crafting Mode",
+        Options = { "Custom", "Maximum" },
+        CurrentOption = { "Maximum" },
+        MultipleOptions = false,
+        Flag = "Dropdown_BakeMode",
+        Callback = function(Option)
+            local chosen = type(Option) == "table" and Option[1] or Option
+            bake.mode = chosen == "Custom" and "Custom" or "Maximum"
+            bake.setStatus(string.format("Mode: %s", bake.mode == "Custom" and ("Custom (" .. tostring(bake.customAmount) .. ")") or "Maximum"))
+        end,
+    })
+
+    MainTab:CreateInput({
+        Name = "Custom Amount",
+        Placeholder = "Enter loaves to bake (default 1)",
+        RemoveTextAfterFocusLost = false,
+        Flag = "Input_BakeAmount",
+        Callback = function(Text)
+            local n = tonumber(Text)
+            if n and n >= 1 then
+                bake.customAmount = math.floor(n)
+                bake.setStatus(string.format("Custom amount set to %d", bake.customAmount))
+            end
+        end,
+    })
+
+    MainTab:CreateToggle({
+        Name = "Auto Bake Bread",
+        CurrentValue = false,
+        Flag = "Toggle_AutoBake",
+        Callback = function(Value)
+            bake.enabled = Value
+            if Value then
+                bake.start()
+            else
+                _G.CowHubBakeToken = nil
+                if bake.packet and bake.packet.Token and bake.packet.Stage ~= "Closed" then
+                    pcall(bake.send, "Close", bake.packet)
+                end
+                bake.setStatus("Idle")
+            end
         end,
     })
 end
