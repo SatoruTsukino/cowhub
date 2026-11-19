@@ -1,4 +1,4 @@
--- Cow Hub [e4ef7fc] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [256e22a] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [e4ef7fc]",
+    Name = "Cow Hub [256e22a]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -542,6 +542,47 @@ local chomp = {
 local caravan = {
     enabled = false,
     active = false,
+}
+
+-- North River Field Raid + blacksmith anvil shift. Declared early: mob aura, isMobAlive, the background
+-- mob cache and the grass chomp read it. Raid targets live in workspace.NorthRiverRaidView (client-built);
+-- every raid bite uses the grass wire ChompRequest(NodeId, nil, serial). Remote: FieldRaidRequest.
+local fieldraid = {
+    auto = false,           -- Auto Field Raid (farm the run, bank, restart)
+    autoStart = true,       -- start the next solo raid from the camp sign-up
+    maxLevel = 10,          -- don't walk deeper than this field
+    pushDeeper = true,      -- deeper fields grow richer wheat: keep walking in, bite only what is in reach
+    focus = "Grazing",      -- "Grazing": farm the max field forever | "Loot Runs": every chest to the last plot, bank, restart
+    chestLevels = {},       -- field levels whose chest this run opened
+    LAST_CHEST_LEVEL = 9,   -- Planting.ChestPlots are on fields 1,3,5,7,9
+    -- Exit prompts relative to the run's Planting center: arenas are placed at different X per run
+    GATE_REL = Vector3.new(-471.95, 5.25, 2056.05),   -- GateExit (Mill gate)
+    FERRY_REL = Vector3.new(-462.95, 5.3, -2022.05),  -- RiverExit "Visit harvest meadow" (River ferry, field 10 far edge)
+    exitVia = nil,          -- "ferry" (forward, end of field 10) | "gate" (Mill gate, back at the start)
+    status = "Idle",
+    statusCard = nil,
+    run = nil, runStartedAt = 0, level = 0, bagCalories = 0,
+    grazeRun = nil, leaving = false, chestBusy = false,
+    lastTick = 0, lastScan = 0, lastWheatSeen = 0, lastStartTry = 0, startTries = 0, returnedAt = 0,
+    mobs = {}, wheat = {}, chestPrompts = {}, chestTried = setmetatable({}, { __mode = "k" }), lastPromptScan = 0,
+    path = nil, pathTarget = nil, pathIndex = 0, pathAt = 0, pathBusy = false, lastMove = 0,
+    -- GateExit ("Bank and leave") relative to the arena's FieldSoil (geometry dump FR987d2b...)
+    MOB_RANGE = 9,          -- bite reach toward raid mobs (client TargetDistance 9)
+    chestUntil = 0, sprinting = nil, sprintAt = 0,
+    fastChest = true,       -- close the chest reveal (it anchors the cow) once hearts are full; it heals while open
+    BACK_SLACK = 2,         -- forward-only: never aim more than this many studs back (+Z) of the cow
+    chestToken = nil, chestOpenedAt = 0, chestClosed = false,
+    dodge = true,           -- step out of telegraphed raid attacks (webs, lunges, stones, sigils)
+    blink = true,           -- windups land 0.4-0.7 s after the warning: blink a few studs out instead of walking
+    dodgeAssist = false,    -- blink-dodge also while playing by hand (Auto Field Raid off)
+    lastBlink = 0,
+    hazards = {}, dodgeUntil = 0, stuckPos = nil, stuckAt = 0, nudgeUntil = 0, nudgeDir = 1,
+    smith = {
+        enabled = false, teleport = false, status = "Idle", statusCard = nil,
+        state = nil, cycle = nil, score = nil, statusAt = 0, lastAsk = 0, lastStart = 0, lastClaim = 0,
+        jobId = nil, returnCF = nil, token = nil, running = false,
+        ANVIL_POS = Vector3.new(-315.82, 703.5, -227.96), -- AnvilCollider (BlacksmithSite.Anvil), streams out when far
+    },
 }
 
 dodge = {
@@ -3540,6 +3581,10 @@ function dodge.isMobAlive(mob)
         cache.mobHumanoid[mob] = nil
         return false
     end
+    -- Raid mob = the actor's invisible PrimaryPart; life is its Health attribute
+    if fieldraid.isRaidMob(mob) then
+        return fieldraid.mobAlive(mob)
+    end
 
     -- Check Humanoid health if mob is rigged with a humanoid
     local hum = cache.mobHumanoid[mob]
@@ -4232,6 +4277,14 @@ function cache.cacheBackgroundElements()
         if mithrilFolder and (not resources or not resources:FindFirstChild("MithrilCaveSpiders")) then
             for _, chamber in ipairs(mithrilFolder:GetChildren()) do
                 dodge.collectSpidersFromChamber(chamber)
+            end
+        end
+
+        -- Field raid enemies (NorthRiverRaidView actors with CowBiteTargetKind "RaidMob")
+        if fieldraid.inRaid() then
+            fieldraid.scan(os.clock(), true)
+            for _, part in ipairs(fieldraid.mobs) do
+                table.insert(cache.activeAuraMobs, part)
             end
         end
     else
@@ -6012,6 +6065,1105 @@ function farm.processMovement(dt, now, rootPos)
     end
 end
 
+-- ==========================
+-- FIELD RAID ENGINE (North River raid: wheat, raid mobs, chests, bank & restart)
+-- ==========================
+function fieldraid.runId()
+    return plr:GetAttribute("CowFieldRaidId")
+end
+
+function fieldraid.inRaid()
+    return fieldraid.runId() ~= nil
+end
+
+function fieldraid.fire(...)
+    local remote = fieldraid.request
+    if not remote or not remote.Parent then
+        remote = cowRemotes:FindFirstChild("FieldRaidRequest")
+        fieldraid.request = remote
+    end
+    if not remote then return false end
+    return (pcall(remote.FireServer, remote, ...))
+end
+
+function fieldraid.setStatus(text)
+    if fieldraid.status == text then return end
+    fieldraid.status = text
+    if fieldraid.statusCard then
+        pcall(function()
+            if fieldraid.statusCard.SetTitle then fieldraid.statusCard:Set(text) else fieldraid.statusCard:Set({ Title = "Field Raid", Content = text }) end
+        end)
+    end
+end
+
+function fieldraid.isRaidMob(part)
+    return typeof(part) == "Instance" and part:IsA("BasePart") and part:GetAttribute("CowBiteTargetKind") == "RaidMob"
+end
+
+function fieldraid.mobAlive(part)
+    return part.Parent ~= nil and (tonumber(part:GetAttribute("Health")) or 0) > 0
+end
+
+-- One pass over NorthRiverRaidView (hundreds of wheat cells): live mobs + available food, at most every 0.25 s
+function fieldraid.scan(now, force)
+    if not force and now - fieldraid.lastScan < 0.25 then return end
+    fieldraid.lastScan = now
+    local mobs, wheat = fieldraid.mobs, fieldraid.wheat
+    table.clear(mobs)
+    table.clear(wheat)
+    local view = workspace:FindFirstChild("NorthRiverRaidView")
+    if not view then return end
+    for _, model in ipairs(view:GetChildren()) do
+        local part = model:IsA("Model") and model.PrimaryPart
+        if part then
+            local kind = part:GetAttribute("CowBiteTargetKind")
+            if kind == "RaidMob" then
+                if fieldraid.mobAlive(part) then mobs[#mobs + 1] = part end
+            elseif kind == "RaidFood" and part:GetAttribute("Available") == true then
+                wheat[#wheat + 1] = part
+            end
+        end
+    end
+end
+
+-- Closest point of a wheat cell to pos (the game bites the nearest edge: FieldRaidLayout.MouthfulPoint)
+function fieldraid.cellPoint(part, pos)
+    local cf, half = part.CFrame, part.Size * 0.5
+    local lp = cf:PointToObjectSpace(pos)
+    return cf:PointToWorldSpace(Vector3.new(
+        math.clamp(lp.X, -half.X, half.X), math.clamp(lp.Y, -half.Y, half.Y), math.clamp(lp.Z, -half.Z, half.Z)))
+end
+
+-- Best edible food: in reach, ripe first (like InputController), then richest (BaseCalories), then nearest;
+-- otherwise the nearest. Skips cells we just bit.
+function fieldraid.findWheat(rootPos, now)
+    local best, bestDist, bestRipe, bestValue = nil, math.huge, false, 0
+    local backLimit = fieldraid.backLimit(rootPos)
+    for _, part in ipairs(fieldraid.wheat) do
+        if part.Parent and part:GetAttribute("Available") == true then
+            local id = part:GetAttribute("NodeId")
+            local skipUntil = id and chomp.skip[id]
+            local d = (id and not (skipUntil and now < skipUntil)) and (fieldraid.cellPoint(part, rootPos) - rootPos).Magnitude
+            if d and (d <= chomp.REACH or part.Position.Z <= backLimit) then
+                local inReach = d <= chomp.REACH
+                local ripe = inReach and part:GetAttribute("RaidRipe") == true
+                local value = inReach and (tonumber(part:GetAttribute("BaseCalories")) or 0) or 0
+                local better
+                if ripe ~= bestRipe then
+                    better = ripe
+                elseif value ~= bestValue then
+                    better = value > bestValue
+                else
+                    better = d < bestDist
+                end
+                if better then
+                    best, bestDist, bestRipe, bestValue = part, d, ripe, value
+                end
+            end
+        end
+    end
+    return best, bestDist
+end
+
+function fieldraid.nearestMob(rootPos)
+    local best, bestDist = nil, math.huge
+    for _, part in ipairs(fieldraid.mobs) do
+        if fieldraid.mobAlive(part) then
+            local d = (part.Position - rootPos).Magnitude
+            if d < bestDist then best, bestDist = part, d end
+        end
+    end
+    return best, bestDist
+end
+
+-- ---------- Telegraph dodge: the game's own hit test (FieldRaidCombat.Contains) on server windups ----------
+function fieldraid.combatMods()
+    if fieldraid.combat and fieldraid.enemies then return fieldraid.combat, fieldraid.enemies end
+    local shared = cowGame:FindFirstChild("Shared")
+    local okC, combat = pcall(function() return require(shared.FieldRaidCombat) end)
+    local okE, enemies = pcall(function() return require(shared.FieldRaidEnemies) end)
+    if okC and okE then fieldraid.combat, fieldraid.enemies = combat, enemies end
+    return fieldraid.combat, fieldraid.enemies
+end
+
+-- Windup / ProjectileAim / BarrageMark: Attack = { Move, Origin, Point, Forward, At, StrikeAt, EndsAt, WebStart, WebEnd, ... }
+function fieldraid.addHazard(msg)
+    local attack = msg.Attack
+    if type(attack) ~= "table" or type(attack.StrikeAt) ~= "number" then return end
+    local _, enemies = fieldraid.combatMods()
+    if not enemies then return end
+    local ok, def = pcall(enemies.Move, msg.Species, attack.Move)
+    if not ok or type(def) ~= "table" or not def.Shape then return end
+    -- Projectile windup (StrikeAt = release): sidestep just before the shot locks onto the cow
+    if def.Projectile and msg.Kind == "Windup" and typeof(msg.Frame) == "CFrame" and root then
+        local shooter = msg.Frame.Position
+        if (root.Position - shooter).Magnitude <= (def.Range or 60) + 10 then
+            local lead = attack.StrikeAt - workspace:GetServerTimeNow()
+            task.delay(math.max(0, lead - 0.12), function() fieldraid.jink(shooter) end)
+        end
+    end
+    local ends = tonumber(attack.EndsAt) or (attack.StrikeAt + 0.35)
+    if def.Shape == "Tripline" then ends = math.max(ends, attack.StrikeAt + (def.ActiveSeconds or 1.6)) end
+    local list = fieldraid.hazards
+    -- Barrage marks add circles; other casts replace the actor's previous telegraph
+    if msg.Kind ~= "BarrageMark" then
+        for i = #list, 1, -1 do
+            if list[i].id == msg.Id and not list[i].mark then table.remove(list, i) end
+        end
+    end
+    if type(attack.Points) == "table" and not attack.Point then
+        -- IceBarrage windup: one circle per pulse point
+        local pulses = type(attack.PulseTimes) == "table" and attack.PulseTimes or {}
+        for i, point in ipairs(attack.Points) do
+            local strike = tonumber(pulses[i]) or attack.StrikeAt
+            local one = table.clone(attack)
+            one.Point, one.StrikeAt = point, strike
+            list[#list + 1] = { id = msg.Id, def = def, attack = one, strike = strike, ends = strike + 0.35, mark = true }
+        end
+    else
+        list[#list + 1] = { id = msg.Id, def = def, attack = attack, strike = attack.StrikeAt, ends = ends, mark = msg.Kind == "BarrageMark" }
+    end
+    -- React now (the warning arrives ~0.4 s before the hit) and once more just before it resolves
+    task.defer(fieldraid.blinkDodge)
+    local lead = attack.StrikeAt - workspace:GetServerTimeNow()
+    if lead > 0.2 then task.delay(lead - 0.15, fieldraid.blinkDodge) end
+end
+
+-- Open, forward-only spot: ground under it and no wall/fence between the cow and it
+function fieldraid.spotClear(from, spot)
+    local up = Vector3.new(0, 2, 0)
+    local dir = spot - from
+    if workspace:Raycast(from + up, Vector3.new(dir.X, 0, dir.Z), raycastParams) then return false end
+    local ground = workspace:Raycast(spot + Vector3.new(0, 6, 0), Vector3.new(0, -14, 0), raycastParams)
+    return ground ~= nil and math.abs(ground.Position.Y - (from.Y - 3)) < 6
+end
+
+-- Arrows, stones and boulders aim at the cow's forecast when released and then fly too fast to react to:
+-- blink 5-10 studs perpendicular to the shooter right before release, alternating sides
+function fieldraid.jink(shooterPos)
+    if not fieldraid.dodge or not fieldraid.blink or not (fieldraid.auto or fieldraid.dodgeAssist) then return end
+    if not root or not root.Parent or root.Anchored or not fieldraid.inRaid() then return end
+    local pos = root.Position
+    local toCow = Vector3.new(pos.X - shooterPos.X, 0, pos.Z - shooterPos.Z)
+    if toCow.Magnitude < 0.5 then return end
+    local side = Vector3.new(-toCow.Z, 0, toCow.X).Unit
+    local serverNow = workspace:GetServerTimeNow()
+    local first = fieldraid.jinkSide or 1
+    for _, dist in ipairs({ 7, 10, 5 }) do
+        for _, sgn in ipairs({ first, -first }) do
+            local spot = pos + side * (dist * sgn)
+            if spot.Z <= fieldraid.backLimit(pos) and not fieldraid.danger(spot, serverNow, 2.5) and fieldraid.spotClear(pos, spot) then
+                fieldraid.jinkSide = -sgn
+                fieldraid.lastBlink = os.clock()
+                local look = root.CFrame.LookVector
+                setRootCFrame(CFrame.lookAt(spot, spot + Vector3.new(look.X, 0, look.Z)))
+                root.AssemblyLinearVelocity = Vector3.zero
+                fieldraid.path, fieldraid.pathTarget = nil, nil
+                fieldraid.jinks = (fieldraid.jinks or 0) + 1
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- Instant step out of a telegraph that would land on the cow within ~1.2 s (walking is too slow)
+function fieldraid.blinkDodge()
+    if not fieldraid.dodge or not fieldraid.blink or not (fieldraid.auto or fieldraid.dodgeAssist) then return end
+    if not root or not root.Parent or root.Anchored or not fieldraid.inRaid() then return end
+    local now = os.clock()
+    if now - fieldraid.lastBlink < 0.18 then return end
+    local serverNow = workspace:GetServerTimeNow()
+    local pos = root.Position
+    if not fieldraid.danger(pos, serverNow, 1.2) then return end
+    local best, bestScore = nil, math.huge
+    for _, r in ipairs({ 4, 7, 10, 14, 19, 25 }) do
+        for k = 0, 15 do
+            local a = k * math.pi / 8
+            local spot = pos + Vector3.new(math.cos(a) * r, 0, math.sin(a) * r)
+            if spot.Z <= fieldraid.backLimit(pos) and not fieldraid.danger(spot, serverNow, 2.5) then
+                local score = r + (spot.Z - pos.Z) * 0.08
+                if score < bestScore and fieldraid.spotClear(pos, spot) then best, bestScore = spot, score end
+            end
+        end
+        if best then break end
+    end
+    if not best then return end
+    fieldraid.lastBlink = now
+    local look = root.CFrame.LookVector
+    setRootCFrame(CFrame.lookAt(best, best + Vector3.new(look.X, 0, look.Z)))
+    root.AssemblyLinearVelocity = Vector3.zero
+    fieldraid.path, fieldraid.pathTarget = nil, nil
+    fieldraid.blinks = (fieldraid.blinks or 0) + 1
+end
+
+function fieldraid.dropHazards(id)
+    local list = fieldraid.hazards
+    for i = #list, 1, -1 do
+        if list[i].id == id then table.remove(list, i) end
+    end
+end
+
+-- Would standing at pos be hit by a telegraph resolving within `horizon` s? (webs: while active)
+-- Safety margin around the cow: latency and the game's forecast aim land hits 1-2 studs outside the
+-- exact shape (hit log: GuardArrow hits at 2.6-2.8 studs from a 2.7-stud circle)
+local DANGER_MARGIN = 1.6
+local MARGIN_OFFSETS = {
+    Vector3.zero, Vector3.new(DANGER_MARGIN, 0, 0), Vector3.new(-DANGER_MARGIN, 0, 0),
+    Vector3.new(0, 0, DANGER_MARGIN), Vector3.new(0, 0, -DANGER_MARGIN),
+}
+
+-- Flat distance from p to segment a-b
+local function segDist(p, a, b)
+    local ab = Vector3.new(b.X - a.X, 0, b.Z - a.Z)
+    local ap = Vector3.new(p.X - a.X, 0, p.Z - a.Z)
+    local len2 = ab:Dot(ab)
+    if len2 < 1e-4 then return ap.Magnitude end
+    local s = math.clamp(ap:Dot(ab) / len2, 0, 1)
+    return (ap - ab * s).Magnitude
+end
+
+function fieldraid.danger(pos, serverNow, horizon)
+    local combat = fieldraid.combat
+    if not combat then return false end
+    for _, h in ipairs(fieldraid.hazards) do
+        if serverNow <= h.ends and h.strike - serverNow <= horizon then
+            local a = h.attack
+            if typeof(a.Launch) == "Vector3" and typeof(a.FlightEnd) == "Vector3" then
+                -- Aimed projectile: it hits anything along its flight (FieldRaidCombat.ArrowContact)
+                if segDist(pos, a.Launch, a.FlightEnd) <= (h.def.Radius or 3) + DANGER_MARGIN then return true end
+            elseif h.def.Shape == "Tripline" then
+                local ok, hit = pcall(combat.Contains, h.def, a, pos, 4)
+                if ok and hit then return true end
+            else
+                for _, off in ipairs(MARGIN_OFFSETS) do
+                    local ok, hit = pcall(combat.Contains, h.def, a, pos + off, 5)
+                    if ok and hit then return true end
+                end
+            end
+        end
+    end
+    return false
+end
+
+
+-- Nearest safe spot on rings around the cow; prefers spots away from the casters. Returns nil if none needed.
+function fieldraid.dodgeStep(now, rootPos)
+    local list = fieldraid.hazards
+    if #list == 0 or not fieldraid.dodge then return false end
+    fieldraid.blinkDodge()
+    local serverNow = workspace:GetServerTimeNow()
+    for i = #list, 1, -1 do
+        if serverNow > list[i].ends then table.remove(list, i) end
+    end
+    local vel = root and root.AssemblyLinearVelocity or Vector3.zero
+    -- Also look where the cow will be: barrage marks and webs are aimed ahead of a moving cow
+    local flatVel = Vector3.new(vel.X, 0, vel.Z)
+    local ahead = rootPos + flatVel * 0.35
+    local farAhead = rootPos + flatVel * 0.8
+    if not fieldraid.danger(rootPos, serverNow, 1.6) and not fieldraid.danger(ahead, serverNow, 1.6)
+        and not fieldraid.danger(farAhead, serverNow, 1.6) then
+        if fieldraid.dodgeTarget and now < fieldraid.dodgeUntil then
+            humanoid:MoveTo(fieldraid.dodgeTarget)
+            return true
+        end
+        fieldraid.dodgeTarget = nil
+        return false
+    end
+    local best, bestScore = nil, math.huge
+    for _, r in ipairs({ 6, 10, 15, 21 }) do
+        for k = 0, 15 do
+            local a = k * math.pi / 8
+            local spot = rootPos + Vector3.new(math.cos(a) * r, 0, math.sin(a) * r)
+            if spot.Z <= fieldraid.backLimit(rootPos) and not fieldraid.danger(spot, serverNow, 2.5) then
+                -- prefer short moves that keep heading deeper (-Z)
+                local score = r + (spot.Z - rootPos.Z) * 0.08
+                if score < bestScore then best, bestScore = spot, score end
+            end
+        end
+        if best then break end
+    end
+    if best then
+        fieldraid.dodgeTarget, fieldraid.dodgeUntil = best, now + 0.6
+        fieldraid.path, fieldraid.pathTarget = nil, nil
+        humanoid:MoveTo(best)
+        fieldraid.lastMove = now
+        fieldraid.setStatus("Dodging telegraph")
+    end
+    return true
+end
+
+function fieldraid.face(pos)
+    if not root then return end
+    local rp = root.Position
+    local dx, dz = pos.X - rp.X, pos.Z - rp.Z
+    if dx * dx + dz * dz > 0.01 then
+        root.CFrame = CFrame.lookAt(rp, Vector3.new(pos.X, rp.Y, pos.Z))
+    end
+end
+
+-- The server pairs raid bites with an active raid graze (FieldRaidGraze.Hold sends GrazeStart once per run)
+function fieldraid.ensureGraze()
+    local run = fieldraid.runId()
+    if run and fieldraid.grazeRun ~= run then
+        fieldraid.grazeRun = run
+        fieldraid.fire("GrazeStart", run)
+    end
+end
+
+function fieldraid.chompWheat(now, rootPos)
+    if not fieldraid.inRaid() or fieldraid.chestBusy then return false end
+    fieldraid.scan(now)
+    local part, dist = fieldraid.findWheat(rootPos, now)
+    if not part or dist > chomp.REACH then return false end
+    fieldraid.ensureGraze()
+    if now - chomp.lastFire < chomp.getInterval(part) then return true end
+    fieldraid.face(part.Position)
+    chomp.send(part:GetAttribute("NodeId"), part, now)
+    return true
+end
+
+-- Mob bite: same wire; the client only targets a raid mob it faces (dot >= 0.9), so face it first
+function fieldraid.biteMob(part, now)
+    if fieldraid.chestBusy then return false end
+    if farm.lastChompedMob == part and now - farm.mobChompCooldown <= farm.mobAuraDelay then return false end
+    if not dodge.isUnderground and not dodge.isDodging then
+        fieldraid.face(part.Position)
+    end
+    fieldraid.ensureGraze()
+    if chomp.send(part:GetAttribute("NodeId"), part, now) then
+        farm.lastChompedMob = part
+        farm.mobChompCooldown = now
+        chomp.onMobAttack(now)
+        return true
+    end
+    return false
+end
+
+-- Forward-only (fields deepen toward -Z): pull any goal behind the cow up to its own row.
+-- Only a manual Bank & Leave may walk back.
+function fieldraid.forward(target, rootPos)
+    local limit = fieldraid.backLimit(rootPos)
+    if target.Z <= limit then return target end
+    return Vector3.new(target.X, target.Y, math.max(rootPos.Z, math.min(limit, target.Z)))
+end
+
+-- Z span of a field level (FieldRaidLayout.Band): depth runs from the planting's +Z edge toward -Z.
+-- Returns entryZ (near edge), farZ; nil until the run's Planting is known.
+local FIELD_DEPTHS = { 0, 55, 115, 180, 250, 325, 405, 490, 585, 690, 810.42096 }
+-- Private arena Planting seen on every run so far (Reset event); used until the live one arrives
+local PLANTING_FALLBACK = { Frame = CFrame.new(54.6875, 701.7, 30476.408), Size = Vector3.new(1080.0925, 1, 4052.1047) }
+function fieldraid.bandZ(level)
+    local planting = fieldraid.planting or PLANTING_FALLBACK
+    if type(planting) ~= "table" or typeof(planting.Frame) ~= "CFrame" or typeof(planting.Size) ~= "Vector3" then return nil end
+    level = math.clamp(level, 1, 10)
+    local k = planting.Size.Z / FIELD_DEPTHS[11]
+    local front = planting.Frame.Position.Z + planting.Size.Z * 0.5
+    return front - FIELD_DEPTHS[level] * k, front - FIELD_DEPTHS[level + 1] * k
+end
+
+-- Furthest +Z the cow may aim. In the max field it roams the whole field (back to its entry line),
+-- elsewhere only a couple of studs behind itself: never back into an earlier field.
+function fieldraid.backLimit(rootPos)
+    if fieldraid.leaving and fieldraid.exitVia == "gate" then return math.huge end
+    local entry = fieldraid.farmEntryZ
+    if entry and fieldraid.level >= fieldraid.maxLevel then
+        return math.max(rootPos.Z + fieldraid.BACK_SLACK, entry - 8)
+    end
+    return rootPos.Z + fieldraid.BACK_SLACK
+end
+
+-- Walk with PathfindingService (fences between fields); straight MoveTo while a path computes or fails
+function fieldraid.walkTo(target, now)
+    if not humanoid or not root then return end
+    local here = root.Position
+    target = fieldraid.forward(target, here)
+    -- Stuck (fence, rail, cart): drop the path, jump and sidestep before re-pathing
+    if not fieldraid.stuckPos or (here - fieldraid.stuckPos).Magnitude > 2 then
+        fieldraid.stuckPos, fieldraid.stuckAt = here, now
+    elseif now - fieldraid.stuckAt > 2.5 then
+        fieldraid.stuckPos, fieldraid.stuckAt = here, now
+        fieldraid.path, fieldraid.pathTarget, fieldraid.pathAt = nil, nil, 0
+        fieldraid.nudgeDir = -fieldraid.nudgeDir
+        fieldraid.nudgeUntil = now + 1.2
+        humanoid.Jump = true
+    end
+    if now < fieldraid.nudgeUntil then
+        humanoid:MoveTo(here + Vector3.new(12 * fieldraid.nudgeDir, 0, fieldraid.leaving and 4 or -4))
+        fieldraid.lastMove = now
+        return
+    end
+    if fieldraid.pathTarget and ((fieldraid.pathTarget - target).Magnitude > 12 or now - fieldraid.pathAt > 6) then
+        fieldraid.path, fieldraid.pathTarget = nil, nil
+    end
+    if not fieldraid.path and not fieldraid.pathBusy and now - fieldraid.pathAt > 2 then
+        fieldraid.pathBusy, fieldraid.pathAt = true, now
+        local from = root and root.Position
+        task.spawn(function()
+            local ok, waypoints = pcall(function()
+                local path = PathfindingService:CreatePath({ AgentRadius = 2.5, AgentHeight = 5, AgentCanJump = true })
+                path:ComputeAsync(from, target)
+                if path.Status ~= Enum.PathStatus.Success then return nil end
+                return path:GetWaypoints()
+            end)
+            fieldraid.pathBusy = false
+            if ok and waypoints and #waypoints > 1 then
+                fieldraid.path, fieldraid.pathTarget, fieldraid.pathIndex = waypoints, target, 2
+            end
+        end)
+    end
+    local goal = target
+    local path = fieldraid.path
+    if path then
+        local wp = path[fieldraid.pathIndex]
+        while wp and root and (Vector3.new(wp.Position.X, 0, wp.Position.Z) - Vector3.new(root.Position.X, 0, root.Position.Z)).Magnitude < 3 do
+            fieldraid.pathIndex += 1
+            wp = path[fieldraid.pathIndex]
+        end
+        if wp then
+            goal = fieldraid.forward(wp.Position, here)
+            if wp.Action == Enum.PathWaypointAction.Jump then humanoid.Jump = true end
+        else
+            fieldraid.path, fieldraid.pathTarget = nil, nil
+        end
+    end
+    if now - fieldraid.lastMove > 0.25 then
+        fieldraid.lastMove = now
+        humanoid:MoveTo(goal)
+    end
+end
+
+function fieldraid.stopWalk()
+    fieldraid.path, fieldraid.pathTarget = nil, nil
+    if humanoid and root and fieldraid.lastMove > 0 then
+        fieldraid.lastMove = 0
+        humanoid:MoveTo(root.Position)
+    end
+end
+
+-- Raid arenas are separate models (PrivateFieldRaids, FR<course id>, ...) at different X offsets:
+-- the cow's arena is the one (with HarvestLandings) whose pivot is nearest the cow
+function fieldraid.arena()
+    local cowWorld = workspace:FindFirstChild("CowWorld")
+    local geometry = cowWorld and cowWorld:FindFirstChild("Geometry")
+    if not geometry then return nil end
+    local from = root and root.Parent and root.Position
+    if not from then return geometry:FindFirstChild("PrivateFieldRaids") end
+    local best, bestD = nil, math.huge
+    for _, model in ipairs(geometry:GetChildren()) do
+        if (model.Name == "PrivateFieldRaids" or string.sub(model.Name, 1, 2) == "FR") and model:IsA("Model") and model:FindFirstChild("HarvestLandings") then
+            local ok, pivot = pcall(function() return model:GetPivot().Position end)
+            local d = ok and math.abs(pivot.X - from.X) or math.huge
+            if d < bestD then best, bestD = model, d end
+        end
+    end
+    return best
+end
+
+-- Chest + gate prompts of the private arena (rescanned every 4 s: they stream in as the cow moves)
+function fieldraid.prompts(now)
+    if now - fieldraid.lastPromptScan < 4 then return end
+    fieldraid.lastPromptScan = now
+    table.clear(fieldraid.chestPrompts)
+    fieldraid.gatePrompt, fieldraid.ferryPrompt = nil, nil
+    local arena = fieldraid.arena()
+    if not arena then return end
+    for _, d in ipairs(arena:GetDescendants()) do
+        if d:IsA("ProximityPrompt") then
+            if d.Name == "OpenHarvestChest" then
+                table.insert(fieldraid.chestPrompts, d)
+            elseif d.Name == "GateExit" then
+                fieldraid.gatePrompt = d
+            elseif d.Name == "RiverExit" then
+                fieldraid.ferryPrompt = d
+            end
+        end
+    end
+end
+
+function fieldraid.promptPos(prompt)
+    local holder = prompt.Parent
+    if holder and holder:IsA("BasePart") then return holder.Position end
+    if holder and holder:IsA("Attachment") then return holder.WorldPosition end
+    if holder and holder:IsA("Model") then return holder:GetPivot().Position end
+    return nil
+end
+
+function fieldraid.firePrompt(prompt)
+    if fireproximityprompt then
+        return (pcall(fireproximityprompt, prompt))
+    end
+    return false
+end
+
+-- Walk to and open an earned chest (prompt enabled for us; the game closes the reveal itself)
+function fieldraid.tryChest(now, rootPos)
+    for _, prompt in ipairs(fieldraid.chestPrompts) do
+        local owner = prompt:GetAttribute("RaidChestOwner")
+        if prompt.Parent and prompt.Enabled and (owner == nil or owner == plr.UserId) then
+            local pos = fieldraid.promptPos(prompt)
+            local d = pos and (pos - rootPos).Magnitude or math.huge
+            if d < (fieldraid.focus == "Loot Runs" and 260 or 90) and pos.Z <= rootPos.Z + 6 and now - (fieldraid.chestTried[prompt] or 0) > 6 then
+                if d > math.max(4, prompt.MaxActivationDistance - 2) then
+                    fieldraid.walkTo(pos, now)
+                    fieldraid.setStatus("Walking to harvest chest")
+                else
+                    fieldraid.stopWalk()
+                    fieldraid.chestTried[prompt] = now
+                    fieldraid.firePrompt(prompt)
+                    fieldraid.setStatus("Opening harvest chest")
+                end
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function fieldraid.fmtCal(n)
+    if n >= 1e9 then return string.format("%.2fB", n / 1e9) end
+    if n >= 1e6 then return string.format("%.1fM", n / 1e6) end
+    return tostring(math.floor(n))
+end
+
+-- Leave the run through an exit prompt: the River ferry (RiverExit, end of field 10, forward) or the
+-- Mill gate (GateExit, back at the start). Prompts stream in late, so walk to the known spot meanwhile.
+function fieldraid.exitSpot(via)
+    local prompt = via == "ferry" and fieldraid.ferryPrompt or fieldraid.gatePrompt
+    local pos = prompt and prompt.Parent and fieldraid.promptPos(prompt)
+    if pos then return prompt, pos end
+    local planting = fieldraid.planting or PLANTING_FALLBACK
+    return nil, planting.Frame.Position + (via == "ferry" and fieldraid.FERRY_REL or fieldraid.GATE_REL)
+end
+
+-- Manual Bank & Leave picks the nearer exit; Loot Runs always take the ferry (never walk back)
+function fieldraid.pickExit(rootPos)
+    local _, ferry = fieldraid.exitSpot("ferry")
+    local _, gate = fieldraid.exitSpot("gate")
+    return (ferry - rootPos).Magnitude <= (gate - rootPos).Magnitude and "ferry" or "gate"
+end
+
+function fieldraid.bank(now, rootPos)
+    local via = fieldraid.exitVia or fieldraid.pickExit(rootPos)
+    fieldraid.exitVia = via
+    local prompt, pos = fieldraid.exitSpot(via)
+    local label = via == "ferry" and "River ferry" or "Mill gate"
+    local d = (pos - rootPos).Magnitude
+    if not prompt and now - (fieldraid.lastStream or 0) > 5 and d < 400 then
+        fieldraid.lastStream = now
+        task.spawn(function() pcall(function() plr:RequestStreamAroundAsync(pos, 5) end) end)
+    end
+    if prompt and d <= math.max(4, prompt.MaxActivationDistance - 1.5) then
+        fieldraid.stopWalk()
+        if now - (fieldraid.lastGateFire or 0) > 3 then
+            fieldraid.lastGateFire = now
+            fieldraid.firePrompt(prompt)
+            fieldraid.setStatus("Leaving at the " .. label)
+        end
+        return
+    end
+    fieldraid.travel(pos, now)
+    fieldraid.setStatus(string.format("Leaving (%s): %d studs to the %s", tostring(fieldraid.leaving), math.floor(d), label))
+end
+
+-- Harvest meadow (after the ferry; player attribute CowFieldRaidRewardRoom): open our gold chest
+-- (CowWorld.Dynamic, RaidChestOwner = us), then "Return to town" (Meadow gate HomePrompt)
+function fieldraid.meadow(now, rootPos)
+    if now - (fieldraid.lastMeadowScan or 0) > 2 then
+        fieldraid.lastMeadowScan = now
+        fieldraid.meadowChest, fieldraid.homePrompt = nil, nil
+        local cowWorld = workspace:FindFirstChild("CowWorld")
+        local dynamic = cowWorld and cowWorld:FindFirstChild("Dynamic")
+        if dynamic then
+            for _, d in ipairs(dynamic:GetDescendants()) do
+                if d:IsA("ProximityPrompt") and d.Name == "OpenHarvestChest" and d:GetAttribute("RaidChestOwner") == plr.UserId then
+                    fieldraid.meadowChest = d
+                end
+            end
+        end
+        local arena = fieldraid.arena()
+        local landings = arena and arena:FindFirstChild("HarvestLandings")
+        if landings then
+            for _, d in ipairs(landings:GetDescendants()) do
+                if d:IsA("ProximityPrompt") and d.Name == "HomePrompt" then fieldraid.homePrompt = d end
+            end
+        end
+    end
+    local chest = fieldraid.meadowChest
+    local target, label = nil, nil
+    if chest and chest.Parent and chest.Enabled and now - (fieldraid.chestTried[chest] or 0) > 6 then
+        target, label = chest, "gold chest"
+    elseif fieldraid.homePrompt and fieldraid.homePrompt.Parent and fieldraid.homePrompt.Enabled then
+        target, label = fieldraid.homePrompt, "Meadow gate"
+    end
+    if not target then
+        fieldraid.setStatus("Harvest meadow: waiting for prompts")
+        return
+    end
+    local pos = fieldraid.promptPos(target)
+    if not pos then return end
+    local d = (pos - rootPos).Magnitude
+    if d > math.max(4, target.MaxActivationDistance - 2) then
+        if humanoid and now - fieldraid.lastMove > 0.25 then
+            fieldraid.lastMove = now
+            humanoid:MoveTo(pos)
+        end
+        fieldraid.setStatus("Harvest meadow: walking to " .. label)
+        return
+    end
+    if now - (fieldraid.lastMeadowFire or 0) > 3 then
+        fieldraid.lastMeadowFire = now
+        if target == chest then fieldraid.chestTried[chest] = now end
+        fieldraid.firePrompt(target)
+        fieldraid.setStatus(target == chest and "Harvest meadow: opening gold chest" or "Harvest meadow: returning to town")
+    end
+end
+
+-- Outside a raid: walk to the camp sign-up ("Set out") and start a solo run
+function fieldraid.startRun(now, rootPos)
+    if not fieldraid.autoStart then
+        fieldraid.setStatus("Waiting (auto start off)")
+        return
+    end
+    if now - fieldraid.returnedAt < 6 then
+        fieldraid.setStatus("Back at camp")
+        return
+    end
+    local cowWorld = workspace:FindFirstChild("CowWorld")
+    local geometry = cowWorld and cowWorld:FindFirstChild("Geometry")
+    local camp = geometry and geometry:FindFirstChild("FieldRaids")
+    local entry = camp and camp:FindFirstChild("Entry")
+    local signup = entry and entry.Value
+    if not signup or not signup:IsA("BasePart") then
+        fieldraid.setStatus("Go to the Field Raid camp (sign-up not loaded)")
+        return
+    end
+    local d = (signup.Position - rootPos).Magnitude
+    if d > 10 then
+        if d > 250 then
+            fieldraid.setStatus(string.format("Go to the Field Raid camp (%d studs)", math.floor(d)))
+            return
+        end
+        fieldraid.walkTo(signup.Position, now)
+        fieldraid.setStatus("Walking to raid sign-up")
+        return
+    end
+    fieldraid.stopWalk()
+    if now - fieldraid.lastStartTry < 12 then return end
+    fieldraid.lastStartTry = now
+    fieldraid.startTries += 1
+    local prompt = signup:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if prompt then fieldraid.firePrompt(prompt) end
+    task.delay(0.8, function()
+        if fieldraid.auto and not fieldraid.inRaid() then fieldraid.fire("Solo", 1) end
+    end)
+    fieldraid.setStatus("Starting solo raid (try " .. fieldraid.startTries .. ")")
+end
+
+function fieldraid.setSprint(on, now)
+    if fieldraid.sprinting == on and now - (fieldraid.sprintAt or 0) < 5 then return end
+    fieldraid.sprinting, fieldraid.sprintAt = on, now
+    local remote = cowRemotes:FindFirstChild("SprintRequest")
+    if remote then pcall(remote.FireServer, remote, on) end
+end
+
+function fieldraid.travel(target, now)
+    fieldraid.setSprint(true, now)
+    fieldraid.walkTo(target, now)
+end
+
+function fieldraid.tick(now, rootPos)
+    if now - fieldraid.lastTick < 0.1 then return end
+    fieldraid.lastTick = now
+    local run = fieldraid.runId()
+    if not run then
+        if fieldraid.run then
+            fieldraid.run, fieldraid.leaving, fieldraid.grazeRun, fieldraid.exitVia = nil, false, nil, nil
+            fieldraid.returnedAt = now
+            fieldraid.stopWalk()
+            fieldraid.setSprint(false, now)
+        end
+        if plr:GetAttribute("CowFieldRaidRewardRoom") then
+            fieldraid.meadow(now, rootPos)
+            return
+        end
+        fieldraid.startRun(now, rootPos)
+        return
+    end
+    if fieldraid.run ~= run then
+        fieldraid.run, fieldraid.runStartedAt, fieldraid.leaving, fieldraid.startTries, fieldraid.exitVia = run, now, false, 0, nil
+        fieldraid.lastWheatSeen, fieldraid.farmEntryZ, fieldraid.sweepZ = now, nil, nil
+        table.clear(fieldraid.chestLevels)
+    end
+    if not fieldraid.planting and now - (fieldraid.lastSnapshotAsk or 0) > 10 then
+        -- Reloaded mid-run: ask for the run snapshot (the game does this on join) to learn the Planting
+        fieldraid.lastSnapshotAsk = now
+        fieldraid.fire("Snapshot")
+    end
+    if fieldraid.level >= fieldraid.maxLevel and not fieldraid.farmEntryZ then
+        local entryZ = fieldraid.bandZ(fieldraid.maxLevel)
+        fieldraid.farmEntryZ = entryZ or rootPos.Z
+    end
+    fieldraid.scan(now)
+    fieldraid.prompts(now)
+    local deeper = fieldraid.pushDeeper and fieldraid.level < fieldraid.maxLevel
+    -- Chest reveal: the server anchors the cow but it takes no damage (Hurt "chest_opening") and hearts
+    -- refill. Stay in it until hearts are full, then close it and press on.
+    if fieldraid.chestBusy then
+        local hearts = tonumber(plr:GetAttribute("Hearts")) or 0
+        local maxHearts = tonumber(plr:GetAttribute("MaxHealth")) or 0
+        local left = math.max(0, math.floor(fieldraid.chestUntil - now))
+        if fieldraid.fastChest and fieldraid.chestToken and not fieldraid.chestClosed
+            and now - fieldraid.chestOpenedAt > 0.6 and hearts >= maxHearts then
+            fieldraid.chestClosed = true
+            fieldraid.fire("CloseChest", fieldraid.chestToken)
+        end
+        fieldraid.setStatus(string.format("Chest reveal: healing %s/%s (%ds)", tostring(hearts), tostring(maxHearts), left))
+        return
+    end
+    -- Loot Runs: once the last chest plot within Max Field is opened (or passed), bank and start over
+    if fieldraid.focus == "Loot Runs" and not fieldraid.leaving then
+        local last = math.min(fieldraid.maxLevel, fieldraid.LAST_CHEST_LEVEL)
+        if last % 2 == 0 then last -= 1 end
+        if fieldraid.chestLevels[last] or fieldraid.level > last or fieldraid.level >= fieldraid.maxLevel then
+            fieldraid.leaving, fieldraid.exitVia = "loot run complete", "ferry"
+            fieldraid.path, fieldraid.pathTarget = nil, nil
+            safeNotify({ Title = "Field Raid", Content = "Loot run complete: banking at the Mill gate.", Duration = 5, Image = 4483362458 })
+        end
+    end
+    -- An open-able chest heals and shields: take it before anything else (also when hurt)
+    if fieldraid.tryChest(now, rootPos) then
+        fieldraid.setSprint(true, now)
+        return
+    end
+    -- Telegraphs: movement belongs to the dodge; bites in reach still fire
+    if humanoid and fieldraid.dodgeStep(now, rootPos) then
+        local mob, md = fieldraid.nearestMob(rootPos)
+        if mob and md <= fieldraid.MOB_RANGE then
+            fieldraid.biteMob(mob, now)
+        else
+            fieldraid.chompWheat(now, rootPos)
+        end
+        return
+    end
+    if fieldraid.leaving then
+        local mob, md = fieldraid.nearestMob(rootPos)
+        if mob and md <= fieldraid.MOB_RANGE then fieldraid.biteMob(mob, now) end
+        fieldraid.setSprint(true, now)
+        fieldraid.bank(now, rootPos)
+        return
+    end
+    -- Never stop: a cow that keeps sprinting outruns the telegraphs (aimed at where it was). Bites only
+    -- happen on the move (mob first, else best wheat in reach).
+    local mob, md = fieldraid.nearestMob(rootPos)
+    if mob and md <= fieldraid.MOB_RANGE then
+        fieldraid.biteMob(mob, now)
+    else
+        local wheat, wd = fieldraid.findWheat(rootPos, now)
+        if wheat and wd <= chomp.REACH then
+            fieldraid.lastWheatSeen = now
+            fieldraid.chompWheat(now, rootPos)
+        end
+    end
+    if deeper then
+        fieldraid.travel(rootPos + Vector3.new(0, 0, -40), now)
+        fieldraid.setStatus(string.format("L%d pushing deeper | bag %s cal | %d mobs", fieldraid.level, fieldraid.fmtCal(fieldraid.bagCalories), #fieldraid.mobs))
+        return
+    end
+    fieldraid.sweep(now, rootPos)
+    fieldraid.setStatus(string.format("L%d sweeping | bag %s cal | %d wheat, %d mobs", fieldraid.level, fieldraid.fmtCal(fieldraid.bagCalories), #fieldraid.wheat, #fieldraid.mobs))
+end
+
+-- Farming the deepest field: sweep across it (lateral passes, inching forward), biting on the move.
+-- Lateral bounds come from the run's Planting (Reset event); fallback = FieldSoil width.
+function fieldraid.sweepBounds()
+    local planting = fieldraid.planting or PLANTING_FALLBACK
+    if type(planting) == "table" and typeof(planting.Frame) == "CFrame" and typeof(planting.Size) == "Vector3" then
+        local cx, half = planting.Frame.Position.X, planting.Size.X * 0.5 - 25
+        return cx - half, cx + half
+    end
+    local arena = fieldraid.arena()
+    local soil = arena and arena:FindFirstChild("FieldSoil")
+    if soil then
+        local half = soil.Size.X * 0.5 - 25
+        return soil.Position.X - half, soil.Position.X + half
+    end
+    return nil
+end
+
+function fieldraid.sweep(now, rootPos)
+    local minX, maxX = fieldraid.sweepBounds()
+    if not minX then
+        fieldraid.travel(rootPos + Vector3.new(0, 0, -20), now)
+        return
+    end
+    -- Head for the richest wheat cluster ahead if one is visible, else run the lateral pass
+    local wheat, wd = fieldraid.findWheat(rootPos, now)
+    if wheat and wd > chomp.REACH and wd < 60 then
+        local through = wheat.Position + (wheat.Position - rootPos).Unit * 6
+        fieldraid.travel(through, now)
+        return
+    end
+    -- Rows run between the field's entry line and its far edge, bouncing back and forth
+    local _, bandFar = fieldraid.bandZ(fieldraid.level)
+    local farZ = bandFar and (bandFar + 12) or (rootPos.Z - 200)
+    local nearZ = math.max(farZ, (fieldraid.farmEntryZ or rootPos.Z) - 12)
+    local dir = fieldraid.sweepDir or 1
+    local z = fieldraid.sweepZ or rootPos.Z
+    if (dir > 0 and rootPos.X >= maxX) or (dir < 0 and rootPos.X <= minX) then
+        dir = -dir
+        local zDir = fieldraid.sweepZDir or -1
+        z += zDir * 12
+        if z <= farZ or z >= nearZ then
+            fieldraid.sweepZDir = -zDir
+            z = math.clamp(z, farZ, nearZ)
+        end
+    end
+    fieldraid.sweepDir, fieldraid.sweepZ = dir, z
+    fieldraid.travel(Vector3.new(dir > 0 and maxX or minX, rootPos.Y, z), now)
+end
+
+-- Server raid events: level, bag, chest reveal, run end; blacksmith shift replies
+do
+    local clientEvent = cowRemotes:FindFirstChild("ClientEvent")
+    if clientEvent and clientEvent:IsA("RemoteEvent") then
+        table.insert(scriptConnections, clientEvent.OnClientEvent:Connect(function(name, msg)
+            if name ~= "FieldRaid" or type(msg) ~= "table" then return end
+            local kind = msg.Kind
+            if kind == "SmithJob" then
+                fieldraid.smithEvent(msg)
+            elseif kind == "Reset" or kind == "FieldChanged" or kind == "State" then
+                if tonumber(msg.Level) then fieldraid.level = tonumber(msg.Level) end
+                if kind == "Reset" then
+                    fieldraid.bagCalories = 0
+                    if fieldraid.run ~= msg.Run or not fieldraid.planting then fieldraid.farmEntryZ = nil end
+                    fieldraid.planting = msg.Planting
+                    fieldraid.sweepZ = nil
+                end
+            elseif kind == "Windup" or kind == "ProjectileAim" or kind == "BarrageMark" then
+                fieldraid.addHazard(msg)
+            elseif kind == "CancelWarning" or kind == "EnemyDefeated" then
+                fieldraid.dropHazards(msg.Id)
+            elseif kind == "Bag" then
+                fieldraid.bagCalories = tonumber(msg.Calories) or fieldraid.bagCalories
+            elseif kind == "ChestOpening" then
+                fieldraid.chestBusy = true
+                fieldraid.chestToken, fieldraid.chestOpenedAt, fieldraid.chestClosed = msg.Token, os.clock(), false
+                fieldraid.chestLevels[fieldraid.level] = true
+                local untilT = tonumber(msg.Until)
+                local secs = untilT and math.clamp(untilT - workspace:GetServerTimeNow(), 1, 90) or 8
+                fieldraid.chestUntil = os.clock() + secs
+                task.delay(secs, function()
+                    fieldraid.chestBusy = false
+                end)
+            elseif kind == "ChestOpeningEnded" then
+                fieldraid.chestBusy = false
+            elseif kind == "Ended" or kind == "Leaving" then
+                fieldraid.leaving, fieldraid.grazeRun, fieldraid.chestBusy = false, nil, false
+                table.clear(fieldraid.hazards)
+            end
+        end))
+    end
+end
+
+-- ==========================
+-- BLACKSMITH ANVIL SHIFT (part-time job: accept, 5 strikes, turn in)
+-- ==========================
+function fieldraid.smithRules()
+    local s = fieldraid.smith
+    if s.rules and s.cycleMod then return s.rules, s.cycleMod end
+    local shared = cowGame:FindFirstChild("Shared")
+    local okR, rules = pcall(function() return require(shared.SmithingRules) end)
+    local okC, cycle = pcall(function() return require(shared.DayNightCycle) end)
+    if okR and okC then s.rules, s.cycleMod = rules, cycle end
+    return s.rules, s.cycleMod
+end
+
+function fieldraid.smithStatus(text)
+    local s = fieldraid.smith
+    if s.status == text then return end
+    s.status = text
+    if s.statusCard then
+        pcall(function()
+            if s.statusCard.SetTitle then s.statusCard:Set(text) else s.statusCard:Set({ Title = "Blacksmith Shift", Content = text }) end
+        end)
+    end
+end
+
+-- Perfect strike: aim where the X will be at the strike time (SmithingRules.Mark), after a human-ish delay
+function fieldraid.smithEvent(msg)
+    local s = fieldraid.smith
+    local ev = msg.Event
+    if ev == "Status" then
+        s.state, s.cycle, s.score, s.statusAt, s.message = msg.State, msg.Cycle, msg.Score, os.clock(), msg.Message
+    elseif ev == "Mark" and s.enabled and type(msg.Mark) == "table" then
+        local rules = fieldraid.smithRules()
+        if not rules then return end
+        s.jobId = msg.Id
+        local id, index, mark = msg.Id, msg.Index, msg.Mark
+        task.delay(0.35 + math.random() * 0.35, function()
+            local t = math.max(tonumber(mark.Start) or 0, workspace:GetServerTimeNow())
+            local p = rules.Mark(mark, t)
+            fieldraid.fire("SmithJobStrike", { Id = id, Index = index, Time = t, X = math.clamp(p.X, 0, 1), Y = math.clamp(p.Y, 0, 1) })
+            fieldraid.smithStatus(string.format("Hammering %d/%d%s", index, rules.Blows, msg.Last and (" | last " .. tostring(msg.Last)) or ""))
+        end)
+    elseif ev == "Finished" then
+        s.state, s.score = "Ready", msg.Score
+        fieldraid.smithStatus("Sheet done: " .. tostring(msg.Score) .. "/100")
+    elseif ev == "Stop" then
+        s.jobId = nil
+    end
+end
+
+function fieldraid.smithHead()
+    local cowWorld = workspace:FindFirstChild("CowWorld")
+    local decorations = cowWorld and cowWorld:FindFirstChild("Decorations")
+    local smith = decorations and decorations:FindFirstChild("Blacksmith")
+    local activity = smith and smith:GetAttribute("Activity")
+    if activity ~= "Heating" and activity ~= "Hammering" and activity ~= "ToForge" and activity ~= "ToAnvil" then return nil end
+    local head = smith:FindFirstChild("Head")
+    return head and head:IsA("BasePart") and head or nil
+end
+
+function fieldraid.smithAnvilPos()
+    local cowWorld = workspace:FindFirstChild("CowWorld")
+    local decorations = cowWorld and cowWorld:FindFirstChild("Decorations")
+    local outfitters = decorations and decorations:FindFirstChild("NorthRiverOutfitters")
+    local house = outfitters and outfitters:FindFirstChild("BlacksmithHouseAndPorch")
+    local shop = house and house:FindFirstChild("Blacksmith Shop")
+    local anvil = shop and shop:FindFirstChild("AnvilCollider")
+    return anvil and anvil.Position or fieldraid.smith.ANVIL_POS
+end
+
+-- Within `range` of pos? Teleports there only when opted in; never walks the cow
+function fieldraid.smithReach(pos, range, label)
+    local s = fieldraid.smith
+    if not root or not pos then return false end
+    local d = (pos - root.Position).Magnitude
+    if d <= range then return true end
+    if s.teleport then
+        s.returnCF = s.returnCF or root.CFrame
+        local flat = Vector3.new(root.Position.X - pos.X, 0, root.Position.Z - pos.Z)
+        local dir = flat.Magnitude > 0.1 and flat.Unit or Vector3.new(0, 0, 1)
+        local stand = pos + dir * math.max(2.5, range - 3) + Vector3.new(0, 3, 0)
+        setRootCFrame(CFrame.lookAt(stand, Vector3.new(pos.X, stand.Y, pos.Z)))
+        return false
+    end
+    -- Never walks the cow: without teleport it waits until the player stands in range
+    fieldraid.smithStatus(string.format("Stand by the %s (%d studs) or enable teleport", label, math.floor(d)))
+    return false
+end
+
+function fieldraid.smithReturn()
+    local s = fieldraid.smith
+    if s.returnCF then
+        local cf = s.returnCF
+        s.returnCF = nil
+        setRootCFrame(cf)
+    end
+end
+
+function fieldraid.smithTick()
+    local s = fieldraid.smith
+    local rules, cycleMod = fieldraid.smithRules()
+    if not rules then
+        fieldraid.smithStatus("SmithingRules not loaded")
+        return
+    end
+    if fieldraid.inRaid() or caravan.active or farm.botCheckActive then
+        fieldraid.smithStatus("Paused (raid/caravan/bot check)")
+        return
+    end
+    local sample = cycleMod.Sample()
+    local now = os.clock()
+    if not rules.Open(sample) then
+        if s.returnCF then fieldraid.smithReturn() end
+        fieldraid.smithStatus("Closed until Day (" .. tostring(sample.Phase) .. ")")
+        return
+    end
+    local cycle = sample.CycleIndex
+    if s.doneCycle == cycle then
+        if s.returnCF then fieldraid.smithReturn() end
+        fieldraid.smithStatus("Paid for this Day | last score " .. tostring(s.score))
+        return
+    end
+    local onShift = plr:GetAttribute("SmithJobCycle") == cycle
+    local atAnvil = plr:GetAttribute("SmithJobAtAnvil")
+    if not onShift then
+        -- Hire: talk to the blacksmith (client limit 16 studs) -> Status -> Accept
+        local head = fieldraid.smithHead()
+        if not head then
+            if fieldraid.smithReach(fieldraid.smithAnvilPos(), 40, "blacksmith shop") then
+                fieldraid.smithStatus("Waiting for the blacksmith to be at work")
+            end
+            return
+        end
+        if not fieldraid.smithReach(head.Position, 12, "blacksmith") then return end
+        if s.statusAt > 0 and now - s.statusAt < 4 and s.cycle == cycle then
+            if s.state == "Available" and now - s.lastStart > 4 then
+                s.lastStart = now
+                fieldraid.fire("SmithJobAccept", cycle)
+                fieldraid.smithStatus("Taking the shift")
+            elseif s.state == "Paid" then
+                s.doneCycle = cycle
+            elseif s.message then
+                fieldraid.smithStatus("Blacksmith: " .. tostring(s.message))
+            end
+        elseif now - s.lastAsk > 5 then
+            s.lastAsk = now
+            fieldraid.fire("SmithJobStatus")
+            fieldraid.smithStatus("Asking for a shift")
+        end
+        return
+    end
+    if atAnvil ~= "Active" and atAnvil ~= "Ready" and s.state ~= "Ready" then
+        -- On shift with nothing at the anvil: refresh (BlacksmithDialogueController sends this near the anvil)
+        -- Two refreshes with nothing at the anvil = this Day's sheet is already paid
+        if fieldraid.smithReach(fieldraid.smithAnvilPos(), 7, "anvil") and now - s.lastAsk > 5 then
+            s.lastAsk = now
+            s.refreshes = (s.refreshes or 0) + 1
+            if s.refreshes > 2 then
+                s.doneCycle, s.refreshes = cycle, 0
+            else
+                fieldraid.fire("SmithJobRefresh")
+                fieldraid.smithStatus("Checking the anvil")
+            end
+        end
+        return
+    end
+    s.refreshes = 0
+    if not fieldraid.smithReach(fieldraid.smithAnvilPos(), 7, "anvil") then return end
+    if atAnvil == "Ready" or s.state == "Ready" then
+        if now - s.lastClaim > 5 then
+            s.lastClaim = now
+            fieldraid.fire("SmithJobClaim", cycle)
+            fieldraid.smithStatus("Turning in sheet (" .. tostring(s.score) .. "/100)")
+            s.state = nil
+        end
+    elseif now - s.lastStart > 12 then
+        s.lastStart = now
+        fieldraid.fire("SmithJobStart")
+        fieldraid.smithStatus("Hammering sheet")
+    end
+end
+
+function fieldraid.smithStart()
+    local s = fieldraid.smith
+    if s.running then return end
+    s.running = true
+    local token = {}
+    _G.CowHubSmithToken = token
+    task.spawn(function()
+        while s.enabled and _G.CowHubLoaded and _G.CowHubSmithToken == token do
+            local ok, err = pcall(fieldraid.smithTick)
+            if not ok then fieldraid.smithStatus("Error: " .. tostring(err)) end
+            task.wait(1)
+        end
+        if _G.CowHubSmithToken == token then pcall(fieldraid.smithReturn) end
+        s.running = false
+    end)
+end
+
 function farm.processMobAura(now, rootPos)
     local auraOrigin = dodge.isUnderground and (dodge.lastSurfacePos or rootPos) or rootPos
     local closestMob = nil
@@ -6037,6 +7189,10 @@ function farm.processMobAura(now, rootPos)
     if closestMob then
         local mob = closestMob
         local mobPos = closestMobPos
+        if fieldraid.isRaidMob(mob) then
+            fieldraid.biteMob(mob, now)
+            return true
+        end
         local isCaveMob = dodge.isMithrilCaveMob(mob)
 
         if isCaveMob then
@@ -6122,6 +7278,11 @@ end
 
 function farm.processGrassChomp(now, rootPos)
     if chomp.mode ~= "Remote" or farm.botCheckActive then return end
+    -- In a field raid there is no pasture grass: bite raid wheat cells instead
+    if fieldraid.inRaid() then
+        fieldraid.chompWheat(now, rootPos)
+        return
+    end
     local chompDelay = chomp.getInterval()
     if (now - farm.lastRaycastChompTime >= chompDelay) then
         if farm.chompOnlyWhileMoving then
@@ -6405,7 +7566,7 @@ end
 -- MAIN ENGINE HEARTBEAT LOOP (Concise Dispatcher)
 -- ==========================
 function updateHeartbeatConnection()
-    if farm.on or farm.autoChomp or farm.autoFish or farm.autoChompMobs or dodge.auto or (manatite and manatite.auto) or (mithril and mithril.auto) then
+    if farm.on or farm.autoChomp or farm.autoFish or farm.autoChompMobs or dodge.auto or fieldraid.auto or (manatite and manatite.auto) or (mithril and mithril.auto) then
         if not HeartbeatConnection then
             HeartbeatConnection = RunService.Heartbeat:Connect(function(dt)
             _G.CowHubHeartbeat = HeartbeatConnection
@@ -6493,7 +7654,13 @@ function updateHeartbeatConnection()
                 end
 
                 -- 1. Movement Logic
-                if farm.on and not (manatite and manatite.auto) and not (mithril and mithril.auto) and farm.anchorPos and not dodge.isDodging and not dodge.isUnderground then
+                -- Field raid autofarm owns movement while a run is live
+                local raidOwnsMove = fieldraid.auto and fieldraid.inRaid()
+                if fieldraid.auto then
+                    fieldraid.tick(now, rootPos)
+                end
+
+                if farm.on and not (manatite and manatite.auto) and not (mithril and mithril.auto) and farm.anchorPos and not raidOwnsMove and not dodge.isDodging and not dodge.isUnderground then
                     farm.processMovement(dt, now, rootPos)
                 end
 
@@ -6578,6 +7745,22 @@ local MainTab = Window:CreateTab({ Name = "Autofarm", Icon = 4483362458 })
 do
 
     MainTab:CreateSection({ Name = "Main Toggles" })
+
+    -- One switch for the hub-wide reward closer (rafting.dismissChestRewardGui): chest reveals,
+    -- reward boxes, favorite-reward and quest prompts, wherever they pop up
+    MainTab:CreateToggle({
+        Name = "Auto-Dismiss Chests & Prompts",
+        CurrentValue = true,
+        Flag = "Toggle_AutoDismissRewards",
+        Callback = function(Value)
+            -- Kept on fieldraid (declared early): Gen2 may apply the saved flag before rafting exists
+            fieldraid.autoDismiss = Value
+            if rafting then
+                rafting.autoDismissRewardGui = Value
+                rafting.autoAcceptRewards = Value
+            end
+        end,
+    })
 
     MainTab:CreateToggle({
         Name = "Enable Autofarm (Movement)",
@@ -8907,8 +10090,8 @@ rafting = {
         ["Clearing_10"] = true,
     },
     autoContinueFromDock = true,
-    autoAcceptRewards = true,
-    autoDismissRewardGui = true,
+    autoAcceptRewards = fieldraid.autoDismiss ~= false,
+    autoDismissRewardGui = fieldraid.autoDismiss ~= false,
     autoBoost = true,
     minBoostStamina = 40,
     isBoosting = false,
@@ -10869,7 +12052,10 @@ do
 
         -- 1. Targeted dismissal for known reward / reveal modal ScreenGuis (RewardBoxReveal from TeamChestController, etc.)
         local targetGuiNames = { "RewardBoxReveal", "CaravanCrateReveal", "CowFavoriteReward", "FavoriteRewardPrompt", "QuestModal" }
+        -- Field raid chest heal keeps its reveal open until hearts are full (fieldraid closes it)
+        local raidHealing = not force and fieldraid.auto and fieldraid.fastChest and fieldraid.chestBusy
         for _, tName in ipairs(targetGuiNames) do
+            if raidHealing and tName == "RewardBoxReveal" then continue end
             local rGui = nil
             pcall(function() rGui = pg:FindFirstChild(tName) end)
             local isTargetActive = false
@@ -13374,10 +14560,6 @@ do
     end
 
     ui.optionDropdown(RaftingTab, "Voyage Options", "Dropdown_RaftVoyageOptions", {
-        { label = "Auto-Dismiss Reward", default = true, fn = function(Value)
-            rafting.autoDismissRewardGui = Value
-            rafting.autoAcceptRewards = Value
-        end },
         { label = "Auto-Continue", default = true, fn = function(Value)
             rafting.autoContinueFromDock = Value
         end },
@@ -14610,6 +15792,7 @@ dailies.PAUSABLE = {
     { flag = "Toggle_Rafting_Enabled", on = function() return rafting.enabled == true end },
     { flag = "Toggle_ManatiteFarm", on = function() return (manatite and manatite.auto) == true end },
     { flag = "Toggle_MithrilFarm", on = function() return (mithril and mithril.auto) == true end },
+    { flag = "Toggle_FieldRaidAuto", on = function() return fieldraid.auto == true end },
     { flag = "Toggle_MobAura", on = function() return farm.autoChompMobs == true end },
     { flag = "Toggle_Chomp", on = function() return farm.autoChomp == true end },
     { flag = "Toggle_Fish", on = function() return farm.autoFish == true end },
@@ -15647,6 +16830,120 @@ do
 end
 
 -- ==========================
+-- UI SETUP: Field Raid Tab
+-- ==========================
+do
+    local RaidTab = Window:CreateTab({ Name = "Field Raid", Icon = 4483362458 })
+    -- Horizontal row (Gen2 groups); falls back to the tab when groups are unavailable
+    local function row()
+        local ok, group = pcall(function() return RaidTab:CreateGroup({ direction = "row" }) end)
+        fieldraid.uiRows = (fieldraid.uiRows or 0) + ((ok and group) and 1 or 0)
+        return ok and group or RaidTab
+    end
+
+    RaidTab:CreateSection({ Name = "North River Field Raid" })
+    if RaidTab.CreateParagraph then
+        pcall(function() fieldraid.statusCard = RaidTab:CreateParagraph({ Title = "Field Raid", Content = fieldraid.status }) end)
+    end
+
+    RaidTab:CreateToggle({
+        Name = "Auto Field Raid (forward only)",
+        CurrentValue = false,
+        Flag = "Toggle_FieldRaidAuto",
+        Callback = function(Value)
+            fieldraid.auto = Value
+            if not Value then
+                fieldraid.stopWalk()
+                fieldraid.setStatus("Idle")
+            end
+            updateHeartbeatConnection()
+        end,
+    })
+
+    RaidTab:CreateDropdown({
+        Name = "Raid Focus",
+        Options = { "Grazing", "Loot Runs" },
+        CurrentOption = { "Grazing" },
+        MultipleOptions = false,
+        Flag = "Dropdown_FieldRaidFocus",
+        Callback = function(Options)
+            local pick = (type(Options) == "table" and Options[1]) or Options
+            fieldraid.focus = pick == "Loot Runs" and "Loot Runs" or "Grazing"
+        end,
+    })
+
+    ui.optionDropdown(RaidTab, "Raid Options", "Dropdown_FieldRaidOptions", {
+        { label = "Auto Start Next Raid", default = true, fn = function(Value) fieldraid.autoStart = Value end },
+        { label = "Push Deeper", default = true, fn = function(Value) fieldraid.pushDeeper = Value end },
+        { label = "Dodge Telegraphs", default = true, fn = function(Value) fieldraid.dodge = Value end },
+        { label = "Blink Dodge", default = true, fn = function(Value) fieldraid.blink = Value end },
+        { label = "Dodge Assist (manual play)", default = false, fn = function(Value) fieldraid.dodgeAssist = Value end },
+        { label = "Close Chest Once Healed", default = true, fn = function(Value) fieldraid.fastChest = Value end },
+    })
+
+    RaidTab:CreateSlider({
+        Name = "Max Field Level (deeper = richer wheat)",
+        Range = {1, 10},
+        Increment = 1,
+        Suffix = "Field",
+        CurrentValue = 10,
+        Flag = "Slider_FieldRaidMaxLevel",
+        Callback = function(Value) fieldraid.maxLevel = Value end,
+    })
+
+    local actions = row()
+    actions:CreateButton({
+        Name = "Start Solo Raid",
+        Callback = function()
+            fieldraid.fire("Solo", 1)
+        end,
+    })
+    actions:CreateButton({
+        Name = "Bank & Leave",
+        Callback = function()
+            if fieldraid.inRaid() then
+                fieldraid.leaving, fieldraid.exitVia = "manual", nil
+                if not fieldraid.auto then
+                    safeNotify({ Title = "Field Raid", Content = "Turn on Auto Field Raid to walk to the gate.", Duration = 5, Image = 4483362458 })
+                end
+            end
+        end,
+    })
+
+    RaidTab:CreateSection({ Name = "Blacksmith Anvil Shift (Day)" })
+    if RaidTab.CreateParagraph then
+        pcall(function() fieldraid.smith.statusCard = RaidTab:CreateParagraph({ Title = "Blacksmith Shift", Content = fieldraid.smith.status }) end)
+    end
+
+    local smithRow = row()
+    smithRow:CreateToggle({
+        Name = "Auto Blacksmith Shift",
+        CurrentValue = false,
+        Flag = "Toggle_SmithShift",
+        Callback = function(Value)
+            fieldraid.smith.enabled = Value
+            if Value then fieldraid.smithStart() else fieldraid.smithStatus("Idle") end
+        end,
+    })
+    smithRow:CreateToggle({
+        Name = "Teleport To Smith",
+        CurrentValue = false,
+        Flag = "Toggle_SmithTeleport",
+        Callback = function(Value) fieldraid.smith.teleport = Value end,
+    })
+
+    function fieldraid.setFlag(flag, on)
+        pcall(function() Window:Set(flag, on) end)
+    end
+
+    function fieldraid.setOption(label, on)
+        ui.setOption("Dropdown_FieldRaidOptions", label, on)
+    end
+end
+
+_G.CowHubFieldRaid = fieldraid -- debug handle (executor-side tests)
+
+-- ==========================
 -- UI SETUP: Settings Tab
 -- ==========================
 do
@@ -15835,6 +17132,8 @@ do
                 pcall(_G.CowHubChompCleanup)
                 farm.autoChompMobs = false
                 farm.autoFish = false
+                fieldraid.auto = false
+                fieldraid.smith.enabled = false
                 cache.cleanupRippleTracking()
                 dodge.auto = false
 
