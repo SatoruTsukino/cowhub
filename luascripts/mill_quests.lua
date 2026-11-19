@@ -72,6 +72,7 @@ local mq = {
     c1Missed = false,    -- passed a needed C1 field without its ripe harvest this outing
     c2Missed = false,    -- passed Field 8 before 3 clean ripe bites this outing
     holdNearZ = nil,     -- while holding a field: its near edge (moving back inside the field is allowed)
+    goalPos = nil,       -- ripe cell / bell the cow is going for: dodges prefer safe spots near it
     pendingCells = {},   -- [nodeId] = field level: ripe cell bitten, credit once the server removes it
     f8RipeStreak = 0,    -- 0..3 clean ripe bites in Field 8
     c2DoneRun = false,
@@ -88,9 +89,11 @@ local mq = {
     meadowChest = nil,
     homePrompt = nil,
     bell = nil,          -- { Position, Opens, Closes, Row, Bell }
-    -- Ripe bells come 3 per field (Bell = 1..3, ~55-75 s apart) at one spot of that field
+    -- Ripe bells ring 3 per field at one spot of that field (msg.Bell counts up across the run)
     bellSpot = {},       -- [field] = last bell Position
-    bellIndex = {},      -- [field] = highest Bell index seen this outing
+    bellIndex = {},      -- [field] = bells rung in that field this outing
+    bellSeen = {},       -- [run Bell number] = true (dedupe repeated Bell events)
+    bellClose = {},      -- [field] = Closes (server time) of its latest bell
     holdSince = {},      -- [field] = os.clock() when the cow started holding it
     lastBellAt = 0,      -- os.clock() of the last Bell event
     BELL_TIMEOUT = 150,  -- no bell for this long while holding a field: give it up for the outing
@@ -224,6 +227,8 @@ function mq.resetRunTrackers()
     mq.bell = nil
     table.clear(mq.bellSpot)
     table.clear(mq.bellIndex)
+    table.clear(mq.bellSeen)
+    table.clear(mq.bellClose)
     table.clear(mq.holdSince)
     mq.bossPos = nil
     mq.bossHealth = 0
@@ -706,12 +711,13 @@ function mq.blinkDodge(holdLevel)
             local spot = pos + Vector3.new(math.cos(a) * r, 0, math.sin(a) * r)
             if mq.allowedSpot(spot, pos, holdLevel) and not mq.danger(spot, serverNow, 2.5) then
                 local score = r + (holdLevel and 0 or (spot.Z - pos.Z) * 0.06)
+                if mq.goalPos then score = r * 0.3 + (spot - mq.goalPos).Magnitude end
                 if score < bestScore and mq.spotClear(char, pos, spot) then
                     best, bestScore = spot, score
                 end
             end
         end
-        if best then break end
+        if best and not mq.goalPos then break end
     end
     if not best then return end
     mq.lastBlink = now
@@ -734,6 +740,10 @@ function mq.jink(shooterPos)
     local serverNow = workspace:GetServerTimeNow()
     local holdLevel = (mq.holdLevelNow and mq.level == mq.holdLevelNow) and mq.holdLevelNow or nil
     local first = mq.jinkSide or 1
+    if mq.goalPos then
+        -- Sidestep toward the ripe cell / bell when one is targeted
+        first = (mq.goalPos - pos):Dot(side) >= 0 and 1 or -1
+    end
     for _, dist in ipairs({ 7, 10, 5 }) do
         for _, sgn in ipairs({ first, -first }) do
             local spot = pos + side * (dist * sgn)
@@ -825,6 +835,15 @@ function mq.walkTo(target, now, humanoid, root)
         side = side.Magnitude > 0.1 and side.Unit or Vector3.new(1, 0, 0)
         humanoid:MoveTo(here + side * (12 * mq.nudgeDir))
         mq.lastMove = now
+        return
+    end
+    -- Short hops go straight: pathfinding detours cost the 8 s ripe window
+    if (target - here).Magnitude < 30 then
+        mq.path, mq.pathTarget = nil, nil
+        if now - mq.lastMove > 0.15 then
+            mq.lastMove = now
+            humanoid:MoveTo(target)
+        end
         return
     end
     if mq.pathTarget and ((mq.pathTarget - target).Magnitude > 14 or now - mq.pathAt > 6) then
@@ -1075,6 +1094,7 @@ end
 
 -- Hold safely inside `targetLevel` and hunt ripe wheat (Bell or RaidRipe wheat cells)
 function mq.huntRipeInField(now, rootPos, humanoid, root, targetLevel, statusPrefix)
+    mq.goalPos = nil
     local nearZ, farZ = mq.bandZ(targetLevel)
     if not nearZ or not farZ then
         mq.setStatus(statusPrefix .. ": awaiting field bounds")
@@ -1105,12 +1125,14 @@ function mq.huntRipeInField(now, rootPos, humanoid, root, targetLevel, statusPre
     -- 1) Live RaidRipe wheat cell inside this field band
     local ripePart, ripeDist = mq.findWheat(rootPos, now, true, farZ, nearZ)
     if ripePart then
+        mq.goalPos = ripePart.Position
         if ripeDist <= mq.REACH then
             mq.sendChomp(ripePart:GetAttribute("NodeId"), ripePart, now, root)
             mq.setStatus(statusPrefix .. ": biting ripe wheat!")
             return
         end
         local tp = ripePart.Position
+        mq.goalPos = tp
         mq.walkTo(Vector3.new(math.clamp(tp.X, minX, maxX), rootPos.Y, math.clamp(tp.Z, safeFarZ, safeNearZ)), now, humanoid, root)
         mq.setStatus(string.format("%s: rushing ripe wheat (%d studs)", statusPrefix, math.floor(ripeDist)))
         return
@@ -1125,6 +1147,7 @@ function mq.huntRipeInField(now, rootPos, humanoid, root, targetLevel, statusPre
             local bx = math.clamp(bell.Position.X, minX, maxX)
             local bzc = math.clamp(bz, safeFarZ, safeNearZ)
             local targetPos = Vector3.new(bx, rootPos.Y, bzc)
+            mq.goalPos = targetPos
             local dist = (targetPos - rootPos).Magnitude
             if dist > 8 then
                 mq.walkTo(targetPos, now, humanoid, root)
@@ -1149,7 +1172,8 @@ function mq.huntRipeInField(now, rootPos, humanoid, root, targetLevel, statusPre
     -- 3) Bells are spent after the third one (or none rang for BELL_TIMEOUT): lost for the outing
     mq.holdSince[targetLevel] = mq.holdSince[targetLevel] or now
     local quiet = now - math.max(mq.holdSince[targetLevel], mq.lastBellAt) > mq.BELL_TIMEOUT
-    if (mq.bellIndex[targetLevel] or 0) >= 3 or quiet then
+    local spent = (mq.bellIndex[targetLevel] or 0) >= 3 and serverNow > (mq.bellClose[targetLevel] or 0) + 1
+    if spent or quiet then
         if targetLevel == 8 then mq.c2Missed = true else mq.c1Missed = true end
         mq.refreshUI()
         mq.setStatus(statusPrefix .. ": F" .. targetLevel .. " bells spent, next outing")
@@ -1324,7 +1348,8 @@ function mq.tick(now)
         holdLevel = 10
     end
 
-    -- Always dodge telegraphs first; bite on the move
+    -- Always dodge telegraphs first; bite on the move (goalPos: last tick's ripe target, if still hunting)
+    if (goal ~= 1 and goal ~= 2) or mq.leaving then mq.goalPos = nil end
     mq.holdLevelNow = holdLevel
     local dodgeClamp = (holdLevel and mq.level == holdLevel) and holdLevel or nil
     if mq.dodgeStep(now, rootPos, humanoid, dodgeClamp) then
@@ -1459,9 +1484,12 @@ do
                 mq.bell = msg
                 mq.lastBellAt = os.clock()
                 local lv = typeof(msg.Position) == "Vector3" and mq.levelAtZ(msg.Position.Z)
-                if lv then
+                local key = tonumber(msg.Bell) or msg.Closes
+                if lv and key and not mq.bellSeen[key] then
+                    mq.bellSeen[key] = true
                     mq.bellSpot[lv] = msg.Position
-                    mq.bellIndex[lv] = math.max(mq.bellIndex[lv] or 0, tonumber(msg.Bell) or 0)
+                    mq.bellIndex[lv] = (mq.bellIndex[lv] or 0) + 1
+                    mq.bellClose[lv] = tonumber(msg.Closes) or 0
                 end
             elseif kind == "Windup" or kind == "ProjectileAim" or kind == "BarrageMark" then
                 mq.addHazard(msg)
