@@ -1,4 +1,4 @@
--- Cow Hub [a98d28e] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [cc0e537] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [a98d28e]",
+    Name = "Cow Hub [cc0e537]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -6194,6 +6194,14 @@ function fieldraid.addHazard(msg)
     if not enemies then return end
     local ok, def = pcall(enemies.Move, msg.Species, attack.Move)
     if not ok or type(def) ~= "table" or not def.Shape then return end
+    -- Projectile windup (StrikeAt = release): sidestep just before the shot locks onto the cow
+    if def.Projectile and msg.Kind == "Windup" and typeof(msg.Frame) == "CFrame" and root then
+        local shooter = msg.Frame.Position
+        if (root.Position - shooter).Magnitude <= (def.Range or 60) + 10 then
+            local lead = attack.StrikeAt - workspace:GetServerTimeNow()
+            task.delay(math.max(0, lead - 0.12), function() fieldraid.jink(shooter) end)
+        end
+    end
     local ends = tonumber(attack.EndsAt) or (attack.StrikeAt + 0.35)
     if def.Shape == "Tripline" then ends = math.max(ends, attack.StrikeAt + (def.ActiveSeconds or 1.6)) end
     local list = fieldraid.hazards
@@ -6228,6 +6236,35 @@ function fieldraid.spotClear(from, spot)
     if workspace:Raycast(from + up, Vector3.new(dir.X, 0, dir.Z), raycastParams) then return false end
     local ground = workspace:Raycast(spot + Vector3.new(0, 6, 0), Vector3.new(0, -14, 0), raycastParams)
     return ground ~= nil and math.abs(ground.Position.Y - (from.Y - 3)) < 6
+end
+
+-- Arrows, stones and boulders aim at the cow's forecast when released and then fly too fast to react to:
+-- blink 5-10 studs perpendicular to the shooter right before release, alternating sides
+function fieldraid.jink(shooterPos)
+    if not fieldraid.dodge or not fieldraid.blink or not (fieldraid.auto or fieldraid.dodgeAssist) then return end
+    if not root or not root.Parent or root.Anchored or not fieldraid.inRaid() then return end
+    local pos = root.Position
+    local toCow = Vector3.new(pos.X - shooterPos.X, 0, pos.Z - shooterPos.Z)
+    if toCow.Magnitude < 0.5 then return end
+    local side = Vector3.new(-toCow.Z, 0, toCow.X).Unit
+    local serverNow = workspace:GetServerTimeNow()
+    local first = fieldraid.jinkSide or 1
+    for _, dist in ipairs({ 7, 10, 5 }) do
+        for _, sgn in ipairs({ first, -first }) do
+            local spot = pos + side * (dist * sgn)
+            if spot.Z <= fieldraid.backLimit(pos) and not fieldraid.danger(spot, serverNow, 2.5) and fieldraid.spotClear(pos, spot) then
+                fieldraid.jinkSide = -sgn
+                fieldraid.lastBlink = os.clock()
+                local look = root.CFrame.LookVector
+                setRootCFrame(CFrame.lookAt(spot, spot + Vector3.new(look.X, 0, look.Z)))
+                root.AssemblyLinearVelocity = Vector3.zero
+                fieldraid.path, fieldraid.pathTarget = nil, nil
+                fieldraid.jinks = (fieldraid.jinks or 0) + 1
+                return true
+            end
+        end
+    end
+    return false
 end
 
 -- Instant step out of a telegraph that would land on the cow within ~1.2 s (walking is too slow)
@@ -6268,17 +6305,47 @@ function fieldraid.dropHazards(id)
 end
 
 -- Would standing at pos be hit by a telegraph resolving within `horizon` s? (webs: while active)
+-- Safety margin around the cow: latency and the game's forecast aim land hits 1-2 studs outside the
+-- exact shape (hit log: GuardArrow hits at 2.6-2.8 studs from a 2.7-stud circle)
+local DANGER_MARGIN = 1.6
+local MARGIN_OFFSETS = {
+    Vector3.zero, Vector3.new(DANGER_MARGIN, 0, 0), Vector3.new(-DANGER_MARGIN, 0, 0),
+    Vector3.new(0, 0, DANGER_MARGIN), Vector3.new(0, 0, -DANGER_MARGIN),
+}
+
+-- Flat distance from p to segment a-b
+local function segDist(p, a, b)
+    local ab = Vector3.new(b.X - a.X, 0, b.Z - a.Z)
+    local ap = Vector3.new(p.X - a.X, 0, p.Z - a.Z)
+    local len2 = ab:Dot(ab)
+    if len2 < 1e-4 then return ap.Magnitude end
+    local s = math.clamp(ap:Dot(ab) / len2, 0, 1)
+    return (ap - ab * s).Magnitude
+end
+
 function fieldraid.danger(pos, serverNow, horizon)
     local combat = fieldraid.combat
     if not combat then return false end
     for _, h in ipairs(fieldraid.hazards) do
         if serverNow <= h.ends and h.strike - serverNow <= horizon then
-            local ok, hit = pcall(combat.Contains, h.def, h.attack, pos, h.def.Shape == "Tripline" and 4 or 5)
-            if ok and hit then return true end
+            local a = h.attack
+            if typeof(a.Launch) == "Vector3" and typeof(a.FlightEnd) == "Vector3" then
+                -- Aimed projectile: it hits anything along its flight (FieldRaidCombat.ArrowContact)
+                if segDist(pos, a.Launch, a.FlightEnd) <= (h.def.Radius or 3) + DANGER_MARGIN then return true end
+            elseif h.def.Shape == "Tripline" then
+                local ok, hit = pcall(combat.Contains, h.def, a, pos, 4)
+                if ok and hit then return true end
+            else
+                for _, off in ipairs(MARGIN_OFFSETS) do
+                    local ok, hit = pcall(combat.Contains, h.def, a, pos + off, 5)
+                    if ok and hit then return true end
+                end
+            end
         end
     end
     return false
 end
+
 
 -- Nearest safe spot on rings around the cow; prefers spots away from the casters. Returns nil if none needed.
 function fieldraid.dodgeStep(now, rootPos)

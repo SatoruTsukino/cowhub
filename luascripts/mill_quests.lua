@@ -544,6 +544,16 @@ function mq.addHazard(msg)
         end
     end
 
+    -- Projectile windup (StrikeAt = release): sidestep just before the shot locks onto the cow
+    if def.Projectile and msg.Kind == "Windup" and typeof(msg.Frame) == "CFrame" then
+        local _, r = getChar()
+        local shooter = msg.Frame.Position
+        if r and (r.Position - shooter).Magnitude <= (def.Range or 60) + 10 then
+            local lead = attack.StrikeAt - workspace:GetServerTimeNow()
+            task.delay(math.max(0, lead - 0.12), function() mq.jink(shooter) end)
+        end
+    end
+
     local ends = tonumber(attack.EndsAt) or (attack.StrikeAt + 0.35)
     if def.Shape == "Tripline" then
         ends = math.max(ends, attack.StrikeAt + (def.ActiveSeconds or 1.6))
@@ -580,17 +590,47 @@ function mq.dropHazards(id)
     end
 end
 
+-- Safety margin around the cow: latency and the game's forecast aim land hits 1-2 studs outside the
+-- exact shape (hit log: GuardArrow hits at 2.6-2.8 studs from a 2.7-stud circle)
+local DANGER_MARGIN = 1.6
+local MARGIN_OFFSETS = {
+    Vector3.zero, Vector3.new(DANGER_MARGIN, 0, 0), Vector3.new(-DANGER_MARGIN, 0, 0),
+    Vector3.new(0, 0, DANGER_MARGIN), Vector3.new(0, 0, -DANGER_MARGIN),
+}
+
+-- Flat distance from p to segment a-b
+local function segDist(p, a, b)
+    local ab = Vector3.new(b.X - a.X, 0, b.Z - a.Z)
+    local ap = Vector3.new(p.X - a.X, 0, p.Z - a.Z)
+    local len2 = ab:Dot(ab)
+    if len2 < 1e-4 then return ap.Magnitude end
+    local s = math.clamp(ap:Dot(ab) / len2, 0, 1)
+    return (ap - ab * s).Magnitude
+end
+
 function mq.danger(pos, serverNow, horizon)
     local combat = mq.combat
     if not combat then return false end
     for _, h in ipairs(mq.hazards) do
         if serverNow <= h.ends and h.strike - serverNow <= horizon then
-            local ok, hit = pcall(combat.Contains, h.def, h.attack, pos, h.def.Shape == "Tripline" and 4 or 5)
-            if ok and hit then return true end
+            local a = h.attack
+            if typeof(a.Launch) == "Vector3" and typeof(a.FlightEnd) == "Vector3" then
+                -- Aimed projectile: it hits anything along its flight (FieldRaidCombat.ArrowContact)
+                if segDist(pos, a.Launch, a.FlightEnd) <= (h.def.Radius or 3) + DANGER_MARGIN then return true end
+            elseif h.def.Shape == "Tripline" then
+                local ok, hit = pcall(combat.Contains, h.def, a, pos, 4)
+                if ok and hit then return true end
+            else
+                for _, off in ipairs(MARGIN_OFFSETS) do
+                    local ok, hit = pcall(combat.Contains, h.def, a, pos + off, 5)
+                    if ok and hit then return true end
+                end
+            end
         end
     end
     return false
 end
+
 
 function mq.spotClear(char, from, spot)
     local view = workspace:FindFirstChild("NorthRiverRaidView")
@@ -662,6 +702,37 @@ function mq.blinkDodge(holdLevel)
     setRootCFrame(CFrame.lookAt(best, best + Vector3.new(look.X, 0, look.Z)), root)
     root.AssemblyLinearVelocity = Vector3.zero
     mq.path, mq.pathTarget = nil, nil
+end
+
+-- Arrows, stones and boulders aim at the cow's forecast when released and then fly too fast to react to:
+-- blink 5-10 studs perpendicular to the shooter right before release, alternating sides
+function mq.jink(shooterPos)
+    if not mq.running or not plr:GetAttribute("CowFieldRaidId") then return end
+    local char, root = getChar()
+    if not char or not root or not root.Parent or root.Anchored then return end
+    local pos = root.Position
+    local toCow = Vector3.new(pos.X - shooterPos.X, 0, pos.Z - shooterPos.Z)
+    if toCow.Magnitude < 0.5 then return end
+    local side = Vector3.new(-toCow.Z, 0, toCow.X).Unit
+    local serverNow = workspace:GetServerTimeNow()
+    local holdLevel = (mq.holdLevelNow and mq.level == mq.holdLevelNow) and mq.holdLevelNow or nil
+    local first = mq.jinkSide or 1
+    for _, dist in ipairs({ 7, 10, 5 }) do
+        for _, sgn in ipairs({ first, -first }) do
+            local spot = pos + side * (dist * sgn)
+            if mq.allowedSpot(spot, pos, holdLevel) and not mq.danger(spot, serverNow, 2.5) and mq.spotClear(char, pos, spot) then
+                mq.jinkSide = -sgn
+                mq.lastBlink = os.clock()
+                local look = root.CFrame.LookVector
+                setRootCFrame(CFrame.lookAt(spot, spot + Vector3.new(look.X, 0, look.Z)), root)
+                root.AssemblyLinearVelocity = Vector3.zero
+                mq.path, mq.pathTarget = nil, nil
+                mq.jinks = (mq.jinks or 0) + 1
+                return true
+            end
+        end
+    end
+    return false
 end
 
 function mq.dodgeStep(now, rootPos, humanoid, holdLevel)
@@ -1216,6 +1287,7 @@ function mq.tick(now)
     end
 
     -- Always dodge telegraphs first; bite on the move
+    mq.holdLevelNow = holdLevel
     local dodgeClamp = (holdLevel and mq.level == holdLevel) and holdLevel or nil
     if mq.dodgeStep(now, rootPos, humanoid, dodgeClamp) then
         mq.biteNearby(now, root, rootPos)
