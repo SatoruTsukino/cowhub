@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Barebones crate / team chest odds calculator (tkinter GUI).
+"""Barebones crate / team chest / field raid odds calculator (tkinter GUI).
 
 Mirrors the decompiled Cow Game modules (Opiumware workspace dumps):
   LuckRules.Weights             luck boost for R/SR/M, funded by Common/Uncommon above OrdinaryFloor,
@@ -9,6 +9,9 @@ Mirrors the decompiled Cow Game modules (Opiumware workspace dumps):
   CaravanRules.SkinWeights      crates: passes { SuperRare = 6, Rare = 1.5 if Halloween else 1 }
   TeamChestLoot.HatChance       chests: tier hat weights, pity family = whole hat collection,
                                 module default caps (SR 3, Rare 1.5), times RareChance
+  FieldRaidWardrobeConfig       27 Field Raid coats (Chest base weights & coat drop % are server-only)
+  FieldRaidPowerups             Mushroom Island (Luck = min(40, lv), Mythic/SR eligible bonus)
+  FieldRaidLoadout              Pot o' Luck (1.5x) / Pot o' Greed (2x) raid luck
 """
 import tkinter as tk
 
@@ -63,9 +66,74 @@ CHESTS = {
 CHEST_CAPS = (3.0, 1.5)  # CollectionLuckRules.Multiplier defaults; HatWeights passes no caps
 SECRET_SKIN = ("NoobCoat", 0.2, 1)  # TeamChestLoot.SecretSkin: Id, Chance, Level
 
+# FieldRaidWardrobeConfig: 27 coats (chest base weights & coat drop % are server-only)
+FIELD_RAID_PRESET = "Field Raid"
+FIELD_RAID_COATS = {
+    "Common": [
+        ("RaidGleanerCoat", "Gleaner"),
+        ("RaidSowerCoat", "Sower"),
+        ("RaidHarvestHandCoat", "Harvest Hand"),
+        ("RaidThresherCoat", "Thresher"),
+        ("RaidCloverPickerCoat", "Clover Picker"),
+        ("RaidRailSplitterCoat", "Rail Splitter"),
+        ("RaidCarterCoat", "Carter"),
+        ("RaidWaterCarrierCoat", "Water Carrier"),
+    ],
+    "Uncommon": [
+        ("RaidMillerCoat", "Miller"),
+        ("RaidFieldSmithCoat", "Field Smith"),
+        ("RaidTollkeeperCoat", "Tollkeeper"),
+        ("RaidFerryKeeperCoat", "Ferry Keeper"),
+        ("RaidForagerCoat", "Mushroom Forager"),
+        ("RaidPedlarCoat", "Pedlar"),
+        ("RaidMinstrelCoat", "Minstrel"),
+        ("RaidGranaryClerkCoat", "Granary Clerk"),
+    ],
+    "Rare": [
+        ("RaidVillageGuardCoat", "Village Guard"),
+        ("RaidVillageArcherCoat", "Village Archer"),
+        ("RaidSquireCoat", "Squire"),
+        ("RaidLamplighterCoat", "Lamplighter"),
+        ("RaidOutfitterCoat", "Raid Outfitter"),
+    ],
+    "Super Rare": [
+        ("RaidGuardCaptainCoat", "City Guard Captain"),
+        ("RaidWarlockCoat", "Warlock"),
+        ("RaidCaparisonCoat", "Tourney Caparison"),
+        ("RaidSilkspinnerCoat", "Silkspinner"),
+    ],
+    "Mythic": [
+        ("RaidFieldOgreCoat", "Field Ogre"),
+        ("RaidGoldenHarvestCoat", "Golden Harvest"),
+    ],
+}
+FIELD_RAID_CAPS = (3.0, 1.5)  # CollectionLuckRules.Multiplier defaults
+FIELD_RAID_POTIONS = {
+    "None (1x)": 1.0,
+    "Pot o' Luck (1.5x)": 1.5,
+    "Pot o' Greed (2x)": 2.0,
+}
+
 NO_PRESET = "No preset"
 BORDER = "#444"
 ERROR_FG = "#e53935"  # mid red: readable on light and dark backgrounds
+
+
+def mushroom_island_stats(level):
+    """FieldRaidPowerups.Stats('MushroomIsland', level) -> (luck_pts, mythic_bonus, sr_bonus)."""
+    lv = max(0, min(99, int(level)))
+    return min(40, lv), (lv * 0.0025 + 0.01) / 100, (lv * 0.0125 + 0.05) / 100
+
+
+def field_raid_data(weights, owned_ids):
+    """Build (items, family) for the 27-coat Field Raid wardrobe given per-coat weights and owned set."""
+    items = []
+    family = {}
+    for t in TIERS:
+        for cid, _ in FIELD_RAID_COATS.get(t, []):
+            items.append((cid, t, weights[t]))
+            family[cid] = (t, cid in owned_ids)
+    return items, family
 
 
 def chest_items(name, level):
@@ -246,10 +314,19 @@ def main():
     # chest-only widgets: tier field + owned-hat checkboxes
     level_label = tk.Label(root, text="Chest tier (zone 1-4)")
     level_entry = entry(len(TIERS) + 4, 1, 1, 6)
+    # field-raid-only widgets: Mushroom Island + Raid potion
+    mush_var = tk.BooleanVar(value=False)
+    mush_check = tk.Checkbutton(root, text="Mushroom Island lvl (0-99)", variable=mush_var)
+    mush_entry = entry(len(TIERS) + 4, 1, 0, 6)
+    potion_label = tk.Label(root, text="Raid potion")
+    potion_var = tk.StringVar(value=next(iter(FIELD_RAID_POTIONS)))
+    potion_menu = bordered(tk.OptionMenu, potion_var, *FIELD_RAID_POTIONS)
+
     hats_frame = tk.LabelFrame(root, text="Hats owned")
     hat_vars = {}
 
     crate_fields = [e for t in TIERS for e in (rows[t][0], rows[t][2])] + [mods["k_sr"], mods["k_r"]]
+    count_fields = [rows[t][0] for t in TIERS]
     owned_fields = [rows[t][1] for t in TIERS]
     preset = tk.StringVar(value=next(iter(PRESETS)))
 
@@ -257,6 +334,12 @@ def main():
         lv = int(level_entry.get() or 0)
         if not 1 <= lv <= 4:
             raise ValueError("chest tier must be 1-4")
+        return lv
+
+    def mushroom_level():
+        lv = int(mush_entry.get() or 0)
+        if not 0 <= lv <= 99:
+            raise ValueError("Mushroom Island level must be 0-99")
         return lv
 
     def refresh_chest(*_):
@@ -276,19 +359,34 @@ def main():
             ws = sorted({round(per_hat.get(h, 0), 4) for h in ids}, reverse=True)
             put(rows[t][2], "/".join(f"{x:g}" for x in ws) if ids else 0)
 
+    def refresh_field_raid(*_):
+        """Fill In-crate and Owned counts from the 27-coat Field Raid wardrobe checklist."""
+        if preset.get() != FIELD_RAID_PRESET:
+            return
+        for t in TIERS:
+            coats = FIELD_RAID_COATS.get(t, [])
+            put(rows[t][0], len(coats))
+            put(rows[t][1], sum(hat_vars[cid].get() for cid, _ in coats))
+
     def load(name):
         lock(crate_fields + owned_fields, False)
         level_label.grid_remove()
         level_entry.grid_remove()
+        mush_check.grid_remove()
+        mush_entry.grid_remove()
+        potion_label.grid_remove()
+        potion_menu.grid_remove()
         hats_frame.grid_remove()
         if name == NO_PRESET:
             return
-        for e in owned_fields:  # owned counts belong to the previous crate/chest
+        for e in owned_fields:  # owned counts belong to the previous crate/chest/raid
             put(e, 0)
-        if name in CHESTS:
+        if name in CHESTS or name == FIELD_RAID_PRESET:
             for child in hats_frame.winfo_children():
                 child.destroy()
             hat_vars.clear()
+        if name in CHESTS:
+            hats_frame.config(text="Hats owned")
             ids = [h for t in TIERS for h in CHESTS[name]["hats"].get(t, [])]
             for k, h in enumerate(ids):
                 hat_vars[h] = tk.BooleanVar(value=False)
@@ -302,6 +400,25 @@ def main():
             refresh_chest()
             lock(crate_fields + owned_fields, True)
             return
+        if name == FIELD_RAID_PRESET:
+            hats_frame.config(text="Coats owned (27)")
+            coats = [(cid, label) for t in TIERS for cid, label in FIELD_RAID_COATS.get(t, [])]
+            for k, (cid, label) in enumerate(coats):
+                hat_vars[cid] = tk.BooleanVar(value=False)
+                tk.Checkbutton(hats_frame, text=label, variable=hat_vars[cid], command=refresh_field_raid).grid(
+                    row=k // 3, column=k % 3, sticky="w", padx=2)
+            for t in TIERS:
+                put(rows[t][2], 1.0)
+            put(mods["k_sr"], FIELD_RAID_CAPS[0])
+            put(mods["k_r"], FIELD_RAID_CAPS[1])
+            mush_check.grid(row=len(TIERS) + 4, column=0, sticky="e", padx=6)
+            mush_entry.grid(row=len(TIERS) + 4, column=1, padx=4, pady=1)
+            potion_label.grid(row=len(TIERS) + 4, column=2, sticky="e", padx=6)
+            potion_menu.grid(row=len(TIERS) + 4, column=3, sticky="w", padx=4, pady=1)
+            hats_frame.grid(row=len(TIERS) + 5, column=0, columnspan=4, padx=6, pady=4, sticky="we")
+            refresh_field_raid()
+            lock(count_fields + owned_fields, True)
+            return
         tiers, k_r = PRESETS[name]
         for t in TIERS:
             n, wt = tiers.get(t, (0, 0))
@@ -314,7 +431,7 @@ def main():
     level_entry.bind("<KeyRelease>", refresh_chest)
 
     tk.Label(root, text="Preset").grid(row=0, column=0, sticky="w", padx=6, pady=4)
-    bordered(tk.OptionMenu, preset, *PRESETS, *CHESTS, NO_PRESET, command=load).grid(
+    bordered(tk.OptionMenu, preset, *PRESETS, *CHESTS, FIELD_RAID_PRESET, NO_PRESET, command=load).grid(
         row=0, column=1, columnspan=3, sticky="w", pady=4)
 
     out = tk.Label(root, font=("Courier", 12), justify="left", anchor="w")
@@ -337,6 +454,26 @@ def main():
                 o, n = sum(own for _, own in family.values()), len(family)
                 tiers = {t for t, _ in family.values()}
                 head = [f"Hat drops in {scale:.0%} of {chest['zone']} chests (tier {level}); % are per chest"]
+            elif name == FIELD_RAID_PRESET:
+                weights = {t: float(rows[t][2].get() or 0) for t in TIERS}
+                if any(v < 0 for v in weights.values()):
+                    raise ValueError("negative value")
+                mush_on = bool(mush_var.get())
+                mush_lv = mushroom_level() if mush_on else 0
+                mush_luck, mush_m, mush_sr = mushroom_island_stats(mush_lv) if mush_on else (0, 0.0, 0.0)
+                pot_mult = FIELD_RAID_POTIONS[potion_var.get()]
+                eff_luck = min(100.0, (max(0.0, m["luck"]) + mush_luck) * pot_mult)
+                owned_ids = {cid for cid, var in hat_vars.items() if var.get()}
+                items, family = field_raid_data(weights, owned_ids)
+                f, complete, res = calc_items(items, family, eff_luck, m["event"], m["k_sr"], m["k_r"])
+                scale = 1.0
+                o, n = len(owned_ids), len(family)
+                tiers = {t for t, _ in family.values()}
+                head = [f"Field Raid (27 coats)   eff luck={eff_luck:g}/100 ({m['luck']:g}+{mush_luck} x{pot_mult:g})"]
+                if mush_on:
+                    head.append(
+                        f"Mushroom Island lv {mush_lv}: +{mush_m * 100:.4f}% Mythic, "
+                        f"+{mush_sr * 100:.4f}% SR bonus (server merge not in dumps)")
             else:
                 counts = {t: int(rows[t][0].get() or 0) for t in TIERS}
                 owned = {t: int(rows[t][1].get() or 0) for t in TIERS}
@@ -367,7 +504,10 @@ def main():
         lines += ["", f"New item per open: {new:.4f}%" + (f" (1 in {100 / new:.1f})" if new else "")]
         if name in CHESTS and level == SECRET_SKIN[2]:
             lines.append(f"tier {level}: secret {SECRET_SKIN[0]} roll {SECRET_SKIN[1]:.0%} (trigger not in dumps)")
-        if name not in CHESTS:
+        if name == FIELD_RAID_PRESET:
+            total_w = sum(wt for _, _, wt in items if wt > 0)
+            lines.append(f"note: server chest weights & coat drop % not in dumps (weights sum {total_w:.4f}, normalized)")
+        elif name not in CHESTS:
             total_w = sum(counts[t] * weights[t] for t in res)
             if abs(total_w - 1) > 1e-6:
                 lines.append(f"note: weights sum to {total_w:.4f}, not 1 (shown normalized)")
