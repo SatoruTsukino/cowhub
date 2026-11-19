@@ -1,4 +1,4 @@
--- Cow Hub [06d926e] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [befe669] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [06d926e]",
+    Name = "Cow Hub [befe669]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -556,6 +556,8 @@ local fieldraid = {
     chestLevels = {},       -- field levels whose chest this run opened
     LAST_CHEST_LEVEL = 9,   -- Planting.ChestPlots are on fields 1,3,5,7,9
     GATE_FALLBACK = Vector3.new(-417.26, 706.95, 32532.46), -- GateExit (Mill gate) in the private arena
+    FERRY_FALLBACK = Vector3.new(-408.26, 707.0, 28454.36), -- RiverExit "Visit harvest meadow" (River ferry, field 10 far edge)
+    exitVia = nil,          -- "ferry" (forward, end of field 10) | "gate" (Mill gate, back at the start)
     status = "Idle",
     statusCard = nil,
     run = nil, runStartedAt = 0, level = 0, bagCalories = 0,
@@ -6375,7 +6377,7 @@ end
 -- Only a manual Bank & Leave may walk back.
 function fieldraid.forward(target, rootPos)
     local limit = fieldraid.backLimit(rootPos)
-    if fieldraid.leaving or target.Z <= limit then return target end
+    if target.Z <= limit then return target end
     return Vector3.new(target.X, target.Y, math.max(rootPos.Z, math.min(limit, target.Z)))
 end
 
@@ -6396,7 +6398,7 @@ end
 -- Furthest +Z the cow may aim. In the max field it roams the whole field (back to its entry line),
 -- elsewhere only a couple of studs behind itself: never back into an earlier field.
 function fieldraid.backLimit(rootPos)
-    if fieldraid.leaving then return math.huge end
+    if fieldraid.leaving and fieldraid.exitVia == "gate" then return math.huge end
     local entry = fieldraid.farmEntryZ
     if entry and fieldraid.level >= fieldraid.maxLevel then
         return math.max(rootPos.Z + fieldraid.BACK_SLACK, entry - 8)
@@ -6483,7 +6485,7 @@ function fieldraid.prompts(now)
     if now - fieldraid.lastPromptScan < 4 then return end
     fieldraid.lastPromptScan = now
     table.clear(fieldraid.chestPrompts)
-    fieldraid.gatePrompt = nil
+    fieldraid.gatePrompt, fieldraid.ferryPrompt = nil, nil
     local arena = fieldraid.arena()
     if not arena then return end
     for _, d in ipairs(arena:GetDescendants()) do
@@ -6492,6 +6494,8 @@ function fieldraid.prompts(now)
                 table.insert(fieldraid.chestPrompts, d)
             elseif d.Name == "GateExit" then
                 fieldraid.gatePrompt = d
+            elseif d.Name == "RiverExit" then
+                fieldraid.ferryPrompt = d
             end
         end
     end
@@ -6542,31 +6546,99 @@ function fieldraid.fmtCal(n)
     return tostring(math.floor(n))
 end
 
--- Manual Bank & Leave only (the autofarm never retreats): walk to the Mill gate, fire GateExit
-function fieldraid.bank(now, rootPos)
-    local prompt = fieldraid.gatePrompt
+-- Leave the run through an exit prompt: the River ferry (RiverExit, end of field 10, forward) or the
+-- Mill gate (GateExit, back at the start). Prompts stream in late, so walk to the known spot meanwhile.
+function fieldraid.exitSpot(via)
+    local prompt = via == "ferry" and fieldraid.ferryPrompt or fieldraid.gatePrompt
     local pos = prompt and prompt.Parent and fieldraid.promptPos(prompt)
-    if not pos then
-        local arena = fieldraid.arena()
-        local soil = arena and arena:FindFirstChild("FieldSoil")
-        pos = soil and (soil.Position + fieldraid.GATE_OFFSET) or fieldraid.GATE_FALLBACK
-        if now - (fieldraid.lastStream or 0) > 5 and (pos - rootPos).Magnitude < 400 then
-            fieldraid.lastStream = now
-            task.spawn(function() pcall(function() plr:RequestStreamAroundAsync(pos, 5) end) end)
-        end
-    end
+    if pos then return prompt, pos end
+    if via == "ferry" then return nil, fieldraid.FERRY_FALLBACK end
+    local arena = fieldraid.arena()
+    local soil = arena and arena:FindFirstChild("FieldSoil")
+    return nil, soil and (soil.Position + fieldraid.GATE_OFFSET) or fieldraid.GATE_FALLBACK
+end
+
+-- Manual Bank & Leave picks the nearer exit; Loot Runs always take the ferry (never walk back)
+function fieldraid.pickExit(rootPos)
+    local _, ferry = fieldraid.exitSpot("ferry")
+    local _, gate = fieldraid.exitSpot("gate")
+    return (ferry - rootPos).Magnitude <= (gate - rootPos).Magnitude and "ferry" or "gate"
+end
+
+function fieldraid.bank(now, rootPos)
+    local via = fieldraid.exitVia or fieldraid.pickExit(rootPos)
+    fieldraid.exitVia = via
+    local prompt, pos = fieldraid.exitSpot(via)
+    local label = via == "ferry" and "River ferry" or "Mill gate"
     local d = (pos - rootPos).Magnitude
+    if not prompt and now - (fieldraid.lastStream or 0) > 5 and d < 400 then
+        fieldraid.lastStream = now
+        task.spawn(function() pcall(function() plr:RequestStreamAroundAsync(pos, 5) end) end)
+    end
     if prompt and d <= math.max(4, prompt.MaxActivationDistance - 1.5) then
         fieldraid.stopWalk()
         if now - (fieldraid.lastGateFire or 0) > 3 then
             fieldraid.lastGateFire = now
             fieldraid.firePrompt(prompt)
-            fieldraid.setStatus("Banking at the Mill gate")
+            fieldraid.setStatus("Leaving at the " .. label)
         end
         return
     end
-    fieldraid.walkTo(pos, now)
-    fieldraid.setStatus(string.format("Banking (%s): %d studs to gate", fieldraid.leaving, math.floor(d)))
+    fieldraid.travel(pos, now)
+    fieldraid.setStatus(string.format("Leaving (%s): %d studs to the %s", tostring(fieldraid.leaving), math.floor(d), label))
+end
+
+-- Harvest meadow (after the ferry; player attribute CowFieldRaidRewardRoom): open our gold chest
+-- (CowWorld.Dynamic, RaidChestOwner = us), then "Return to town" (Meadow gate HomePrompt)
+function fieldraid.meadow(now, rootPos)
+    if now - (fieldraid.lastMeadowScan or 0) > 2 then
+        fieldraid.lastMeadowScan = now
+        fieldraid.meadowChest, fieldraid.homePrompt = nil, nil
+        local cowWorld = workspace:FindFirstChild("CowWorld")
+        local dynamic = cowWorld and cowWorld:FindFirstChild("Dynamic")
+        if dynamic then
+            for _, d in ipairs(dynamic:GetDescendants()) do
+                if d:IsA("ProximityPrompt") and d.Name == "OpenHarvestChest" and d:GetAttribute("RaidChestOwner") == plr.UserId then
+                    fieldraid.meadowChest = d
+                end
+            end
+        end
+        local arena = fieldraid.arena()
+        local landings = arena and arena:FindFirstChild("HarvestLandings")
+        if landings then
+            for _, d in ipairs(landings:GetDescendants()) do
+                if d:IsA("ProximityPrompt") and d.Name == "HomePrompt" then fieldraid.homePrompt = d end
+            end
+        end
+    end
+    local chest = fieldraid.meadowChest
+    local target, label = nil, nil
+    if chest and chest.Parent and chest.Enabled and now - (fieldraid.chestTried[chest] or 0) > 6 then
+        target, label = chest, "gold chest"
+    elseif fieldraid.homePrompt and fieldraid.homePrompt.Parent and fieldraid.homePrompt.Enabled then
+        target, label = fieldraid.homePrompt, "Meadow gate"
+    end
+    if not target then
+        fieldraid.setStatus("Harvest meadow: waiting for prompts")
+        return
+    end
+    local pos = fieldraid.promptPos(target)
+    if not pos then return end
+    local d = (pos - rootPos).Magnitude
+    if d > math.max(4, target.MaxActivationDistance - 2) then
+        if humanoid and now - fieldraid.lastMove > 0.25 then
+            fieldraid.lastMove = now
+            humanoid:MoveTo(pos)
+        end
+        fieldraid.setStatus("Harvest meadow: walking to " .. label)
+        return
+    end
+    if now - (fieldraid.lastMeadowFire or 0) > 3 then
+        fieldraid.lastMeadowFire = now
+        if target == chest then fieldraid.chestTried[chest] = now end
+        fieldraid.firePrompt(target)
+        fieldraid.setStatus(target == chest and "Harvest meadow: opening gold chest" or "Harvest meadow: returning to town")
+    end
 end
 
 -- Outside a raid: walk to the camp sign-up ("Set out") and start a solo run
@@ -6628,16 +6700,20 @@ function fieldraid.tick(now, rootPos)
     local run = fieldraid.runId()
     if not run then
         if fieldraid.run then
-            fieldraid.run, fieldraid.leaving, fieldraid.grazeRun = nil, false, nil
+            fieldraid.run, fieldraid.leaving, fieldraid.grazeRun, fieldraid.exitVia = nil, false, nil, nil
             fieldraid.returnedAt = now
             fieldraid.stopWalk()
             fieldraid.setSprint(false, now)
+        end
+        if plr:GetAttribute("CowFieldRaidRewardRoom") then
+            fieldraid.meadow(now, rootPos)
+            return
         end
         fieldraid.startRun(now, rootPos)
         return
     end
     if fieldraid.run ~= run then
-        fieldraid.run, fieldraid.runStartedAt, fieldraid.leaving, fieldraid.startTries = run, now, false, 0
+        fieldraid.run, fieldraid.runStartedAt, fieldraid.leaving, fieldraid.startTries, fieldraid.exitVia = run, now, false, 0, nil
         fieldraid.lastWheatSeen, fieldraid.farmEntryZ, fieldraid.sweepZ = now, nil, nil
         table.clear(fieldraid.chestLevels)
     end
@@ -6672,7 +6748,7 @@ function fieldraid.tick(now, rootPos)
         local last = math.min(fieldraid.maxLevel, fieldraid.LAST_CHEST_LEVEL)
         if last % 2 == 0 then last -= 1 end
         if fieldraid.chestLevels[last] or fieldraid.level > last or fieldraid.level >= fieldraid.maxLevel then
-            fieldraid.leaving = "loot run complete"
+            fieldraid.leaving, fieldraid.exitVia = "loot run complete", "ferry"
             fieldraid.path, fieldraid.pathTarget = nil, nil
             safeNotify({ Title = "Field Raid", Content = "Loot run complete: banking at the Mill gate.", Duration = 5, Image = 4483362458 })
         end
@@ -16263,7 +16339,7 @@ do
         Name = "Bank & Leave",
         Callback = function()
             if fieldraid.inRaid() then
-                fieldraid.leaving = "manual"
+                fieldraid.leaving, fieldraid.exitVia = "manual", nil
                 if not fieldraid.auto then
                     safeNotify({ Title = "Field Raid", Content = "Turn on Auto Field Raid to walk to the gate.", Duration = 5, Image = 4483362458 })
                 end
