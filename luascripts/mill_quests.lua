@@ -40,10 +40,10 @@ local mq = {
     autoStart = true,
     status = "Idle (press Start)",
 
-    -- Server Ledger state (bit 1 = C1, bit 2 = C2, bit 4 = C3)
+    -- Server challenge state: Profile.FieldRaids.Challenges (bit 1 = C1, bit 2 = C2, bit 4 = C3)
     challengesMask = 0,
     ledgerSynced = false,
-    silentLedgerUntil = 0,
+    ledgerBusy = false,
 
     -- Live run state
     run = nil,
@@ -276,11 +276,25 @@ function mq.refreshUI()
     end
 end
 
-function mq.syncLedger(silent)
-    if silent then
-        mq.silentLedgerUntil = os.clock() + 3
-    end
-    mq.fireRaid("Ledger")
+-- Read the challenge mask from the player snapshot (Remotes.GetSnapshot -> Profile.FieldRaids.Challenges).
+-- The "Ledger" request only answers with Leaderboards; Board/Info records still update it passively.
+function mq.syncLedger()
+    if mq.ledgerBusy then return end
+    local fn = cowRemotes and cowRemotes:FindFirstChild("GetSnapshot")
+    if not fn or not fn:IsA("RemoteFunction") then return end
+    mq.ledgerBusy = true
+    task.spawn(function()
+        local ok, snap = pcall(fn.InvokeServer, fn)
+        mq.ledgerBusy = false
+        if mq.destroyed then return end
+        local raids = ok and type(snap) == "table" and type(snap.Profile) == "table" and snap.Profile.FieldRaids
+        local mask = type(raids) == "table" and tonumber(raids.Challenges)
+        if mask then
+            mq.challengesMask = mask
+            mq.ledgerSynced = true
+            mq.refreshUI()
+        end
+    end)
 end
 
 -- Z span of a field level (FieldRaidLayout.Band)
@@ -1128,7 +1142,7 @@ function mq.tick(now)
             mq.stopWalk()
             mq.setSprint(false, now)
             mq.resetRunTrackers()
-            mq.syncLedger(true)
+            mq.syncLedger()
             mq.refreshUI()
         end
         if plr:GetAttribute("CowFieldRaidRewardRoom") then
@@ -1150,6 +1164,7 @@ function mq.tick(now)
         mq.run = run
         mq.resetRunTrackers()
         mq.startTries = 0
+        mq.syncLedger()
         mq.refreshUI()
     end
 
@@ -1314,27 +1329,6 @@ do
                 mq.challengesMask = msg.Record.Challenges
                 mq.ledgerSynced = true
                 mq.refreshUI()
-            end
-            if kind == "Ledger" and os.clock() <= mq.silentLedgerUntil then
-                mq.silentLedgerUntil = 0
-                task.defer(function()
-                    local pg = plr:FindFirstChild("PlayerGui")
-                    local board = pg and pg:FindFirstChild("NorthRiverFieldRaids")
-                    if board then
-                        -- Close through the board's own button; disabling the ScreenGui would hide later boards
-                        local close = board:FindFirstChild("CloseButton", true)
-                        if close and close:IsA("GuiButton") then
-                            if firesignal then
-                                pcall(function() firesignal(close.Activated) end)
-                            elseif getconnections then
-                                pcall(function()
-                                    for _, c in ipairs(getconnections(close.Activated)) do c:Fire() end
-                                end)
-                            end
-                        end
-                    end
-                end)
-                return
             end
             if kind == "Reset" or kind == "FieldChanged" or kind == "State" then
                 if tonumber(msg.Level) then
@@ -1521,7 +1515,7 @@ function mq.buildUI()
     mq.ui.startBtn = makeBtn(10, 146, 140, "Start", Color3.fromRGB(58, 134, 86))
     mq.ui.modeBtn = makeBtn(160, 146, 140, "Target: Auto", Color3.fromRGB(62, 82, 118))
     local bankBtn = makeBtn(10, 184, 140, "Bank & Leave", Color3.fromRGB(115, 88, 52))
-    local syncBtn = makeBtn(160, 184, 140, "Sync Ledger", Color3.fromRGB(72, 76, 92))
+    local syncBtn = makeBtn(160, 184, 140, "Sync Progress", Color3.fromRGB(72, 76, 92))
 
     mq.ui.startBtn.Activated:Connect(function()
         mq.setRunning(not mq.running)
@@ -1543,7 +1537,7 @@ function mq.buildUI()
     end)
 
     syncBtn.Activated:Connect(function()
-        mq.syncLedger(false)
+        mq.syncLedger()
     end)
 
     mq.refreshUI()
@@ -1592,7 +1586,7 @@ end
 
 _G.CowMillQuests = mq
 mq.buildUI()
-mq.syncLedger(true)
+mq.syncLedger()
 
 table.insert(mq.conns, RunService.Heartbeat:Connect(function()
     if mq.destroyed or not mq.running then return end
