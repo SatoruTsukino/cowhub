@@ -1,4 +1,4 @@
--- Cow Hub [256e22a] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [6d97faf] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -35,6 +35,12 @@ if _G.CowHubLoaded then
         pcall(function() _G.CowHubHeartbeat:Disconnect() end)
         _G.CowHubHeartbeat = nil
     end
+    _G.CowHubDailiesToken = nil
+    _G.CowHubBakeToken = nil
+    _G.CowHubSmithToken = nil
+    if _G.CowHubDailies then _G.CowHubDailies.enabled = false end
+    if _G.CowHubBake then _G.CowHubBake.enabled = false end
+    if _G.CowHubFieldRaid and _G.CowHubFieldRaid.smith then _G.CowHubFieldRaid.smith.enabled = false end
     _G.CowHubConnections = nil
     _G.CowHubRayfield = nil
     _G.CowHubWindow = nil
@@ -60,7 +66,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [256e22a]",
+    Name = "Cow Hub [6d97faf]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -16188,7 +16194,13 @@ function dailies.hasWork(snap, today)
 end
 
 function dailies.tick()
+    if not dailies.enabled then return end
+    if _G.CowHubBake and _G.CowHubBake.running then
+        dailies.setStatus("Deferred: waiting for Auto Bakehouse to finish")
+        return
+    end
     local snap = dailies.snapshot()
+    if not dailies.enabled then return end
     if not snap then dailies.setStatus("Snapshot unavailable") return end
     local today = math.floor(workspace:GetServerTimeNow() / 86400)
 
@@ -16203,6 +16215,7 @@ function dailies.tick()
     dailies.pauseOthers()
     -- A voyage pause can take a moment; read fresh state before acting
     if not dailies.raftOwned then snap = dailies.snapshot() or snap end
+    if not dailies.enabled then return end
     local profile = snap.Profile or {}
     local dr = type(profile.DailyRewards) == "table" and profile.DailyRewards or {}
     local fq, rq = profile.FishermanDailyQuest, profile.RaftingDailyQuest
@@ -16211,24 +16224,24 @@ function dailies.tick()
     -- Quick, stand-still steps (never while the owned raft is out)
     if not busyRaft then
         local offer = snap.DailyRewardOffer
-        if dailies.gift and type(offer) == "table" and not offer.Starter then
+        if dailies.enabled and dailies.gift and type(offer) == "table" and not offer.Starter then
             dailies.setStatus("Collecting daily gift")
             dailies.fire("CraftRequest", { Action = "CollectDailyReward", CalendarDay = offer.CalendarDay, Claimed = offer.Claimed })
             task.wait(1.5)
         end
-        if dailies.cookie and dr.CookiePending then
+        if dailies.enabled and dailies.cookie and dr.CookiePending then
             local save = dailies.cookieMode == "Save" and profile.HasVisitedCaverns == true
             dailies.fire("CraftRequest", { Action = save and "SaveLargeCookie" or "EatLargeCookie" })
             task.wait(1.5)
         end
-        if dailies.furniture and (tonumber(dr.LastFurnitureGiftDay) or today) < today then
+        if dailies.enabled and dailies.furniture and (tonumber(dr.LastFurnitureGiftDay) or today) < today then
             dailies.openFurnitureChest(today)
         end
-        if dailies.fisherman and profile.FishermanQuestStage == "Completed" and type(fq) == "table" then
+        if dailies.enabled and dailies.fisherman and profile.FishermanQuestStage == "Completed" and type(fq) == "table" then
             dailies.claimQuest("Fisherman", fq)
         end
-        if dailies.slyMoon and type(rq) == "table" then dailies.claimQuest("SlyMoon", rq) end
-        if dailies.openBoxes then
+        if dailies.enabled and dailies.slyMoon and type(rq) == "table" then dailies.claimQuest("SlyMoon", rq) end
+        if dailies.enabled and dailies.openBoxes then
             local mats = profile.Materials or {}
             for boxId, action in pairs(dailies.BOXES) do
                 for _ = 1, math.min(tonumber(mats[boxId]) or 0, 10) do
@@ -16240,8 +16253,10 @@ function dailies.tick()
         end
     end
 
+    if not dailies.enabled then return end
     -- Long activities read fresh quest states (accepts above change them)
     local fresh = dailies.snapshot()
+    if not dailies.enabled then return end
     local fp = fresh and fresh.Profile or profile
     local busy = dailies.questActivity(fp, fp.FishermanDailyQuest, fp.RaftingDailyQuest)
     if not busy and fresh and not dailies.hasWork(fresh, today) then
@@ -16255,6 +16270,17 @@ _G.CowHubDailies = dailies -- preview debug handle (executor-side tests)
 -- Token, not _G.CowHubLoaded: a re-run sets CowHubLoaded again, so only the token stops the old loop
 function dailies.alive(token)
     return dailies.enabled and _G.CowHubLoaded and _G.CowHubDailiesToken == token
+end
+
+function dailies.stop()
+    dailies.enabled = false
+    _G.CowHubDailiesToken = nil
+    dailies.running = false
+    if dailies.raftOwned then pcall(dailies.stopOwnedVoyage, "stopped") end
+    if not (_G.CowHubBake and _G.CowHubBake.running) then
+        pcall(dailies.resumeOthers)
+    end
+    dailies.setStatus("Idle")
 end
 
 function dailies.start()
@@ -16276,9 +16302,11 @@ function dailies.start()
         end
         if _G.CowHubDailiesToken == token then
             if dailies.raftOwned then pcall(dailies.stopOwnedVoyage, "stopped") end
-            pcall(dailies.resumeOthers)
+            if not (_G.CowHubBake and _G.CowHubBake.running) then
+                pcall(dailies.resumeOthers)
+            end
+            dailies.running = false
         end
-        dailies.running = false
     end)
 end
 
@@ -16303,7 +16331,7 @@ do
         Flag = "Toggle_Dailies",
         Callback = function(Value)
             dailies.enabled = Value
-            if Value then dailies.start() else dailies.setStatus("Idle") end
+            if Value then dailies.start() else dailies.stop() end
         end,
     })
 
@@ -17134,6 +17162,11 @@ do
                 farm.autoFish = false
                 fieldraid.auto = false
                 fieldraid.smith.enabled = false
+                dailies.enabled = false
+                bake.enabled = false
+                _G.CowHubDailiesToken = nil
+                _G.CowHubBakeToken = nil
+                _G.CowHubSmithToken = nil
                 cache.cleanupRippleTracking()
                 dodge.auto = false
 
