@@ -1,4 +1,4 @@
--- Cow Hub [b4bc1c9] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [89e92f1] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -66,7 +66,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [b4bc1c9]",
+    Name = "Cow Hub [89e92f1]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -16648,16 +16648,34 @@ function bake.openSession(token, tablePart, prompt)
     return nil
 end
 
-function bake.waitPacket(token, prevSeq, checkFn, timeout)
+function bake.sendAction(token, action, checkFn, timeout)
     local t0 = os.clock()
-    while os.clock() - t0 < (timeout or 5) and bake.alive(token) do
-        if bake.packetSeq > prevSeq and bake.packet then
-            if bake.packet.Message or bake.packet.Stage == "Closed" or checkFn(bake.packet) then
-                return bake.packet
+    local limit = timeout or 6
+    local lastSend = 0
+    local prevSeq = bake.packetSeq
+    while os.clock() - t0 < limit and bake.alive(token) do
+        local pkt = bake.packet
+        if not pkt or pkt.Stage == "Closed" then
+            return pkt
+        end
+        if bake.packetSeq > prevSeq then
+            prevSeq = bake.packetSeq
+            if checkFn(pkt) then
+                return pkt
             end
+            if pkt.Message then
+                return pkt
+            end
+        end
+        local now = os.clock()
+        if now - lastSend >= 0.45 then
+            lastSend = now
+            bake.send(action, pkt)
         end
         task.wait(0.05)
     end
+    local pkt = bake.packet
+    if pkt and checkFn(pkt) then return pkt end
     return nil
 end
 
@@ -16680,6 +16698,10 @@ function bake.run(token)
     end
 
     bake.pauseOthers()
+    -- Clear stale session state from prior runs so openSession waits for a fresh packet if needed
+    if bake.packet and bake.packet.Stage ~= "Choose" then
+        bake.packet = nil
+    end
     local stopReason = "Stopped"
     local ev = cowRemotes:FindFirstChild("ClientEvent")
     local conn = ev and ev.OnClientEvent:Connect(function(name, data)
@@ -16688,10 +16710,6 @@ function bake.run(token)
             bake.packetSeq += 1
             if type(data.Stock) == "table" then
                 bake.stock = data.Stock
-                if bake.recipeDropdown and bake.recipeDropdown.Refresh then
-                    local opts, cur = bake.buildOptions(data.Stock)
-                    pcall(function() bake.recipeDropdown:Refresh(opts, cur) end)
-                end
             end
         end
     end)
@@ -16721,52 +16739,97 @@ function bake.run(token)
         end
 
         bake.bakedCount = 0
+        local reopenTries = 0
         while bake.alive(token) and bake.bakedCount < target do
+            if not pkt or pkt.Stage == "Closed" then
+                reopenTries += 1
+                if reopenTries > 3 then
+                    stopReason = string.format("Session closed after %d / %d %s", bake.bakedCount, target, breadName)
+                    break
+                end
+                bake.packet = nil
+                task.wait(0.3)
+                pkt = bake.openSession(token, tablePart, prompt)
+                if not pkt then
+                    stopReason = string.format("Could not reopen Mixing Table (%d / %d %s)", bake.bakedCount, target, breadName)
+                    break
+                end
+            end
+
             local canNow = bake.affordable(bake.recipe, pkt.Stock)
             if canNow ~= nil and canNow <= 0 then
-                stopReason = string.format("Out of grain after %d / %d %s", bake.bakedCount, target, breadName)
+                stopReason = string.format("Out of grain: baked %d / %d %s", bake.bakedCount, target, breadName)
                 break
+            end
+
+            -- 0. If session is still on Done from previous loaf, advance to Choose
+            if pkt.Stage == "Done" then
+                pkt = bake.sendAction(token, "Again", function(p) return p.Stage == "Choose" end, 6)
+                if not pkt or pkt.Stage == "Closed" then
+                    pkt = nil
+                    continue
+                end
             end
 
             -- 1. Choose -> Mix
             if pkt.Stage == "Choose" then
                 bake.setStatus(string.format("Mixing %s (%d / %d)", breadName, bake.bakedCount + 1, target))
-                local seq = bake.packetSeq
-                bake.send("Mix", pkt)
-                pkt = bake.waitPacket(token, seq, function(p) return p.Stage == "Knead" or p.Stage == "Ready" end, 5)
-                if not pkt then stopReason = "Timed out on Mix" break end
-                if pkt.Message then stopReason = pkt.Message break end
-                if pkt.Stage == "Closed" then stopReason = "Bakehouse closed" break end
+                pkt = bake.sendAction(token, "Mix", function(p) return p.Stage == "Knead" or p.Stage == "Ready" end, 6)
+                if not pkt or pkt.Stage == "Closed" then
+                    pkt = nil
+                    continue
+                end
+                if pkt.Message and pkt.Stage == "Choose" then
+                    stopReason = string.format("%s (%d / %d %s)", tostring(pkt.Message), bake.bakedCount, target, breadName)
+                    break
+                end
             end
 
             -- 2. Knead x3 -> Ready
+            local kneadFailed = false
             while bake.alive(token) and pkt and pkt.Stage == "Knead" do
                 local curStep = tonumber(pkt.Step) or 0
                 bake.setStatus(string.format("Kneading %s (%d/%d) · loaf %d/%d",
                     breadName, curStep + 1, bake.kneadsPerLoaf, bake.bakedCount + 1, target))
-                local seq = bake.packetSeq
-                bake.send("Knead", pkt)
-                pkt = bake.waitPacket(token, seq, function(p)
+                pkt = bake.sendAction(token, "Knead", function(p)
                     return p.Stage == "Ready" or (p.Stage == "Knead" and (tonumber(p.Step) or 0) > curStep)
-                end, 5)
-                if not pkt then stopReason = "Timed out on Knead" break end
-                if pkt.Message then stopReason = pkt.Message break end
-                if pkt.Stage == "Closed" then stopReason = "Bakehouse closed" break end
+                end, 6)
+                if not pkt or pkt.Stage == "Closed" then
+                    pkt = nil
+                    kneadFailed = true
+                    break
+                end
             end
-            if not (pkt and pkt.Stage == "Ready") then break end
+            if kneadFailed then continue end
+            if not (pkt and pkt.Stage == "Ready") then
+                pkt = nil
+                continue
+            end
 
             -- 3. Ready -> Bake -> Done
             bake.setStatus(string.format("Baking %s (%d / %d)", breadName, bake.bakedCount + 1, target))
-            do
-                local seq = bake.packetSeq
-                bake.send("Bake", pkt)
-                pkt = bake.waitPacket(token, seq, function(p) return p.Stage == "Done" end, 5)
-                if not pkt then stopReason = "Timed out on Bake" break end
-                if pkt.Message then stopReason = pkt.Message break end
-                if pkt.Stage == "Closed" then stopReason = "Bakehouse closed" break end
+            pkt = bake.sendAction(token, "Bake", function(p) return p.Stage == "Done" end, 6)
+            if not pkt or pkt.Stage == "Closed" then
+                pkt = nil
+                continue
+            end
+            if pkt.Stage ~= "Done" then
+                if pkt.Message then
+                    stopReason = string.format("%s (%d / %d %s)", tostring(pkt.Message), bake.bakedCount, target, breadName)
+                    break
+                end
+                pkt = nil
+                continue
             end
 
+            reopenTries = 0
             bake.bakedCount += 1
+            if bake.mode == "Maximum" then
+                local rem = bake.affordable(bake.recipe, pkt.Stock)
+                if rem ~= nil then
+                    target = bake.bakedCount + rem
+                end
+            end
             bake.setStatus(string.format("Baked %d / %d %s", bake.bakedCount, target, breadName))
 
             if bake.bakedCount >= target or not bake.alive(token) then
@@ -16775,13 +16838,10 @@ function bake.run(token)
             end
 
             -- 4. Done -> Again -> Choose
-            do
-                local seq = bake.packetSeq
-                bake.send("Again", pkt)
-                pkt = bake.waitPacket(token, seq, function(p) return p.Stage == "Choose" end, 5)
-                if not pkt then stopReason = "Timed out on Again" break end
-                if pkt.Message then stopReason = pkt.Message break end
-                if pkt.Stage == "Closed" then stopReason = "Bakehouse closed" break end
+            pkt = bake.sendAction(token, "Again", function(p) return p.Stage == "Choose" end, 6)
+            if not pkt or pkt.Stage == "Closed" then
+                pkt = nil
+                continue
             end
         end
 
@@ -16791,6 +16851,10 @@ function bake.run(token)
     end)
 
     if conn then conn:Disconnect() end
+    if bake.stock and bake.recipeDropdown and bake.recipeDropdown.Refresh then
+        local opts, cur = bake.buildOptions(bake.stock)
+        pcall(function() bake.recipeDropdown:Refresh(opts, cur) end)
+    end
     pcall(bake.resumeOthers)
     bake.setStatus(stopReason)
     safeNotify({ Title = "Auto Bakehouse", Content = stopReason, Duration = 4 })
@@ -16851,8 +16915,8 @@ do
         MultipleOptions = false,
         Flag = "Dropdown_BakeMode",
         Callback = function(Option)
-            local chosen = type(Option) == "table" and Option[1] or Option
-            bake.mode = chosen == "Custom" and "Custom" or "Maximum"
+            local chosen = tostring((type(Option) == "table" and Option[1]) or Option or "Maximum")
+            bake.mode = string.find(chosen:lower(), "custom", 1, true) and "Custom" or "Maximum"
             bake.setStatus(string.format("Mode: %s", bake.mode == "Custom" and ("Custom (" .. tostring(bake.customAmount) .. ")") or "Maximum"))
         end,
     })
