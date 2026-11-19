@@ -57,3 +57,10 @@ Sources: Cobalt logs `2026-11-19T01_22_49Z.log` and `2026-11-19T01_39_36Z.log`, 
 - Chest reveal: the server anchors the root and sets `CowFieldRaidChestProtectedUntil`. Damage is blocked (`Hurt Reason=chest_opening`) and hearts refill. `CloseChest` clears the protection right away. Policy: keep the reveal open until hearts are full, then close it (live: 8.5 → 13 in 12 s).
 - Telegraph dodge uses the game's `FieldRaidCombat.Contains` with `FieldRaidEnemies.Move` on `Windup`/`ProjectileAim`/`BarrageMark` attacks. Raid mobs are kited at 6.8 studs or more, so FangBite (5.5) and ShieldCheck (6.2) don't reach.
 - Live runs: auto-start → L1–L5 with a 103.7M bag. One run died at L4 (multiple mobs). Damage avoidance needs more tuning.
+
+## Survival rework (2026-11-18, round 2)
+- Probe of manual play (`cowhub/probes/moves.txt`, `hits.txt`): the user reached L7 in about 190 s at full hearts. They sprinted non-stop at 20–34 studs/s, never stopped to fight, and paused only briefly at chests. 10 of 30 hits landed.
+- Telegraphs land 0.4–0.7 s after the windup, which is too fast to walk out of. **Blink dodge**: an instant forward-only step (≤ 25 studs, ground + no-fence check) out of any `FieldRaidCombat.Contains` hit within 1.2 s. It runs on the event and again just before the strike. IceBarrage `Points` become one circle per pulse.
+- The cow never stops: it sprints, bites mobs and wheat only while passing, and no longer stands and fights.
+- Max field: it roams the whole max field (from the `FieldRaidLayout.Band` entry line to the far edge) but never goes back into an earlier field. Lateral sweep passes and wheat-cluster seeking.
+- Live: a fresh run went L1→L10 in about 500 s at 13/13 hearts. At L10 it farmed for 8 min, 6.94B → 27.2B bag (~2.5B/min), with no hearts lost and no deaths.

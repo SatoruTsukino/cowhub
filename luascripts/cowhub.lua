@@ -1,4 +1,4 @@
--- Cow Hub [0b1e240] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [7d723ca] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [0b1e240]",
+    Name = "Cow Hub [7d723ca]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -562,12 +562,14 @@ local fieldraid = {
     -- GateExit ("Bank and leave") relative to the arena's FieldSoil (geometry dump FR987d2b...)
     GATE_OFFSET = Vector3.new(-471.95, 5.75, 1043.03),
     MOB_RANGE = 9,          -- bite reach toward raid mobs (client TargetDistance 9)
-    KITE_MIN = 6.8,         -- back off when a mob is closer than this (close moves reach 5.5-6.2)
     chestUntil = 0, sprinting = nil, sprintAt = 0,
     fastChest = true,       -- close the chest reveal (it anchors the cow) once hearts are full; it heals while open
     BACK_SLACK = 2,         -- forward-only: never aim more than this many studs back (+Z) of the cow
     chestToken = nil, chestOpenedAt = 0, chestClosed = false,
     dodge = true,           -- step out of telegraphed raid attacks (webs, lunges, stones, sigils)
+    blink = true,           -- windups land 0.4-0.7 s after the warning: blink a few studs out instead of walking
+    dodgeAssist = false,    -- blink-dodge also while playing by hand (Auto Field Raid off)
+    lastBlink = 0,
     hazards = {}, dodgeUntil = 0, stuckPos = nil, stuckAt = 0, nudgeUntil = 0, nudgeDir = 1,
     smith = {
         enabled = false, teleport = false, status = "Idle", statusCard = nil,
@@ -6130,12 +6132,13 @@ end
 -- otherwise the nearest. Skips cells we just bit.
 function fieldraid.findWheat(rootPos, now)
     local best, bestDist, bestRipe, bestValue = nil, math.huge, false, 0
+    local backLimit = fieldraid.backLimit(rootPos)
     for _, part in ipairs(fieldraid.wheat) do
         if part.Parent and part:GetAttribute("Available") == true then
             local id = part:GetAttribute("NodeId")
             local skipUntil = id and chomp.skip[id]
             local d = (id and not (skipUntil and now < skipUntil)) and (fieldraid.cellPoint(part, rootPos) - rootPos).Magnitude
-            if d and (d <= chomp.REACH or part.Position.Z <= rootPos.Z + fieldraid.BACK_SLACK) then
+            if d and (d <= chomp.REACH or part.Position.Z <= backLimit) then
                 local inReach = d <= chomp.REACH
                 local ripe = inReach and part:GetAttribute("RaidRipe") == true
                 local value = inReach and (tonumber(part:GetAttribute("BaseCalories")) or 0) or 0
@@ -6194,7 +6197,61 @@ function fieldraid.addHazard(msg)
             if list[i].id == msg.Id and not list[i].mark then table.remove(list, i) end
         end
     end
-    list[#list + 1] = { id = msg.Id, def = def, attack = attack, strike = attack.StrikeAt, ends = ends, mark = msg.Kind == "BarrageMark" }
+    if type(attack.Points) == "table" and not attack.Point then
+        -- IceBarrage windup: one circle per pulse point
+        local pulses = type(attack.PulseTimes) == "table" and attack.PulseTimes or {}
+        for i, point in ipairs(attack.Points) do
+            local strike = tonumber(pulses[i]) or attack.StrikeAt
+            local one = table.clone(attack)
+            one.Point, one.StrikeAt = point, strike
+            list[#list + 1] = { id = msg.Id, def = def, attack = one, strike = strike, ends = strike + 0.35, mark = true }
+        end
+    else
+        list[#list + 1] = { id = msg.Id, def = def, attack = attack, strike = attack.StrikeAt, ends = ends, mark = msg.Kind == "BarrageMark" }
+    end
+    -- React now (the warning arrives ~0.4 s before the hit) and once more just before it resolves
+    task.defer(fieldraid.blinkDodge)
+    local lead = attack.StrikeAt - workspace:GetServerTimeNow()
+    if lead > 0.2 then task.delay(lead - 0.15, fieldraid.blinkDodge) end
+end
+
+-- Open, forward-only spot: ground under it and no wall/fence between the cow and it
+function fieldraid.spotClear(from, spot)
+    local up = Vector3.new(0, 2, 0)
+    local dir = spot - from
+    if workspace:Raycast(from + up, Vector3.new(dir.X, 0, dir.Z), raycastParams) then return false end
+    local ground = workspace:Raycast(spot + Vector3.new(0, 6, 0), Vector3.new(0, -14, 0), raycastParams)
+    return ground ~= nil and math.abs(ground.Position.Y - (from.Y - 3)) < 6
+end
+
+-- Instant step out of a telegraph that would land on the cow within ~1.2 s (walking is too slow)
+function fieldraid.blinkDodge()
+    if not fieldraid.dodge or not fieldraid.blink or not (fieldraid.auto or fieldraid.dodgeAssist) then return end
+    if not root or not root.Parent or root.Anchored or not fieldraid.inRaid() then return end
+    local now = os.clock()
+    if now - fieldraid.lastBlink < 0.18 then return end
+    local serverNow = workspace:GetServerTimeNow()
+    local pos = root.Position
+    if not fieldraid.danger(pos, serverNow, 1.2) then return end
+    local best, bestScore = nil, math.huge
+    for _, r in ipairs({ 4, 7, 10, 14, 19, 25 }) do
+        for k = 0, 15 do
+            local a = k * math.pi / 8
+            local spot = pos + Vector3.new(math.cos(a) * r, 0, math.sin(a) * r)
+            if spot.Z <= fieldraid.backLimit(pos) and not fieldraid.danger(spot, serverNow, 2.5) then
+                local score = r + (spot.Z - pos.Z) * 0.08
+                if score < bestScore and fieldraid.spotClear(pos, spot) then best, bestScore = spot, score end
+            end
+        end
+        if best then break end
+    end
+    if not best then return end
+    fieldraid.lastBlink = now
+    local look = root.CFrame.LookVector
+    setRootCFrame(CFrame.lookAt(best, best + Vector3.new(look.X, 0, look.Z)))
+    root.AssemblyLinearVelocity = Vector3.zero
+    fieldraid.path, fieldraid.pathTarget = nil, nil
+    fieldraid.blinks = (fieldraid.blinks or 0) + 1
 end
 
 function fieldraid.dropHazards(id)
@@ -6221,13 +6278,18 @@ end
 function fieldraid.dodgeStep(now, rootPos)
     local list = fieldraid.hazards
     if #list == 0 or not fieldraid.dodge then return false end
+    fieldraid.blinkDodge()
     local serverNow = workspace:GetServerTimeNow()
     for i = #list, 1, -1 do
         if serverNow > list[i].ends then table.remove(list, i) end
     end
     local vel = root and root.AssemblyLinearVelocity or Vector3.zero
-    local ahead = rootPos + Vector3.new(vel.X, 0, vel.Z) * 0.35
-    if not fieldraid.danger(rootPos, serverNow, 1.6) and not fieldraid.danger(ahead, serverNow, 1.6) then
+    -- Also look where the cow will be: barrage marks and webs are aimed ahead of a moving cow
+    local flatVel = Vector3.new(vel.X, 0, vel.Z)
+    local ahead = rootPos + flatVel * 0.35
+    local farAhead = rootPos + flatVel * 0.8
+    if not fieldraid.danger(rootPos, serverNow, 1.6) and not fieldraid.danger(ahead, serverNow, 1.6)
+        and not fieldraid.danger(farAhead, serverNow, 1.6) then
         if fieldraid.dodgeTarget and now < fieldraid.dodgeUntil then
             humanoid:MoveTo(fieldraid.dodgeTarget)
             return true
@@ -6240,7 +6302,7 @@ function fieldraid.dodgeStep(now, rootPos)
         for k = 0, 15 do
             local a = k * math.pi / 8
             local spot = rootPos + Vector3.new(math.cos(a) * r, 0, math.sin(a) * r)
-            if spot.Z <= rootPos.Z + fieldraid.BACK_SLACK and not fieldraid.danger(spot, serverNow, 2.5) then
+            if spot.Z <= fieldraid.backLimit(rootPos) and not fieldraid.danger(spot, serverNow, 2.5) then
                 -- prefer short moves that keep heading deeper (-Z)
                 local score = r + (spot.Z - rootPos.Z) * 0.08
                 if score < bestScore then best, bestScore = spot, score end
@@ -6308,8 +6370,33 @@ end
 -- Forward-only (fields deepen toward -Z): pull any goal behind the cow up to its own row.
 -- Only a manual Bank & Leave may walk back.
 function fieldraid.forward(target, rootPos)
-    if fieldraid.leaving or target.Z <= rootPos.Z + fieldraid.BACK_SLACK then return target end
-    return Vector3.new(target.X, target.Y, rootPos.Z)
+    local limit = fieldraid.backLimit(rootPos)
+    if fieldraid.leaving or target.Z <= limit then return target end
+    return Vector3.new(target.X, target.Y, math.max(rootPos.Z, math.min(limit, target.Z)))
+end
+
+-- Z span of a field level (FieldRaidLayout.Band): depth runs from the planting's +Z edge toward -Z.
+-- Returns entryZ (near edge), farZ; nil until the run's Planting is known.
+local FIELD_DEPTHS = { 0, 55, 115, 180, 250, 325, 405, 490, 585, 690, 810.42096 }
+-- Private arena Planting seen on every run so far (Reset event); used until the live one arrives
+local PLANTING_FALLBACK = { Frame = CFrame.new(54.6875, 701.7, 30476.408), Size = Vector3.new(1080.0925, 1, 4052.1047) }
+function fieldraid.bandZ(level)
+    local planting = fieldraid.planting or PLANTING_FALLBACK
+    if type(planting) ~= "table" or typeof(planting.Frame) ~= "CFrame" or typeof(planting.Size) ~= "Vector3" then return nil end
+    level = math.clamp(level, 1, 10)
+    local k = planting.Size.Z / FIELD_DEPTHS[11]
+    local front = planting.Frame.Position.Z + planting.Size.Z * 0.5
+    return front - FIELD_DEPTHS[level] * k, front - FIELD_DEPTHS[level + 1] * k
+end
+
+-- Furthest +Z the cow may aim. In the max field it roams the whole field (back to its entry line),
+-- elsewhere only a couple of studs behind itself: never back into an earlier field.
+function fieldraid.backLimit(rootPos)
+    local entry = fieldraid.farmEntryZ
+    if entry and fieldraid.level >= fieldraid.maxLevel then
+        return math.max(rootPos.Z + fieldraid.BACK_SLACK, entry - 8)
+    end
+    return rootPos.Z + fieldraid.BACK_SLACK
 end
 
 -- Walk with PathfindingService (fences between fields); straight MoveTo while a path computes or fails
@@ -6534,21 +6621,6 @@ function fieldraid.travel(target, now)
     fieldraid.walkTo(target, now)
 end
 
--- Keep raid mobs at bite range but outside their close moves (FangBite 5.5, ShieldCheck 6.2, PitchforkButt 5.7)
-function fieldraid.fight(mob, md, now, rootPos)
-    fieldraid.biteMob(mob, now)
-    if md < fieldraid.KITE_MIN then
-        local away = Vector3.new(rootPos.X - mob.Position.X, 0, rootPos.Z - mob.Position.Z)
-        away = Vector3.new(away.X, 0, math.min(away.Z, 0)) -- sideways or forward, never back
-        away = away.Magnitude > 0.1 and away.Unit or Vector3.new(rootPos.X >= mob.Position.X and 1 or -1, 0, 0)
-        fieldraid.path, fieldraid.pathTarget = nil, nil
-        humanoid:MoveTo(mob.Position + away * (fieldraid.KITE_MIN + 2))
-        fieldraid.lastMove = now
-    elseif fieldraid.lastMove > 0 then
-        fieldraid.stopWalk()
-    end
-end
-
 function fieldraid.tick(now, rootPos)
     if now - fieldraid.lastTick < 0.1 then return end
     fieldraid.lastTick = now
@@ -6565,7 +6637,16 @@ function fieldraid.tick(now, rootPos)
     end
     if fieldraid.run ~= run then
         fieldraid.run, fieldraid.runStartedAt, fieldraid.leaving, fieldraid.startTries = run, now, false, 0
-        fieldraid.lastWheatSeen = now
+        fieldraid.lastWheatSeen, fieldraid.farmEntryZ, fieldraid.sweepZ = now, nil, nil
+    end
+    if not fieldraid.planting and now - (fieldraid.lastSnapshotAsk or 0) > 10 then
+        -- Reloaded mid-run: ask for the run snapshot (the game does this on join) to learn the Planting
+        fieldraid.lastSnapshotAsk = now
+        fieldraid.fire("Snapshot")
+    end
+    if fieldraid.level >= fieldraid.maxLevel and not fieldraid.farmEntryZ then
+        local entryZ = fieldraid.bandZ(fieldraid.maxLevel)
+        fieldraid.farmEntryZ = entryZ or rootPos.Z
     end
     fieldraid.scan(now)
     fieldraid.prompts(now)
@@ -6606,42 +6687,74 @@ function fieldraid.tick(now, rootPos)
         fieldraid.bank(now, rootPos)
         return
     end
+    -- Never stop: a cow that keeps sprinting outruns the telegraphs (aimed at where it was). Bites only
+    -- happen on the move (mob first, else best wheat in reach).
     local mob, md = fieldraid.nearestMob(rootPos)
     if mob and md <= fieldraid.MOB_RANGE then
-        fieldraid.setSprint(false, now)
-        fieldraid.fight(mob, md, now, rootPos)
-        fieldraid.setStatus(string.format("L%d fighting %s (%s HP)", fieldraid.level, tostring(mob.Parent and mob.Parent.Name), tostring(mob:GetAttribute("Health"))))
-        return
-    end
-    local wheat, wd = fieldraid.findWheat(rootPos, now)
-    -- Push deeper: richer fields further in, so walk on and only bite what passes through reach
-    if deeper then
+        fieldraid.biteMob(mob, now)
+    else
+        local wheat, wd = fieldraid.findWheat(rootPos, now)
         if wheat and wd <= chomp.REACH then
+            fieldraid.lastWheatSeen = now
             fieldraid.chompWheat(now, rootPos)
         end
+    end
+    if deeper then
         fieldraid.travel(rootPos + Vector3.new(0, 0, -40), now)
         fieldraid.setStatus(string.format("L%d pushing deeper | bag %s cal | %d mobs", fieldraid.level, fieldraid.fmtCal(fieldraid.bagCalories), #fieldraid.mobs))
         return
     end
-    if wheat then
-        fieldraid.lastWheatSeen = now
-        if wd <= chomp.REACH - 0.5 then
-            fieldraid.stopWalk()
-            fieldraid.setSprint(false, now)
-            fieldraid.chompWheat(now, rootPos)
-        else
-            fieldraid.walkTo(fieldraid.cellPoint(wheat, rootPos), now)
-        end
-        fieldraid.setStatus(string.format("L%d grazing | bag %s cal | %d wheat, %d mobs", fieldraid.level, fieldraid.fmtCal(fieldraid.bagCalories), #fieldraid.wheat, #fieldraid.mobs))
+    fieldraid.sweep(now, rootPos)
+    fieldraid.setStatus(string.format("L%d sweeping | bag %s cal | %d wheat, %d mobs", fieldraid.level, fieldraid.fmtCal(fieldraid.bagCalories), #fieldraid.wheat, #fieldraid.mobs))
+end
+
+-- Farming the deepest field: sweep across it (lateral passes, inching forward), biting on the move.
+-- Lateral bounds come from the run's Planting (Reset event); fallback = FieldSoil width.
+function fieldraid.sweepBounds()
+    local planting = fieldraid.planting or PLANTING_FALLBACK
+    if type(planting) == "table" and typeof(planting.Frame) == "CFrame" and typeof(planting.Size) == "Vector3" then
+        local cx, half = planting.Frame.Position.X, planting.Size.X * 0.5 - 25
+        return cx - half, cx + half
+    end
+    local arena = fieldraid.arena()
+    local soil = arena and arena:FindFirstChild("FieldSoil")
+    if soil then
+        local half = soil.Size.X * 0.5 - 25
+        return soil.Position.X - half, soil.Position.X + half
+    end
+    return nil
+end
+
+function fieldraid.sweep(now, rootPos)
+    local minX, maxX = fieldraid.sweepBounds()
+    if not minX then
+        fieldraid.travel(rootPos + Vector3.new(0, 0, -20), now)
         return
     end
-    -- Field cleared: walk deeper (fields run toward -Z) until maxLevel
-    if fieldraid.level < fieldraid.maxLevel and now - fieldraid.lastWheatSeen > 4 then
-        fieldraid.travel(rootPos + Vector3.new(0, 0, -40), now)
-        fieldraid.setStatus(string.format("L%d cleared: advancing", fieldraid.level))
-    else
-        fieldraid.setStatus(string.format("L%d waiting for wheat", fieldraid.level))
+    -- Head for the richest wheat cluster ahead if one is visible, else run the lateral pass
+    local wheat, wd = fieldraid.findWheat(rootPos, now)
+    if wheat and wd > chomp.REACH and wd < 60 then
+        local through = wheat.Position + (wheat.Position - rootPos).Unit * 6
+        fieldraid.travel(through, now)
+        return
     end
+    -- Rows run between the field's entry line and its far edge, bouncing back and forth
+    local _, bandFar = fieldraid.bandZ(fieldraid.level)
+    local farZ = bandFar and (bandFar + 12) or (rootPos.Z - 200)
+    local nearZ = math.max(farZ, (fieldraid.farmEntryZ or rootPos.Z) - 12)
+    local dir = fieldraid.sweepDir or 1
+    local z = fieldraid.sweepZ or rootPos.Z
+    if (dir > 0 and rootPos.X >= maxX) or (dir < 0 and rootPos.X <= minX) then
+        dir = -dir
+        local zDir = fieldraid.sweepZDir or -1
+        z += zDir * 12
+        if z <= farZ or z >= nearZ then
+            fieldraid.sweepZDir = -zDir
+            z = math.clamp(z, farZ, nearZ)
+        end
+    end
+    fieldraid.sweepDir, fieldraid.sweepZ = dir, z
+    fieldraid.travel(Vector3.new(dir > 0 and maxX or minX, rootPos.Y, z), now)
 end
 
 -- Server raid events: level, bag, chest reveal, run end; blacksmith shift replies
@@ -6655,7 +6768,12 @@ do
                 fieldraid.smithEvent(msg)
             elseif kind == "Reset" or kind == "FieldChanged" or kind == "State" then
                 if tonumber(msg.Level) then fieldraid.level = tonumber(msg.Level) end
-                if kind == "Reset" then fieldraid.bagCalories = 0 end
+                if kind == "Reset" then
+                    fieldraid.bagCalories = 0
+                    if fieldraid.run ~= msg.Run or not fieldraid.planting then fieldraid.farmEntryZ = nil end
+                    fieldraid.planting = msg.Planting
+                    fieldraid.sweepZ = nil
+                end
             elseif kind == "Windup" or kind == "ProjectileAim" or kind == "BarrageMark" then
                 fieldraid.addHazard(msg)
             elseif kind == "CancelWarning" or kind == "EnemyDefeated" then
@@ -6750,7 +6868,7 @@ function fieldraid.smithAnvilPos()
     return anvil and anvil.Position or fieldraid.smith.ANVIL_POS
 end
 
--- Get within `range` of pos: teleport (opt-in) or walk when close; false while still travelling
+-- Within `range` of pos? Teleports there only when opted in; never walks the cow
 function fieldraid.smithReach(pos, range, label)
     local s = fieldraid.smith
     if not root or not pos then return false end
@@ -6764,12 +6882,8 @@ function fieldraid.smithReach(pos, range, label)
         setRootCFrame(CFrame.lookAt(stand, Vector3.new(pos.X, stand.Y, pos.Z)))
         return false
     end
-    if d < 150 and humanoid then
-        humanoid:MoveTo(pos)
-        fieldraid.smithStatus(string.format("Walking to %s (%d studs)", label, math.floor(d)))
-    else
-        fieldraid.smithStatus(string.format("Go to the %s (%d studs) or enable teleport", label, math.floor(d)))
-    end
+    -- Never walks the cow: without teleport it waits until the player stands in range
+    fieldraid.smithStatus(string.format("Stand by the %s (%d studs) or enable teleport", label, math.floor(d)))
     return false
 end
 
@@ -16095,6 +16209,20 @@ do
         CurrentValue = true,
         Flag = "Toggle_FieldRaidDodge",
         Callback = function(Value) fieldraid.dodge = Value end,
+    })
+
+    RaidTab:CreateToggle({
+        Name = "Blink Dodge (instant step out of telegraphs)",
+        CurrentValue = true,
+        Flag = "Toggle_FieldRaidBlink",
+        Callback = function(Value) fieldraid.blink = Value end,
+    })
+
+    RaidTab:CreateToggle({
+        Name = "Dodge Assist While Playing Manually",
+        CurrentValue = false,
+        Flag = "Toggle_FieldRaidDodgeAssist",
+        Callback = function(Value) fieldraid.dodgeAssist = Value end,
     })
 
     RaidTab:CreateToggle({
