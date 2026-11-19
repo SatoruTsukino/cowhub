@@ -21,6 +21,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local PathfindingService = game:GetService("PathfindingService")
 local UserInputService = game:GetService("UserInputService")
+local TextService = game:GetService("TextService")
 
 local plr = Players.LocalPlayer
 while not plr do
@@ -82,6 +83,15 @@ local xp = {
     f10VisitedMid = false,
     lastHighSeenAt = 0,
     recentMobHits = {}, -- [nodeId] = { at, species }
+    runStartAt = nil,
+    farmClock = 0, -- seconds spent actively farming F10 (excludes dodge / chest / blitz)
+    gainLog = {}, -- { { c = farmClock, amt = xp } }
+    tickDt = 0.1,
+    exitRule = "Marginal", -- "Marginal" | "Legacy" (Rush & Reset exit gate)
+    EXIT_BONUS = 1500, -- Far Riverbank 1,000 + Safe Exit 500
+    EXIT_OVERHEAD = 8, -- meadow chest + requeue seconds
+    RATE_WINDOW = 10,
+    RUN_SPEED = 32,
 
     -- World & target caches
     mobs = {},
@@ -94,6 +104,10 @@ local xp = {
     homePrompt = nil,
     bossPos = nil,
     bossHealth = 0,
+    bossMax = 0, -- State.BossMax (> 0 once the server has reported the Ogre)
+    ogreHp = nil, -- last seen Ogre HP (for the give-up timer)
+    ogreHpAt = 0, -- farmClock when ogreHp last changed
+    OGRE_GIVEUP = 45,
 
     -- Chest healing state
     chestBusy = false,
@@ -230,6 +244,9 @@ function xp.refreshUI()
     if u.modeBtn then
         u.modeBtn.Text = "Mode: " .. xp.mode
     end
+    if u.exitBtn then
+        u.exitBtn.Text = "Rush exit: " .. xp.exitRule
+    end
     if u.fieldLabel then
         local run = plr:GetAttribute("CowFieldRaidId")
         local hp = plr:GetAttribute("Hearts")
@@ -254,8 +271,30 @@ function xp.refreshUI()
                 parts[#parts + 1] = string.format("%s (%d)", shortName, raw)
             end
         end
+        for i, p in ipairs(parts) do
+            parts[i] = string.gsub(p, " ", "\u{A0}") -- keep "Name LvN" together when wrapping
+        end
         u.powerupsLabel.Text = #parts > 0 and table.concat(parts, " · ") or "Powerups: Syncing..."
+        xp.layoutUI()
     end
+end
+
+-- Grow the powerups label to its wrapped height and push everything below it down
+function xp.layoutUI()
+    local u = xp.ui
+    local lbl = u.powerupsLabel
+    if not lbl or not lbl.Parent or not u.frame or not u.below then return end
+    -- TextBounds only covers lines that fit the current box, so measure the full wrapped text
+    local ok, size = pcall(TextService.GetTextSize, TextService, lbl.Text, lbl.TextSize, lbl.Font, Vector2.new(300, 10000))
+    local h = math.max(18, (ok and math.ceil(size.Y) or 18) + 2)
+    local extra = h - 18
+    if u.extra == extra then return end
+    u.extra = extra
+    lbl.Size = UDim2.new(1, -20, 0, h)
+    for _, item in ipairs(u.below) do
+        item[1].Position = UDim2.fromOffset(item[2], item[3] + extra)
+    end
+    u.frame.Size = UDim2.fromOffset(320, u.baseHeight + extra)
 end
 
 function xp.syncPowerups()
@@ -293,14 +332,51 @@ function xp.resetRunTrackers()
     xp.f10VisitedMid = false
     xp.lastHighSeenAt = 0
     table.clear(xp.recentMobHits)
+    xp.runStartAt = nil
+    xp.farmClock = 0
+    table.clear(xp.gainLog)
     xp.bossPos = nil
     xp.bossHealth = 0
+    xp.bossMax = 0
+    xp.ogreHp, xp.ogreHpAt = nil, 0
     table.clear(xp.hazards)
     xp.dodgeTarget = nil
     xp.goalPos = nil
     xp.leaving = false
     xp.exitVia = nil
     xp.chestBusy = false
+end
+
+function xp.addGain(amt)
+    xp.estActionXP += amt
+    local log = xp.gainLog
+    log[#log + 1] = { c = xp.farmClock, amt = amt }
+    xp.refreshUI()
+end
+
+-- XP/s over the last RATE_WINDOW seconds of active F10 farming
+function xp.recentRate()
+    local log, cutoff, sum = xp.gainLog, xp.farmClock - xp.RATE_WINDOW, 0
+    local keep = 0
+    for i = 1, #log do
+        local e = log[i]
+        if e.c >= cutoff then
+            keep += 1
+            log[keep] = e
+            sum += e.amt
+        end
+    end
+    for i = #log, keep + 1, -1 do log[i] = nil end
+    return sum / xp.RATE_WINDOW
+end
+
+-- Leave when recent F10 XP/s drops below whole-run XP/s (incl. exit bonus + exit time)
+function xp.marginalExit(now, rootPos)
+    if not xp.runStartAt or xp.farmClock < xp.RATE_WINDOW or xp.estActionXP < 300 then return false end
+    local _, ferry = xp.exitSpot("ferry")
+    local exitSecs = (ferry - rootPos).Magnitude / xp.RUN_SPEED + xp.EXIT_OVERHEAD
+    local runRate = (xp.estActionXP + xp.EXIT_BONUS) / math.max(1, now - xp.runStartAt + exitSecs)
+    return xp.recentRate() < runRate
 end
 
 -- Z span of a field level (FieldRaidLayout.Band)
@@ -387,6 +463,8 @@ function xp.scan(now, force)
             if kind == "RaidMob" then
                 if xp.mobAlive(part) then
                     xp.mobs[#xp.mobs + 1] = part
+                elseif model.Name == "FieldOgre" then
+                    xp.bossHealth = 0 -- dead Ogre still in view
                 end
             elseif kind == "RaidFood" and part:GetAttribute("Available") == true then
                 xp.foods[#xp.foods + 1] = part
@@ -499,7 +577,7 @@ function xp.biteNearby(now, root, rootPos)
     local bestMob, bestScore = nil, -1
     for _, part in ipairs(xp.mobs) do
         if xp.mobAlive(part) then
-            local d = (part.Position - rootPos).Magnitude
+            local d = (xp.cellPoint(part, rootPos) - rootPos).Magnitude
             if d <= xp.MOB_RANGE then
                 local sp = xp.speciesOf(part)
                 local hp = math.max(1, tonumber(part:GetAttribute("Health")) or 10)
@@ -634,7 +712,7 @@ function xp.allowedSpot(spot, rootPos, holdF10)
         end
     end
     if xp.leaving and xp.exitVia == "gate" then return true end
-    return spot.Z <= rootPos.Z + 4
+    return spot.Z <= rootPos.Z + (xp.leaving and 0 or 4)
 end
 
 function xp.jumpSilk(humanoid, pos, serverNow)
@@ -726,6 +804,11 @@ function xp.dodgeStep(now, rootPos, humanoid, holdF10)
     for i = #list, 1, -1 do
         if serverNow > list[i].ends then table.remove(list, i) end
     end
+    -- Exit phase: keep walking to the exit; only the instant blink (scored toward the exit) dodges
+    if xp.leaving then
+        xp.dodgeTarget = nil
+        return false
+    end
     local _, root = getChar()
     local vel = root and root.AssemblyLinearVelocity or Vector3.zero
     local flatVel = Vector3.new(vel.X, 0, vel.Z)
@@ -791,7 +874,8 @@ function xp.walkTo(target, now, humanoid, root)
         xp.lastMove = now
         return
     end
-    if (target - here).Magnitude < 30 then
+    -- Blitz (F1-9 forward) is an open field: direct MoveTo, stuck nudge handles snags
+    if (target - here).Magnitude < 30 or (xp.level < 10 and not xp.leaving) then
         xp.path, xp.pathTarget = nil, nil
         if now - xp.lastMove > 0.15 then
             xp.lastMove = now
@@ -886,14 +970,16 @@ end
 function xp.tryChest(now, rootPos, humanoid, root)
     local hearts = tonumber(plr:GetAttribute("Hearts")) or 0
     local maxHearts = tonumber(plr:GetAttribute("MaxHealth")) or 0
-    local needHeal = maxHearts > 0 and hearts < maxHearts - 0.5
-    if not needHeal then return false end
+    if maxHearts <= 0 or hearts > maxHearts - 1 then return false end
+    if xp.leaving and hearts / maxHearts > 0.25 then return false end
+    -- Only detour far when badly hurt; otherwise heal at a chest that is already close
+    local maxDist = hearts / maxHearts <= 0.5 and 80 or 30
     for _, prompt in ipairs(xp.chestPrompts) do
         local owner = prompt:GetAttribute("RaidChestOwner")
         if prompt.Parent and prompt.Enabled and (owner == nil or owner == plr.UserId) then
             local pos = xp.promptPos(prompt)
             local d = pos and (pos - rootPos).Magnitude or math.huge
-            if d < 140 and now - (xp.chestTried[prompt] or 0) > 6 then
+            if d < maxDist and now - (xp.chestTried[prompt] or 0) > 6 then
                 if d > math.max(4, prompt.MaxActivationDistance - 2) then
                     xp.walkTo(pos, now, humanoid, root)
                     xp.setStatus("Walking to chest (heal)")
@@ -928,6 +1014,7 @@ function xp.bank(now, rootPos, humanoid, root)
         xp.exitVia = via
     end
     local prompt, pos = xp.exitSpot(via)
+    xp.goalPos = pos -- blink/jink dodges score toward the exit
     local label = via == "ferry" and "River ferry" or "Mill gate"
     local d = (pos - rootPos).Magnitude
     if not prompt and now - xp.lastStream > 5 and d < 400 then
@@ -992,7 +1079,7 @@ function xp.meadow(now, rootPos, humanoid)
         xp.setStatus("Harvest meadow: walking to " .. label)
         return
     end
-    if now - xp.lastMeadowFire > 3 then
+    if now - xp.lastMeadowFire > 1.5 then
         xp.lastMeadowFire = now
         if target == chest then xp.chestTried[chest] = now end
         xp.firePrompt(target)
@@ -1005,7 +1092,7 @@ function xp.startRun(now, rootPos, humanoid, root)
         xp.setStatus("Outside raid (auto-start off)")
         return
     end
-    if now - xp.returnedAt < 4 then
+    if now - xp.returnedAt < 1.5 then
         xp.setStatus("Back at camp, preparing next outing...")
         return
     end
@@ -1029,12 +1116,12 @@ function xp.startRun(now, rootPos, humanoid, root)
         return
     end
     xp.stopWalk()
-    if now - xp.lastStartTry < 10 then return end
+    if now - xp.lastStartTry < 4 then return end
     xp.lastStartTry = now
     xp.startTries += 1
     local prompt = signup:FindFirstChildWhichIsA("ProximityPrompt", true)
     if prompt then xp.firePrompt(prompt) end
-    task.delay(0.8, function()
+    task.delay(prompt and 0.8 or 0, function()
         if xp.running and not plr:GetAttribute("CowFieldRaidId") then
             xp.fireRaid("Solo", 1)
         end
@@ -1045,7 +1132,7 @@ end
 -- Score targets inside Field 10 for maximum XP/sec
 function xp.pickF10Target(rootPos, now, nearZ, farZ, allowFarmers)
     local bestPart, bestPos, bestKind, bestLabel, bestScore = nil, nil, nil, nil, -1
-    local hasHighPack = false
+    local hasHighPack, ogrePart = false, nil
 
     -- 1. Secondary foods (GoldenApple = 120 XP in 1 bite)
     for _, part in ipairs(xp.foods) do
@@ -1082,6 +1169,10 @@ function xp.pickF10Target(rootPos, now, nearZ, farZ, allowFarmers)
                 if xp.HIGH_PACK[sp] then
                     hasHighPack = true
                 end
+                if sp == "FieldOgre" then
+                    ogrePart = part
+                    xp.bossHealth = tonumber(part:GetAttribute("Health")) or xp.bossHealth
+                end
                 if sp ~= "Farmer" or allowFarmers or (part.Position - rootPos).Magnitude <= 28 then
                     local hp = math.max(1, tonumber(part:GetAttribute("Health")) or 20)
                     local kxp = xp.KILL_XP[sp] or 40
@@ -1097,7 +1188,30 @@ function xp.pickF10Target(rootPos, now, nearZ, farZ, allowFarmers)
         end
     end
 
-    return bestPart, bestPos, bestKind, bestLabel, hasHighPack
+    -- 3. Ogre not streamed into NorthRiverRaidView yet: walk to the server-reported boss position
+    if not ogrePart and xp.bossHealth > 0 and typeof(xp.bossPos) == "Vector3" then
+        local bp = xp.bossPos
+        if bp.Z <= nearZ + 15 and bp.Z >= farZ - 15 then
+            local d = (bp - rootPos).Magnitude
+            local score = xp.KILL_XP.FieldOgre / math.max(0.5, xp.bossHealth / 22 + d / 32)
+            if score > bestScore then
+                bestPart, bestPos, bestKind, bestLabel, bestScore = nil, bp, "OgreFar", "FieldOgre (far)", score
+            end
+        end
+    end
+
+    return bestPart, bestPos, bestKind, bestLabel, hasHighPack, ogrePart
+end
+
+-- True while the Field Ogre is alive (in view or per server BossHealth) and still taking damage.
+-- Gives up after OGRE_GIVEUP seconds of farm time with no HP change so a stuck chase can't block the exit forever.
+function xp.ogreBlocking(ogrePart)
+    local hp = ogrePart and (tonumber(ogrePart:GetAttribute("Health")) or 0) or xp.bossHealth
+    if hp <= 0 then return false end
+    if hp ~= xp.ogreHp then
+        xp.ogreHp, xp.ogreHpAt = hp, xp.farmClock
+    end
+    return xp.farmClock - xp.ogreHpAt < xp.OGRE_GIVEUP
 end
 
 -- Rush & Reset / Camp F10 inside Field 10
@@ -1112,37 +1226,63 @@ function xp.farmF10(now, rootPos, humanoid, root)
     local midZ = (nearZ + farZ) * 0.5
 
     xp.f10EnteredAt = xp.f10EnteredAt or now
+    xp.farmClock += xp.tickDt
     if rootPos.Z <= midZ + 15 then
         xp.f10VisitedMid = true
     end
 
     -- Secondary nearby in F9/F10 or in-reach bite
     local allowFarmers = (xp.mode == "Camp F10") or (xp.estActionXP < 550)
-    local part, pos, kind, label, hasHighPack = xp.pickF10Target(rootPos, now, nearZ, farZ, allowFarmers)
-    if hasHighPack or kind == "Secondary" then
+    local part, pos, kind, label, hasHighPack, ogrePart = xp.pickF10Target(rootPos, now, nearZ, farZ, allowFarmers)
+    local ogreAlive = xp.ogreBlocking(ogrePart)
+    if hasHighPack or kind == "Secondary" or ogreAlive then
         xp.lastHighSeenAt = now
     end
 
-    -- Rush & Reset exit gate: once we reached mid F10, cleared Ogre/Warlocks/Archers & GoldenApples, and have >= 550 action XP
-    if xp.mode == "Rush & Reset"
-        and xp.f10VisitedMid
-        and (now - xp.f10EnteredAt) >= 4
-        and not hasHighPack
-        and kind ~= "Secondary"
-        and xp.estActionXP >= 550
-        and (now - xp.lastHighSeenAt) >= 2.5
-    then
+    -- Rush & Reset exit gate (both rules require mid F10 reached and Ogre/Warlocks/Archers/GoldenApples cleared)
+    -- Depth check: reached mid F10, or the server confirms the Ogre is already dead (targets near the entry can keep us from mid forever)
+    local ogreDead = xp.bossMax > 0 and xp.bossHealth <= 0
+    local cleared = (xp.f10VisitedMid or ogreDead) and not hasHighPack and not ogreAlive and kind ~= "Secondary"
+    local exitNow
+    if xp.exitRule == "Legacy" then
+        exitNow = cleared
+            and (now - xp.f10EnteredAt) >= 4
+            and xp.estActionXP >= 550
+            and (now - xp.lastHighSeenAt) >= 2.5
+    else
+        exitNow = cleared and xp.marginalExit(now, rootPos)
+    end
+    if xp.mode == "Rush & Reset" and exitNow then
         xp.leaving = true
         xp.exitVia = "ferry"
         xp.bank(now, rootPos, humanoid, root)
         return
     end
 
-    if part and pos then
+    if kind == "OgreFar" and pos then
+        xp.goalPos = pos
+        if now - xp.lastStream > 5 then
+            xp.lastStream = now
+            task.spawn(function() pcall(function() plr:RequestStreamAroundAsync(pos, 5) end) end)
+        end
+    end
+
+    if (part or kind == "OgreFar") and pos then
         xp.goalPos = pos
         local d = (pos - rootPos).Magnitude
-        local reach = kind == "Mob" and xp.MOB_RANGE or xp.REACH
-        if d <= reach then
+        if part and kind == "Mob" then
+            -- Big mobs (Ogre Scale 2.2): measure to the hitbox surface, and keep closing in while chewing
+            local surf = (xp.cellPoint(part, rootPos) - rootPos).Magnitude
+            if surf <= xp.MOB_RANGE then
+                xp.sendChomp(part:GetAttribute("NodeId"), part, now, root)
+                if d > 4 and now - xp.lastMove > 0.2 then
+                    xp.lastMove = now
+                    humanoid:MoveTo(pos)
+                end
+                xp.setStatus(string.format("F10: %s (%d XP est)", label, math.floor(xp.estActionXP)))
+                return
+            end
+        elseif part and d <= xp.REACH then
             xp.sendChomp(part:GetAttribute("NodeId"), part, now, root)
             xp.setStatus(string.format("F10: %s (%d XP est)", label, math.floor(xp.estActionXP)))
             return
@@ -1173,6 +1313,7 @@ function xp.tick(now)
     if now - xp.lastTick < 0.1 then return end
     local dt = xp.lastTick > 0 and math.min(1, now - xp.lastTick) or 0.1
     xp.lastTick = now
+    xp.tickDt = dt
     xp.activeSeconds += dt
 
     local _, root, humanoid = getChar()
@@ -1202,6 +1343,7 @@ function xp.tick(now)
     if xp.run ~= run then
         xp.run = run
         xp.resetRunTrackers()
+        xp.runStartAt = now
         xp.startTries = 0
         xp.syncPowerups()
         xp.refreshUI()
@@ -1246,7 +1388,6 @@ function xp.tick(now)
     end
 
     if xp.leaving then
-        xp.biteNearby(now, root, rootPos)
         xp.bank(now, rootPos, humanoid, root)
         return
     end
@@ -1274,7 +1415,7 @@ function xp.tick(now)
         local goalZ = nearZ10 and (nearZ10 - 25) or (rootPos.Z - 55)
         if farZ10 then goalZ = math.max(farZ10 + 35, goalZ) end
         xp.goalPos = nil
-        xp.walkTo(Vector3.new(rootPos.X, rootPos.Y, math.min(rootPos.Z - 45, goalZ)), now, humanoid, root)
+        xp.walkTo(Vector3.new(rootPos.X, rootPos.Y, goalZ), now, humanoid, root)
         xp.setStatus(string.format("Blitzing Field %d -> 10", xp.level))
         return
     end
@@ -1315,9 +1456,7 @@ do
                     xp.margin = math.max(0.01, xp.margin - 0.002)
                     if p.Kind == "RaidFood" then
                         local lv = math.clamp(tonumber(p.Level) or xp.level, 1, 10)
-                        local gain = p.Secondary and (20 + 10 * lv) or (1 + 3 * lv)
-                        xp.estActionXP += gain
-                        xp.refreshUI()
+                        xp.addGain(p.Secondary and (20 + 10 * lv) or (1 + 3 * lv))
                     end
                 elseif reason == "ChewCooldown" then
                     xp.margin = math.min(0.15, xp.margin + 0.02)
@@ -1342,6 +1481,9 @@ do
                 if tonumber(msg.BossHealth) then
                     xp.bossHealth = tonumber(msg.BossHealth)
                 end
+                if tonumber(msg.BossMax) then
+                    xp.bossMax = tonumber(msg.BossMax)
+                end
             elseif kind == "Windup" or kind == "ProjectileAim" or kind == "BarrageMark" then
                 xp.addHazard(msg)
             elseif kind == "CancelWarning" then
@@ -1349,10 +1491,12 @@ do
             elseif kind == "EnemyDefeated" then
                 xp.dropHazards(msg.Id)
                 local hit = xp.recentMobHits[msg.Id]
+                if msg.Species == "FieldOgre" or (hit and hit.species == "FieldOgre") then
+                    xp.bossHealth = 0
+                end
                 if hit then
                     xp.recentMobHits[msg.Id] = nil
-                    xp.estActionXP += (xp.KILL_XP[hit.species] or 40)
-                    xp.refreshUI()
+                    xp.addGain(xp.KILL_XP[hit.species] or 40)
                 end
             elseif kind == "ChestOpening" then
                 xp.chestBusy = true
@@ -1396,8 +1540,8 @@ function xp.buildUI()
     xp.ui.gui = sg
 
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.fromOffset(320, 214)
-    frame.Position = UDim2.new(0, 20, 0.5, -107)
+    frame.Size = UDim2.fromOffset(320, 252)
+    frame.Position = UDim2.new(0, 20, 0.5, -126)
     frame.BackgroundColor3 = Color3.fromRGB(28, 31, 38)
     frame.BorderSizePixel = 0
     frame.Active = true
@@ -1471,6 +1615,9 @@ function xp.buildUI()
 
     xp.ui.fieldLabel = makeLabel(36, 12, Color3.fromRGB(162, 184, 218))
     xp.ui.powerupsLabel = makeLabel(56, 12, Color3.fromRGB(220, 232, 200))
+    xp.ui.powerupsLabel.TextWrapped = true
+    xp.ui.powerupsLabel.TextTruncate = Enum.TextTruncate.None
+    xp.ui.powerupsLabel.TextYAlignment = Enum.TextYAlignment.Top
     xp.ui.statsLabel = makeLabel(76, 12, Color3.fromRGB(165, 224, 185))
     xp.ui.statusLabel = makeLabel(102, 12, Color3.fromRGB(250, 214, 134))
     xp.ui.statusLabel.Text = xp.status
@@ -1493,6 +1640,20 @@ function xp.buildUI()
     xp.ui.modeBtn = makeBtn(165, 134, 145, "Mode: Rush & Reset", Color3.fromRGB(62, 82, 118))
     local bankBtn = makeBtn(10, 172, 145, "Bank & Leave", Color3.fromRGB(115, 88, 52))
     local syncBtn = makeBtn(165, 172, 145, "Sync XP", Color3.fromRGB(72, 76, 92))
+    xp.ui.exitBtn = makeBtn(10, 210, 300, "Rush exit: " .. xp.exitRule, Color3.fromRGB(86, 70, 112))
+
+    -- Elements below the powerups label: { instance, x, baseY } (shifted by xp.layoutUI)
+    xp.ui.frame, xp.ui.baseHeight, xp.ui.extra = frame, 252, 0
+    xp.ui.below = {
+        { xp.ui.statsLabel, 10, 76 }, { xp.ui.statusLabel, 10, 102 },
+        { xp.ui.startBtn, 10, 134 }, { xp.ui.modeBtn, 165, 134 },
+        { bankBtn, 10, 172 }, { syncBtn, 165, 172 }, { xp.ui.exitBtn, 10, 210 },
+    }
+
+    xp.ui.exitBtn.Activated:Connect(function()
+        xp.exitRule = xp.exitRule == "Marginal" and "Legacy" or "Marginal"
+        xp.refreshUI()
+    end)
 
     xp.ui.startBtn.Activated:Connect(function()
         xp.setRunning(not xp.running)
