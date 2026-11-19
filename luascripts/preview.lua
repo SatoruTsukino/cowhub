@@ -1,4 +1,4 @@
--- Cow Hub [0b7292a] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [98d1a17] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -66,7 +66,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [0b7292a]",
+    Name = "Cow Hub [98d1a17]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -7121,63 +7121,76 @@ function fieldraid.smithTick()
         fieldraid.smithStatus("Paid for this Day | last score " .. tostring(s.score))
         return
     end
-    local onShift = plr:GetAttribute("SmithJobCycle") == cycle
+    -- Walk-by dialogue: the blacksmith answers within ~16 studs of his head (Status / Accept / Claim) and
+    -- hammering needs the anvil (8 studs; he stands at it while working). Never walks the cow: it acts
+    -- when the player passes by, or teleports there only when opted in.
+    if not root or not root.Parent then return end
+    local head = fieldraid.smithHead()
+    local anvilPos = fieldraid.smithAnvilPos()
+    local pos = root.Position
+    local dHead = head and (head.Position - pos).Magnitude or math.huge
+    local dAnvil = (anvilPos - pos).Magnitude
+    if s.teleport and dHead > 14 and dAnvil > 7 then
+        fieldraid.smithReach(anvilPos, 7, "anvil")
+        return
+    end
+    local talk = dHead <= 14
+    local nearAnvil = dAnvil <= 7
+    if not talk and not nearAnvil then
+        fieldraid.smithStatus(head and string.format("Walk by the blacksmith (%d studs)", math.floor(math.min(dHead, dAnvil)))
+            or "Blacksmith is away from his forge")
+        return
+    end
     local atAnvil = plr:GetAttribute("SmithJobAtAnvil")
-    if not onShift then
-        -- Hire: talk to the blacksmith (client limit 16 studs) -> Status -> Accept
-        local head = fieldraid.smithHead()
-        if not head then
-            if fieldraid.smithReach(fieldraid.smithAnvilPos(), 40, "blacksmith shop") then
-                fieldraid.smithStatus("Waiting for the blacksmith to be at work")
-            end
-            return
-        end
-        if not fieldraid.smithReach(head.Position, 12, "blacksmith") then return end
-        if s.statusAt > 0 and now - s.statusAt < 4 and s.cycle == cycle then
-            if s.state == "Available" and now - s.lastStart > 4 then
-                s.lastStart = now
-                fieldraid.fire("SmithJobAccept", cycle)
-                fieldraid.smithStatus("Taking the shift")
-            elseif s.state == "Paid" then
-                s.doneCycle = cycle
-            elseif s.message then
-                fieldraid.smithStatus("Blacksmith: " .. tostring(s.message))
-            end
-        elseif now - s.lastAsk > 5 then
-            s.lastAsk = now
-            fieldraid.fire("SmithJobStatus")
-            fieldraid.smithStatus("Asking for a shift")
-        end
-        return
-    end
-    if atAnvil ~= "Active" and atAnvil ~= "Ready" and s.state ~= "Ready" then
-        -- On shift with nothing at the anvil: refresh (BlacksmithDialogueController sends this near the anvil)
-        -- Two refreshes with nothing at the anvil = this Day's sheet is already paid
-        if fieldraid.smithReach(fieldraid.smithAnvilPos(), 7, "anvil") and now - s.lastAsk > 5 then
-            s.lastAsk = now
-            s.refreshes = (s.refreshes or 0) + 1
-            if s.refreshes > 2 then
-                s.doneCycle, s.refreshes = cycle, 0
-            else
-                fieldraid.fire("SmithJobRefresh")
-                fieldraid.smithStatus("Checking the anvil")
-            end
-        end
-        return
-    end
-    s.refreshes = 0
-    if not fieldraid.smithReach(fieldraid.smithAnvilPos(), 7, "anvil") then return end
+    local fresh = s.statusAt > 0 and now - s.statusAt < 6 and s.cycle == cycle
+    -- Finished sheet: turn it in (at the anvil or with him)
     if atAnvil == "Ready" or s.state == "Ready" then
         if now - s.lastClaim > 5 then
             s.lastClaim = now
             fieldraid.fire("SmithJobClaim", cycle)
             fieldraid.smithStatus("Turning in sheet (" .. tostring(s.score) .. "/100)")
-            s.state = nil
+            s.state, s.statusAt = nil, 0
         end
-    elseif now - s.lastStart > 12 then
-        s.lastStart = now
-        fieldraid.fire("SmithJobStart")
-        fieldraid.smithStatus("Hammering sheet")
+        return
+    end
+    -- On shift: hammer at the anvil (marks come back as SmithJob Mark events -> perfect strikes)
+    if atAnvil == "Active" or (fresh and s.state == "Active") then
+        if nearAnvil then
+            if now - s.lastStart > 12 then
+                s.lastStart = now
+                fieldraid.fire("SmithJobStart")
+                fieldraid.smithStatus("Hammering sheet")
+            end
+        else
+            fieldraid.smithStatus("On shift: pass by the anvil to hammer")
+        end
+        return
+    end
+    if not talk then
+        -- At the anvil but out of his talk range: refresh the shift attributes like the game does
+        if now - s.lastAsk > 5 then
+            s.lastAsk = now
+            fieldraid.fire("SmithJobRefresh")
+        end
+        fieldraid.smithStatus("At the anvil: waiting to talk to the blacksmith")
+        return
+    end
+    -- Talk: Status, then Accept the shift (Paid = done for this Day)
+    if fresh then
+        if s.state == "Available" and now - (s.lastAccept or 0) > 4 then
+            s.lastAccept = now
+            fieldraid.fire("SmithJobAccept", cycle)
+            fieldraid.smithStatus("Taking the shift")
+            s.statusAt = 0
+        elseif s.state == "Paid" then
+            s.doneCycle = cycle
+        elseif s.message then
+            fieldraid.smithStatus("Blacksmith: " .. tostring(s.message))
+        end
+    elseif now - s.lastAsk > 4 then
+        s.lastAsk = now
+        fieldraid.fire("SmithJobStatus")
+        fieldraid.smithStatus("Talking to the blacksmith")
     end
 end
 
