@@ -1,4 +1,4 @@
--- Cow Hub [6d97faf] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [b4bc1c9] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -66,7 +66,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [6d97faf]",
+    Name = "Cow Hub [b4bc1c9]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -16429,17 +16429,50 @@ end
 
 function bake.getStock()
     if type(bake.stock) == "table" then return bake.stock end
-    local snap = dailies.snapshot()
-    local p = snap and snap.Profile
-    if type(p) == "table" then
-        local g = (type(p.FieldRaid) == "table" and p.FieldRaid.Grains) or p.RaidGrains or p.Grains or p.Materials
-        if type(g) == "table" then
-            for _, k in ipairs(bake.grainOrder) do
-                if type(g[k]) == "number" then return g end
+    if cosmetics.getProfile() and cosmetics.profileStore then
+        local ok, state = pcall(function() return cosmetics.profileStore:GetState() end)
+        local p = ok and type(state) == "table" and state.Profile
+        if type(p) == "table" then
+            local g = (type(p.FieldRaid) == "table" and p.FieldRaid.Grains) or p.RaidGrains or p.Grains or p.Materials
+            if type(g) == "table" then
+                for _, k in ipairs(bake.grainOrder) do
+                    if type(g[k]) == "number" then return g end
+                end
             end
         end
     end
     return nil
+end
+
+function bake.pauseOthers()
+    if bake.paused then return end
+    local paused = {}
+    if rafting.enabled and rafting.isSailing then
+        bake.setStatus("Pausing: returning current voyage to dock")
+        pcall(rafting.endVoyage)
+    end
+    for _, p in ipairs(dailies.PAUSABLE) do
+        if p.on() then
+            table.insert(paused, p.flag)
+            dailies.setFlag(p.flag, false)
+        end
+    end
+    if caravan.active then
+        bake.setStatus("Pausing: waiting for caravan raid handback")
+        local t0 = os.clock()
+        while caravan.active and os.clock() - t0 < 90 do task.wait(1) end
+    end
+    bake.paused = paused
+end
+
+function bake.resumeOthers()
+    if not bake.paused then return end
+    local list = bake.paused
+    bake.paused = nil
+    for i = #list, 1, -1 do dailies.setFlag(list[i], true) end
+    if #list > 0 then
+        safeNotify({ Title = "Auto Bakehouse", Content = "Baking finished. Resumed: " .. table.concat(list, ", "), Duration = 4 })
+    end
 end
 
 function bake.affordable(recipeId, stock)
@@ -16646,7 +16679,7 @@ function bake.run(token)
         end
     end
 
-    dailies.pauseOthers()
+    bake.pauseOthers()
     local stopReason = "Stopped"
     local ev = cowRemotes:FindFirstChild("ClientEvent")
     local conn = ev and ev.OnClientEvent:Connect(function(name, data)
@@ -16758,7 +16791,7 @@ function bake.run(token)
     end)
 
     if conn then conn:Disconnect() end
-    pcall(dailies.resumeOthers)
+    pcall(bake.resumeOthers)
     bake.setStatus(stopReason)
     safeNotify({ Title = "Auto Bakehouse", Content = stopReason, Duration = 4 })
 end
