@@ -615,60 +615,61 @@ One-shot dump of raid geometry, live raid targets, player raid/smith attributes 
 
 Standalone automator for all 3 North River Field Raid Mill Challenges (`WindmillAtDusk` coat).
 
-**Total Functions**: `51`
+**Total Functions**: `52`
 
 | Line | Function Signature | Description |
 | :--- | :--- | :--- |
-| [142](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L142) | `getChar()` | Returns current character, HumanoidRootPart, and Humanoid. |
-| [149](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L149) | `setRootCFrame(cf, targetRoot)` | Teleports root part or model pivot safely. |
-| [158](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L158) | `mq.fireRaid(...)` | Fires `FieldRaidRequest` remote safely. |
-| [168](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L168) | `mq.loadMods()` | Lazy-requires `FieldRaidCombat` and `FieldRaidEnemies` shared modules. |
-| [176](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L176) | `mq.isDone(idx)` | Checks whether challenge bit `idx` (1..3) is set in `challengesMask`. |
-| [180](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L180) | `mq.c1Complete()` | Returns true when ripe wheat has been bitten in Fields 3, 4, and 5. |
-| [184](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L184) | `mq.c2Complete()` | Returns true when 3 clean ripe bites in Field 8 have been recorded. |
-| [188](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L188) | `mq.c3Complete()` | Returns true when Challenge 3 is saved in server Ledger bitmask. |
-| [192](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L192) | `mq.activeGoal()` | Resolves next target challenge (1, 2, 3, or nil) based on `mq.mode` and progress. |
-| [202](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L202) | `mq.resetRunTrackers()` | Clears per-run challenge, hazard, bell, and exit state. |
-| [219](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L219) | `mq.setStatus(text)` | Updates `mq.status` and the compact UI status label. |
-| [227](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L227) | `mq.refreshUI()` | Syncs UI buttons, challenge checkboxes, and current field/hearts display. |
-| [267](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L267) | `mq.syncLedger(silent)` | Queries server `Ledger` and optionally auto-closes the raid board modal. |
-| [275](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L275) | `mq.bandZ(level)` | Computes nearZ and farZ world bounds for Field `level` using `FieldRaidLayout.Band`. |
-| [286](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L286) | `mq.sweepBounds()` | Returns clamped lateral X bounds across the planting field. |
-| [295](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L295) | `mq.arena()` | Resolves the active `PrivateFieldRaids` or run geometry folder. |
-| [302](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L302) | `mq.cellPoint(part, pos)` | Clamps `pos` onto `part`'s oriented bounding box for accurate reach checks. |
-| [309](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L309) | `mq.mobAlive(part)` | Checks if a raid mob part still exists and has positive Health. |
-| [313](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L313) | `mq.scan(now, force)` | Scans `NorthRiverRaidView` for live `RaidMob` and available `RaidFood` parts. |
-| [335](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L335) | `mq.findOgre()` | Locates live `FieldOgre` model or boss position in Field 10. |
-| [358](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L358) | `mq.findWheat(rootPos, now, ripeOnly, minZ, maxZ)` | Selects highest-priority wheat cell filtered by ripeness and Z band. |
-| [390](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L390) | `mq.nearestMob(rootPos)` | Finds closest living raid mob to `rootPos`. |
-| [402](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L402) | `mq.getInterval(node)` | Computes server-aligned chew cooldown interval plus adaptive margin. |
-| [411](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L411) | `mq.ensureGraze()` | Sends `GrazeStart` once per active raid run. |
-| [419](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L419) | `mq.face(root, pos)` | Rotates root horizontally toward target position `pos`. |
-| [428](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L428) | `mq.sendChomp(nodeId, node, now, root)` | Fires `ChompRequest` with serial tracking and ripe/level metadata. |
-| [467](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L467) | `mq.biteNearby(now, root, rootPos)` | Bites in-range ripe wheat, raid mobs, or regular wheat on the move. |
-| [487](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L487) | `mq.addHazard(msg)` | Parses enemy telegraphs, tracks FieldOgre `HarvestStomp` for C3, and schedules blink-dodges. |
-| [537](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L537) | `mq.dropHazards(id)` | Removes active hazards belonging to canceled or defeated enemy `id`. |
-| [544](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L544) | `mq.danger(pos, serverNow, horizon)` | Evaluates `FieldRaidCombat.Contains` against active hazards at `pos`. |
-| [556](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L556) | `mq.spotClear(char, from, spot)` | Raycasts wall/fence clearance and valid ground under candidate dodge `spot`. |
-| [566](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L566) | `mq.allowedSpot(spot, rootPos, holdLevel)` | Enforces field X bounds and target Z-band clamping for dodge spots. |
-| [579](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L579) | `mq.blinkDodge(holdLevel)` | Micro-teleports out of imminent telegraph footprints using radial clearance scoring. |
-| [612](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L612) | `mq.dodgeStep(now, rootPos, humanoid, holdLevel)` | Combines blink-dodge and `Humanoid:MoveTo` evasion from active telegraphs. |
-| [654](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L654) | `mq.setSprint(on, now)` | Toggles raid sprint via `SprintRequest` with rate limiting. |
-| [661](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L661) | `mq.walkTo(target, now, humanoid, root)` | Pathfinding-assisted movement with stuck detection and perpendicular unstick nudges. |
-| [722](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L722) | `mq.stopWalk()` | Clears active path and halts humanoid movement. |
-| [731](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L731) | `mq.prompts(now)` | Caches `OpenHarvestChest`, `GateExit`, and `RiverExit` ProximityPrompts in arena. |
-| [751](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L751) | `mq.promptPos(prompt)` | Resolves world position of a ProximityPrompt's parent part, attachment, or model. |
-| [759](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L759) | `mq.firePrompt(prompt)` | Triggers a ProximityPrompt safely via `fireproximityprompt`. |
-| [766](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L766) | `mq.tryChest(now, rootPos, humanoid, root)` | Walks to and opens nearby or healing harvest chests when hurt or adjacent. |
-| [793](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L793) | `mq.exitSpot(via)` | Resolves `RiverExit` or `GateExit` prompt and world position fallback. |
-| [803](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L803) | `mq.bank(now, rootPos, humanoid, root)` | Navigates to chosen raid exit and fires its prompt to bank run rewards. |
-| [831](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L831) | `mq.meadow(now, rootPos, humanoid)` | Collects owned Harvest Meadow gold chest then interacts with `HomePrompt`. |
-| [884](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L884) | `mq.startRun(now, rootPos, humanoid, root)` | Walks to raid camp sign-up and enters a Solo raid when outside. |
-| [927](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L927) | `mq.huntRipeInField(now, rootPos, humanoid, root, targetLevel, statusPrefix)` | Holds inside `targetLevel` and chases `RaidRipe` wheat or announced `Bell` patches. |
-| [1003](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L1003) | `mq.runChallenge3(now, rootPos, humanoid, root)` | Baits `FieldOgre` stomp in F10, confirms unhit dodge >16 studs, and exits via `RiverExit`. |
-| [1057](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L1057) | `mq.tick(now)` | Main 10Hz state machine orchestrating camp start, raid progression, dodge, and exits. |
-| [1336](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L1336) | `mq.buildUI()` | Builds compact draggable `CowMillQuestsUI` status and control panel. |
-| [1476](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L1476) | `mq.setRunning(on)` | Starts/stops automation and pauses conflicting `_G.CowHubFieldRaid.auto`. |
-| [1494](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L1494) | `mq.destroy()` | Disconnects listeners, stops movement, removes UI, and clears `_G.CowMillQuests`. |
+| [144](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L144) | `getChar()` | Returns current character, HumanoidRootPart, and Humanoid. |
+| [151](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L151) | `setRootCFrame(cf, targetRoot)` | Teleports root part or model pivot safely. |
+| [160](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L160) | `mq.fireRaid(...)` | Fires `FieldRaidRequest` remote safely. |
+| [170](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L170) | `mq.loadMods()` | Lazy-requires `FieldRaidCombat` and `FieldRaidEnemies` shared modules. |
+| [178](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L178) | `mq.isDone(idx)` | Checks whether challenge bit `idx` (1..3) is set in `challengesMask`. |
+| [182](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L182) | `mq.c1Complete()` | Returns true when ripe wheat has been bitten in Fields 3, 4, and 5. |
+| [186](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L186) | `mq.c2Complete()` | Returns true when 3 clean ripe bites in Field 8 have been recorded. |
+| [190](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L190) | `mq.c3Complete()` | Returns true when Challenge 3 is saved in server Ledger bitmask. |
+| [194](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L194) | `mq.activeGoal()` | Resolves next target challenge (1, 2, 3, or nil) based on `mq.mode` and progress. |
+| [206](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L206) | `mq.resetRunTrackers()` | Clears per-run challenge, hazard, bell, and exit state. |
+| [225](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L225) | `mq.setStatus(text)` | Updates `mq.status` and the compact UI status label. |
+| [233](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L233) | `mq.refreshUI()` | Syncs UI buttons, challenge checkboxes, and current field/hearts display. |
+| [274](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L274) | `mq.syncLedger(silent)` | Queries server `Ledger` and optionally auto-closes the raid board modal. |
+| [282](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L282) | `mq.bandZ(level)` | Computes nearZ and farZ world bounds for Field `level` using `FieldRaidLayout.Band`. |
+| [293](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L293) | `mq.sweepBounds()` | Returns clamped lateral X bounds across the planting field. |
+| [302](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L302) | `mq.arena()` | Resolves the active `PrivateFieldRaids` or run geometry folder. |
+| [309](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L309) | `mq.cellPoint(part, pos)` | Clamps `pos` onto `part`'s oriented bounding box for accurate reach checks. |
+| [316](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L316) | `mq.mobAlive(part)` | Checks if a raid mob part still exists and has positive Health. |
+| [320](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L320) | `mq.scan(now, force)` | Scans `NorthRiverRaidView` for live `RaidMob` and available `RaidFood` parts. |
+| [342](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L342) | `mq.findOgre()` | Locates live `FieldOgre` model or boss position in Field 10. |
+| [365](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L365) | `mq.findWheat(rootPos, now, ripeOnly, minZ, maxZ)` | Selects highest-priority wheat cell filtered by ripeness and Z band. |
+| [397](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L397) | `mq.nearestMob(rootPos)` | Finds closest living raid mob to `rootPos`. |
+| [409](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L409) | `mq.getInterval(node)` | Computes server-aligned chew cooldown interval plus adaptive margin. |
+| [418](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L418) | `mq.ensureGraze()` | Sends `GrazeStart` once per active raid run. |
+| [426](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L426) | `mq.face(root, pos)` | Rotates root horizontally toward target position `pos`. |
+| [435](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L435) | `mq.sendChomp(nodeId, node, now, root)` | Fires `ChompRequest` with serial tracking and ripe/level metadata. |
+| [474](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L474) | `mq.biteNearby(now, root, rootPos)` | Bites in-range ripe wheat, raid mobs, or regular wheat on the move. |
+| [494](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L494) | `mq.addHazard(msg)` | Parses enemy telegraphs, tracks FieldOgre `HarvestStomp` for C3, and schedules blink-dodges. |
+| [544](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L544) | `mq.dropHazards(id)` | Removes active hazards belonging to canceled or defeated enemy `id`. |
+| [551](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L551) | `mq.danger(pos, serverNow, horizon)` | Evaluates `FieldRaidCombat.Contains` against active hazards at `pos`. |
+| [563](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L563) | `mq.spotClear(char, from, spot)` | Raycasts wall/fence clearance and valid ground under candidate dodge `spot`. |
+| [573](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L573) | `mq.allowedSpot(spot, rootPos, holdLevel)` | Enforces field X bounds and target Z-band clamping for dodge spots. |
+| [587](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L587) | `mq.jumpSilk(humanoid, pos, serverNow)` | Jumps a SilkTripline web about to catch the cow (game hint: jump the silk). |
+| [601](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L601) | `mq.blinkDodge(holdLevel)` | Micro-teleports out of imminent telegraph footprints using radial clearance scoring. |
+| [635](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L635) | `mq.dodgeStep(now, rootPos, humanoid, holdLevel)` | Combines blink-dodge and `Humanoid:MoveTo` evasion from active telegraphs. |
+| [677](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L677) | `mq.setSprint(on, now)` | Toggles raid sprint via `SprintRequest` with rate limiting. |
+| [684](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L684) | `mq.walkTo(target, now, humanoid, root)` | Pathfinding-assisted movement with stuck detection and perpendicular unstick nudges. |
+| [752](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L752) | `mq.stopWalk()` | Clears active path and halts humanoid movement. |
+| [761](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L761) | `mq.prompts(now)` | Caches `OpenHarvestChest`, `GateExit`, and `RiverExit` ProximityPrompts in arena. |
+| [781](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L781) | `mq.promptPos(prompt)` | Resolves world position of a ProximityPrompt's parent part, attachment, or model. |
+| [789](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L789) | `mq.firePrompt(prompt)` | Triggers a ProximityPrompt safely via `fireproximityprompt`. |
+| [796](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L796) | `mq.tryChest(now, rootPos, humanoid, root)` | Walks to and opens nearby or healing harvest chests when hurt or adjacent. |
+| [823](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L823) | `mq.exitSpot(via)` | Resolves `RiverExit` or `GateExit` prompt and world position fallback. |
+| [833](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L833) | `mq.bank(now, rootPos, humanoid, root)` | Navigates to chosen raid exit and fires its prompt to bank run rewards. |
+| [861](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L861) | `mq.meadow(now, rootPos, humanoid)` | Collects owned Harvest Meadow gold chest then interacts with `HomePrompt`. |
+| [914](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L914) | `mq.startRun(now, rootPos, humanoid, root)` | Walks to raid camp sign-up and enters a Solo raid when outside. |
+| [957](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L957) | `mq.huntRipeInField(now, rootPos, humanoid, root, targetLevel, statusPrefix)` | Holds inside `targetLevel` and chases `RaidRipe` wheat or announced `Bell` patches. |
+| [1040](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L1040) | `mq.runChallenge3(now, rootPos, humanoid, root)` | Baits `FieldOgre` stomp in F10, confirms unhit dodge >16 studs, and exits via `RiverExit`. |
+| [1094](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L1094) | `mq.tick(now)` | Main 10Hz state machine orchestrating camp start, raid progression, dodge, and exits. |
+| [1392](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L1392) | `mq.buildUI()` | Builds compact draggable `CowMillQuestsUI` status and control panel. |
+| [1532](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L1532) | `mq.setRunning(on)` | Starts/stops automation and pauses conflicting `_G.CowHubFieldRaid.auto`. |
+| [1555](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L1555) | `mq.destroy()` | Disconnects listeners, stops movement, removes UI, and clears `_G.CowMillQuests`. |
 
 ---
