@@ -1,4 +1,4 @@
--- Cow Hub [89e92f1] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [0b7292a] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -66,7 +66,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [89e92f1]",
+    Name = "Cow Hub [0b7292a]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -557,6 +557,7 @@ local fieldraid = {
     auto = false,           -- Auto Field Raid (farm the run, bank, restart)
     autoStart = true,       -- start the next solo raid from the camp sign-up
     maxLevel = 10,          -- don't walk deeper than this field
+    maxMinutes = 0,         -- max run time in minutes before heading to the River ferry (0 = off)
     pushDeeper = true,      -- deeper fields grow richer wheat: keep walking in, bite only what is in reach
     focus = "Grazing",      -- "Grazing": farm the max field forever | "Loot Runs": every chest to the last plot, bank, restart
     chestLevels = {},       -- field levels whose chest this run opened
@@ -6472,6 +6473,10 @@ end
 -- elsewhere only a couple of studs behind itself: never back into an earlier field.
 function fieldraid.backLimit(rootPos)
     if fieldraid.leaving and fieldraid.exitVia == "gate" then return math.huge end
+    if fieldraid.leaving and fieldraid.exitVia == "ferry" then
+        local _, fpos = fieldraid.exitSpot("ferry")
+        return math.max(rootPos.Z + fieldraid.BACK_SLACK, fpos.Z + 12)
+    end
     local entry = fieldraid.farmEntryZ
     if entry and fieldraid.level >= fieldraid.maxLevel then
         return math.max(rootPos.Z + fieldraid.BACK_SLACK, entry - 8)
@@ -6675,6 +6680,14 @@ end
 -- Harvest meadow (after the ferry; player attribute CowFieldRaidRewardRoom): open our gold chest
 -- (CowWorld.Dynamic, RaidChestOwner = us), then "Return to town" (Meadow gate HomePrompt)
 function fieldraid.meadow(now, rootPos)
+    if fieldraid.chestBusy then
+        if fieldraid.fastChest and fieldraid.chestToken and not fieldraid.chestClosed and now - fieldraid.chestOpenedAt > 0.6 then
+            fieldraid.chestClosed = true
+            fieldraid.fire("CloseChest", fieldraid.chestToken)
+        end
+        fieldraid.setStatus("Harvest meadow: collecting gold chest")
+        return
+    end
     if now - (fieldraid.lastMeadowScan or 0) > 2 then
         fieldraid.lastMeadowScan = now
         fieldraid.meadowChest, fieldraid.homePrompt = nil, nil
@@ -6696,8 +6709,10 @@ function fieldraid.meadow(now, rootPos)
         end
     end
     local chest = fieldraid.meadowChest
+    local chestModel = chest and chest:FindFirstAncestorOfClass("Model")
+    local chestUnopened = chest and chest.Parent and chest.Enabled and not (chestModel and chestModel:GetAttribute("Open") == true)
     local target, label = nil, nil
-    if chest and chest.Parent and chest.Enabled and now - (fieldraid.chestTried[chest] or 0) > 6 then
+    if chestUnopened then
         target, label = chest, "gold chest"
     elseif fieldraid.homePrompt and fieldraid.homePrompt.Parent and fieldraid.homePrompt.Enabled then
         target, label = fieldraid.homePrompt, "Meadow gate"
@@ -6784,12 +6799,13 @@ function fieldraid.tick(now, rootPos)
     local run = fieldraid.runId()
     if not run then
         if fieldraid.run then
-            fieldraid.run, fieldraid.leaving, fieldraid.grazeRun, fieldraid.exitVia = nil, false, nil, nil
+            fieldraid.run, fieldraid.leaving, fieldraid.grazeRun, fieldraid.exitVia, fieldraid.chestBusy = nil, false, nil, nil, false
             fieldraid.returnedAt = now
             fieldraid.stopWalk()
             fieldraid.setSprint(false, now)
         end
         if plr:GetAttribute("CowFieldRaidRewardRoom") then
+            fieldraid.returnedAt = now
             fieldraid.meadow(now, rootPos)
             return
         end
@@ -6827,6 +6843,13 @@ function fieldraid.tick(now, rootPos)
         fieldraid.setStatus(string.format("Chest reveal: healing %s/%s (%ds)", tostring(hearts), tostring(maxHearts), left))
         return
     end
+    -- Max Run Time: once elapsed >= maxMinutes, head forward to the River ferry to finish and collect the meadow chest
+    if fieldraid.maxMinutes > 0 and not fieldraid.leaving
+        and now - fieldraid.runStartedAt >= fieldraid.maxMinutes * 60 then
+        fieldraid.leaving, fieldraid.exitVia = "time limit", "ferry"
+        fieldraid.path, fieldraid.pathTarget = nil, nil
+        safeNotify({ Title = "Field Raid", Content = string.format("Max run time (%d min) reached: heading to the River ferry.", fieldraid.maxMinutes), Duration = 5, Image = 4483362458 })
+    end
     -- Loot Runs: once the last chest plot within Max Field is opened (or passed), bank and start over
     if fieldraid.focus == "Loot Runs" and not fieldraid.leaving then
         local last = math.min(fieldraid.maxLevel, fieldraid.LAST_CHEST_LEVEL)
@@ -6837,8 +6860,8 @@ function fieldraid.tick(now, rootPos)
             safeNotify({ Title = "Field Raid", Content = "Loot run complete: banking at the Mill gate.", Duration = 5, Image = 4483362458 })
         end
     end
-    -- An open-able chest heals and shields: take it before anything else (also when hurt)
-    if fieldraid.tryChest(now, rootPos) then
+    -- An open-able chest heals and shields: take it before anything else (also when hurt), unless leaving
+    if not fieldraid.leaving and fieldraid.tryChest(now, rootPos) then
         fieldraid.setSprint(true, now)
         return
     end
@@ -6871,13 +6894,18 @@ function fieldraid.tick(now, rootPos)
             fieldraid.chompWheat(now, rootPos)
         end
     end
+    local timerTag = ""
+    if fieldraid.maxMinutes > 0 then
+        local rem = math.max(0, math.ceil(fieldraid.maxMinutes * 60 - (now - fieldraid.runStartedAt)))
+        timerTag = string.format(" | %d:%02d left", math.floor(rem / 60), rem % 60)
+    end
     if deeper then
         fieldraid.travel(rootPos + Vector3.new(0, 0, -40), now)
-        fieldraid.setStatus(string.format("L%d pushing deeper | bag %s cal | %d mobs", fieldraid.level, fieldraid.fmtCal(fieldraid.bagCalories), #fieldraid.mobs))
+        fieldraid.setStatus(string.format("L%d pushing deeper | bag %s cal | %d mobs%s", fieldraid.level, fieldraid.fmtCal(fieldraid.bagCalories), #fieldraid.mobs, timerTag))
         return
     end
     fieldraid.sweep(now, rootPos)
-    fieldraid.setStatus(string.format("L%d sweeping | bag %s cal | %d wheat, %d mobs", fieldraid.level, fieldraid.fmtCal(fieldraid.bagCalories), #fieldraid.wheat, #fieldraid.mobs))
+    fieldraid.setStatus(string.format("L%d sweeping | bag %s cal | %d wheat, %d mobs%s", fieldraid.level, fieldraid.fmtCal(fieldraid.bagCalories), #fieldraid.wheat, #fieldraid.mobs, timerTag))
 end
 
 -- Farming the deepest field: sweep across it (lateral passes, inching forward), biting on the move.
@@ -12059,7 +12087,7 @@ do
         -- 1. Targeted dismissal for known reward / reveal modal ScreenGuis (RewardBoxReveal from TeamChestController, etc.)
         local targetGuiNames = { "RewardBoxReveal", "CaravanCrateReveal", "CowFavoriteReward", "FavoriteRewardPrompt", "QuestModal" }
         -- Field raid chest heal keeps its reveal open until hearts are full (fieldraid closes it)
-        local raidHealing = not force and fieldraid.auto and fieldraid.fastChest and fieldraid.chestBusy
+        local raidHealing = not force and fieldraid.auto and fieldraid.fastChest and fieldraid.chestBusy and fieldraid.inRaid()
         for _, tName in ipairs(targetGuiNames) do
             if raidHealing and tName == "RewardBoxReveal" then continue end
             local rGui = nil
@@ -17014,6 +17042,16 @@ do
         CurrentValue = 10,
         Flag = "Slider_FieldRaidMaxLevel",
         Callback = function(Value) fieldraid.maxLevel = Value end,
+    })
+
+    RaidTab:CreateSlider({
+        Name = "Max Run Time (0 = off)",
+        Range = {0, 60},
+        Increment = 1,
+        Suffix = " min",
+        CurrentValue = 0,
+        Flag = "Slider_FieldRaidMaxMinutes",
+        Callback = function(Value) fieldraid.maxMinutes = Value end,
     })
 
     local actions = row()
