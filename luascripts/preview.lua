@@ -1,4 +1,4 @@
--- Cow Hub [7d723ca] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [06d926e] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [7d723ca]",
+    Name = "Cow Hub [06d926e]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -552,6 +552,10 @@ local fieldraid = {
     autoStart = true,       -- start the next solo raid from the camp sign-up
     maxLevel = 10,          -- don't walk deeper than this field
     pushDeeper = true,      -- deeper fields grow richer wheat: keep walking in, bite only what is in reach
+    focus = "Grazing",      -- "Grazing": farm the max field forever | "Loot Runs": every chest to the last plot, bank, restart
+    chestLevels = {},       -- field levels whose chest this run opened
+    LAST_CHEST_LEVEL = 9,   -- Planting.ChestPlots are on fields 1,3,5,7,9
+    GATE_FALLBACK = Vector3.new(-417.26, 706.95, 32532.46), -- GateExit (Mill gate) in the private arena
     status = "Idle",
     statusCard = nil,
     run = nil, runStartedAt = 0, level = 0, bagCalories = 0,
@@ -6392,6 +6396,7 @@ end
 -- Furthest +Z the cow may aim. In the max field it roams the whole field (back to its entry line),
 -- elsewhere only a couple of studs behind itself: never back into an earlier field.
 function fieldraid.backLimit(rootPos)
+    if fieldraid.leaving then return math.huge end
     local entry = fieldraid.farmEntryZ
     if entry and fieldraid.level >= fieldraid.maxLevel then
         return math.max(rootPos.Z + fieldraid.BACK_SLACK, entry - 8)
@@ -6514,7 +6519,7 @@ function fieldraid.tryChest(now, rootPos)
         if prompt.Parent and prompt.Enabled and (owner == nil or owner == plr.UserId) then
             local pos = fieldraid.promptPos(prompt)
             local d = pos and (pos - rootPos).Magnitude or math.huge
-            if d < 90 and pos.Z <= rootPos.Z + 6 and now - (fieldraid.chestTried[prompt] or 0) > 6 then
+            if d < (fieldraid.focus == "Loot Runs" and 260 or 90) and pos.Z <= rootPos.Z + 6 and now - (fieldraid.chestTried[prompt] or 0) > 6 then
                 if d > math.max(4, prompt.MaxActivationDistance - 2) then
                     fieldraid.walkTo(pos, now)
                     fieldraid.setStatus("Walking to harvest chest")
@@ -6544,11 +6549,7 @@ function fieldraid.bank(now, rootPos)
     if not pos then
         local arena = fieldraid.arena()
         local soil = arena and arena:FindFirstChild("FieldSoil")
-        if not soil then
-            fieldraid.setStatus("Banking: arena not found")
-            return
-        end
-        pos = soil.Position + fieldraid.GATE_OFFSET
+        pos = soil and (soil.Position + fieldraid.GATE_OFFSET) or fieldraid.GATE_FALLBACK
         if now - (fieldraid.lastStream or 0) > 5 and (pos - rootPos).Magnitude < 400 then
             fieldraid.lastStream = now
             task.spawn(function() pcall(function() plr:RequestStreamAroundAsync(pos, 5) end) end)
@@ -6638,6 +6639,7 @@ function fieldraid.tick(now, rootPos)
     if fieldraid.run ~= run then
         fieldraid.run, fieldraid.runStartedAt, fieldraid.leaving, fieldraid.startTries = run, now, false, 0
         fieldraid.lastWheatSeen, fieldraid.farmEntryZ, fieldraid.sweepZ = now, nil, nil
+        table.clear(fieldraid.chestLevels)
     end
     if not fieldraid.planting and now - (fieldraid.lastSnapshotAsk or 0) > 10 then
         -- Reloaded mid-run: ask for the run snapshot (the game does this on join) to learn the Planting
@@ -6664,6 +6666,16 @@ function fieldraid.tick(now, rootPos)
         end
         fieldraid.setStatus(string.format("Chest reveal: healing %s/%s (%ds)", tostring(hearts), tostring(maxHearts), left))
         return
+    end
+    -- Loot Runs: once the last chest plot within Max Field is opened (or passed), bank and start over
+    if fieldraid.focus == "Loot Runs" and not fieldraid.leaving then
+        local last = math.min(fieldraid.maxLevel, fieldraid.LAST_CHEST_LEVEL)
+        if last % 2 == 0 then last -= 1 end
+        if fieldraid.chestLevels[last] or fieldraid.level > last or fieldraid.level >= fieldraid.maxLevel then
+            fieldraid.leaving = "loot run complete"
+            fieldraid.path, fieldraid.pathTarget = nil, nil
+            safeNotify({ Title = "Field Raid", Content = "Loot run complete: banking at the Mill gate.", Duration = 5, Image = 4483362458 })
+        end
     end
     -- An open-able chest heals and shields: take it before anything else (also when hurt)
     if fieldraid.tryChest(now, rootPos) then
@@ -6783,6 +6795,7 @@ do
             elseif kind == "ChestOpening" then
                 fieldraid.chestBusy = true
                 fieldraid.chestToken, fieldraid.chestOpenedAt, fieldraid.chestClosed = msg.Token, os.clock(), false
+                fieldraid.chestLevels[fieldraid.level] = true
                 local untilT = tonumber(msg.Until)
                 local secs = untilT and math.clamp(untilT - workspace:GetServerTimeNow(), 1, 90) or 8
                 fieldraid.chestUntil = os.clock() + secs
@@ -7578,6 +7591,22 @@ do
     local MainTab = Window:CreateTab({ Name = "Autofarm", Icon = 4483362458 })
 
     MainTab:CreateSection({ Name = "Main Toggles" })
+
+    -- One switch for the hub-wide reward closer (rafting.dismissChestRewardGui): chest reveals,
+    -- reward boxes, favorite-reward and quest prompts, wherever they pop up
+    MainTab:CreateToggle({
+        Name = "Auto-Dismiss Chests & Prompts",
+        CurrentValue = true,
+        Flag = "Toggle_AutoDismissRewards",
+        Callback = function(Value)
+            -- Kept on fieldraid (declared early): Gen2 may apply the saved flag before rafting exists
+            fieldraid.autoDismiss = Value
+            if rafting then
+                rafting.autoDismissRewardGui = Value
+                rafting.autoAcceptRewards = Value
+            end
+        end,
+    })
 
     MainTab:CreateToggle({
         Name = "Enable Autofarm (Movement)",
@@ -9907,8 +9936,8 @@ rafting = {
         ["Clearing_10"] = true,
     },
     autoContinueFromDock = true,
-    autoAcceptRewards = true,
-    autoDismissRewardGui = true,
+    autoAcceptRewards = fieldraid.autoDismiss ~= false,
+    autoDismissRewardGui = fieldraid.autoDismiss ~= false,
     autoBoost = true,
     minBoostStamina = 40,
     isBoosting = false,
@@ -11869,7 +11898,10 @@ do
 
         -- 1. Targeted dismissal for known reward / reveal modal ScreenGuis (RewardBoxReveal from TeamChestController, etc.)
         local targetGuiNames = { "RewardBoxReveal", "CaravanCrateReveal", "CowFavoriteReward", "FavoriteRewardPrompt", "QuestModal" }
+        -- Field raid chest heal keeps its reveal open until hearts are full (fieldraid closes it)
+        local raidHealing = not force and fieldraid.auto and fieldraid.fastChest and fieldraid.chestBusy
         for _, tName in ipairs(targetGuiNames) do
+            if raidHealing and tName == "RewardBoxReveal" then continue end
             local rGui = nil
             pcall(function() rGui = pg:FindFirstChild(tName) end)
             local isTargetActive = false
@@ -14375,10 +14407,6 @@ do
     end
 
     ui.optionDropdown(RaftingTab, "Voyage Options", "Dropdown_RaftVoyageOptions", {
-        { label = "Auto-Dismiss Reward", default = true, fn = function(Value)
-            rafting.autoDismissRewardGui = Value
-            rafting.autoAcceptRewards = Value
-        end },
         { label = "Auto-Continue", default = true, fn = function(Value)
             rafting.autoContinueFromDock = Value
         end },
@@ -16167,6 +16195,12 @@ end
 -- ==========================
 do
     local RaidTab = Window:CreateTab({ Name = "Field Raid", Icon = 4483362458 })
+    -- Horizontal row (Gen2 groups); falls back to the tab when groups are unavailable
+    local function row()
+        local ok, group = pcall(function() return RaidTab:CreateGroup({ direction = "row" }) end)
+        fieldraid.uiRows = (fieldraid.uiRows or 0) + ((ok and group) and 1 or 0)
+        return ok and group or RaidTab
+    end
 
     RaidTab:CreateSection({ Name = "North River Field Raid" })
     if RaidTab.CreateParagraph then
@@ -16174,7 +16208,7 @@ do
     end
 
     RaidTab:CreateToggle({
-        Name = "Auto Field Raid (forward only: graze, fight, chests)",
+        Name = "Auto Field Raid (forward only)",
         CurrentValue = false,
         Flag = "Toggle_FieldRaidAuto",
         Callback = function(Value)
@@ -16187,11 +16221,25 @@ do
         end,
     })
 
-    RaidTab:CreateToggle({
-        Name = "Auto Start Next Raid (stand at camp sign-up)",
-        CurrentValue = true,
-        Flag = "Toggle_FieldRaidAutoStart",
-        Callback = function(Value) fieldraid.autoStart = Value end,
+    RaidTab:CreateDropdown({
+        Name = "Raid Focus",
+        Options = { "Grazing", "Loot Runs" },
+        CurrentOption = { "Grazing" },
+        MultipleOptions = false,
+        Flag = "Dropdown_FieldRaidFocus",
+        Callback = function(Options)
+            local pick = (type(Options) == "table" and Options[1]) or Options
+            fieldraid.focus = pick == "Loot Runs" and "Loot Runs" or "Grazing"
+        end,
+    })
+
+    ui.optionDropdown(RaidTab, "Raid Options", "Dropdown_FieldRaidOptions", {
+        { label = "Auto Start Next Raid", default = true, fn = function(Value) fieldraid.autoStart = Value end },
+        { label = "Push Deeper", default = true, fn = function(Value) fieldraid.pushDeeper = Value end },
+        { label = "Dodge Telegraphs", default = true, fn = function(Value) fieldraid.dodge = Value end },
+        { label = "Blink Dodge", default = true, fn = function(Value) fieldraid.blink = Value end },
+        { label = "Dodge Assist (manual play)", default = false, fn = function(Value) fieldraid.dodgeAssist = Value end },
+        { label = "Close Chest Once Healed", default = true, fn = function(Value) fieldraid.fastChest = Value end },
     })
 
     RaidTab:CreateSlider({
@@ -16204,50 +16252,15 @@ do
         Callback = function(Value) fieldraid.maxLevel = Value end,
     })
 
-    RaidTab:CreateToggle({
-        Name = "Dodge Telegraphs (webs, lunges, stones, sigils)",
-        CurrentValue = true,
-        Flag = "Toggle_FieldRaidDodge",
-        Callback = function(Value) fieldraid.dodge = Value end,
-    })
-
-    RaidTab:CreateToggle({
-        Name = "Blink Dodge (instant step out of telegraphs)",
-        CurrentValue = true,
-        Flag = "Toggle_FieldRaidBlink",
-        Callback = function(Value) fieldraid.blink = Value end,
-    })
-
-    RaidTab:CreateToggle({
-        Name = "Dodge Assist While Playing Manually",
-        CurrentValue = false,
-        Flag = "Toggle_FieldRaidDodgeAssist",
-        Callback = function(Value) fieldraid.dodgeAssist = Value end,
-    })
-
-    RaidTab:CreateToggle({
-        Name = "Close Chest Reveal Once Healed (reveal freezes the cow)",
-        CurrentValue = true,
-        Flag = "Toggle_FieldRaidFastChest",
-        Callback = function(Value) fieldraid.fastChest = Value end,
-    })
-
-    RaidTab:CreateToggle({
-        Name = "Push Deeper (bite in reach, keep walking to Max Field)",
-        CurrentValue = true,
-        Flag = "Toggle_FieldRaidPushDeeper",
-        Callback = function(Value) fieldraid.pushDeeper = Value end,
-    })
-
-    RaidTab:CreateButton({
-        Name = "Start Solo Raid Now",
+    local actions = row()
+    actions:CreateButton({
+        Name = "Start Solo Raid",
         Callback = function()
             fieldraid.fire("Solo", 1)
         end,
     })
-
-    RaidTab:CreateButton({
-        Name = "Bank & Leave Now",
+    actions:CreateButton({
+        Name = "Bank & Leave",
         Callback = function()
             if fieldraid.inRaid() then
                 fieldraid.leaving = "manual"
@@ -16263,8 +16276,9 @@ do
         pcall(function() fieldraid.smith.statusCard = RaidTab:CreateParagraph({ Title = "Blacksmith Shift", Content = fieldraid.smith.status }) end)
     end
 
-    RaidTab:CreateToggle({
-        Name = "Auto Blacksmith Shift (accept, perfect strikes, turn in)",
+    local smithRow = row()
+    smithRow:CreateToggle({
+        Name = "Auto Blacksmith Shift",
         CurrentValue = false,
         Flag = "Toggle_SmithShift",
         Callback = function(Value)
@@ -16272,9 +16286,8 @@ do
             if Value then fieldraid.smithStart() else fieldraid.smithStatus("Idle") end
         end,
     })
-
-    RaidTab:CreateToggle({
-        Name = "Teleport To Blacksmith / Anvil (returns after)",
+    smithRow:CreateToggle({
+        Name = "Teleport To Smith",
         CurrentValue = false,
         Flag = "Toggle_SmithTeleport",
         Callback = function(Value) fieldraid.smith.teleport = Value end,
@@ -16282,6 +16295,10 @@ do
 
     function fieldraid.setFlag(flag, on)
         pcall(function() Window:Set(flag, on) end)
+    end
+
+    function fieldraid.setOption(label, on)
+        ui.setOption("Dropdown_FieldRaidOptions", label, on)
     end
 end
 
