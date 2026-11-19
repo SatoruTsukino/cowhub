@@ -13,6 +13,7 @@ This document indexes every function across all scripts in the CowHub repository
 - [Hanging Honey Hive ESP (`hanging_honey_hive_esp.lua`)](#hanging-honey-hive-esp-hanging_honey_hive_esplua)
 - [Field Raid Probe (`fieldraid_probe.lua`)](#field-raid-probe-fieldraid_probelua)
 - [Mill Quests Automator (`mill_quests.lua`)](#mill-quests-automator-mill_questslua)
+- [Field Raid XP Autofarm (`field_raid_xp.lua`)](#field-raid-xp-autofarm-field_raid_xplua)
 
 ---
 
@@ -674,5 +675,66 @@ Standalone automator for all 3 North River Field Raid Mill Challenges (`Windmill
 | [1550](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L1550) | `mq.buildUI()` | Builds compact draggable `CowMillQuestsUI` status and control panel. |
 | [1690](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L1690) | `mq.setRunning(on)` | Starts/stops automation and pauses conflicting `_G.CowHubFieldRaid.auto`. |
 | [1713](file:///Users/jsph/cowhub/luascripts/mill_quests.lua#L1713) | `mq.destroy()` | Disconnects listeners, stops movement, removes UI, and clears `_G.CowMillQuests`. |
+
+---
+
+## Field Raid XP Autofarm (`field_raid_xp.lua`)
+
+**Path**: [`luascripts/field_raid_xp.lua`](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua)
+
+Standalone Field Raid Powerup XP autofarm (`Rush & Reset` and `Camp F10` modes) with Field 10 XP/sec target scoring, telegraph blink-dodging, and live XP/hr HUD.
+
+| Line | Function Signature | Description |
+| :--- | :--- | :--- |
+| [170](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L170) | `getChar()` | Resolves character, HumanoidRootPart, and Humanoid safely. |
+| [177](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L177) | `setRootCFrame(cf, targetRoot)` | Teleports root part or pivots model cleanly. |
+| [186](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L186) | `xp.fireRaid(...)` | Fires `FieldRaidRequest` remote with auto-resolved reference. |
+| [196](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L196) | `xp.loadMods()` | Lazy-requires `FieldRaidCombat`, `FieldRaidEnemies`, and `FieldRaidPowerups`. |
+| [205](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L205) | `xp.setStatus(text)` | Updates `xp.status` and the compact UI status label. |
+| [213](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L213) | `xp.formatRate()` | Formats active session XP/hour rate string. |
+| [223](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L223) | `xp.refreshUI()` | Syncs UI buttons, field/XP readout, session rate, and equipped powerup levels. |
+| [261](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L261) | `xp.syncPowerups()` | Reads `Profile.FieldRaids.Powerups` from `GetSnapshot` and updates baseline/session XP. |
+| [290](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L290) | `xp.resetRunTrackers()` | Clears per-run XP estimates, F10 progress, hazards, and exit state. |
+| [307](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L307) | `xp.bandZ(level)` | Computes nearZ and farZ world bounds for Field `level` using `FieldRaidLayout.Band`. |
+| [318](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L318) | `xp.levelAtZ(z)` | Returns the field level whose band contains world `z`. |
+| [326](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L326) | `xp.sweepBounds()` | Returns clamped lateral X bounds across the planting field. |
+| [335](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L335) | `xp.arena()` | Resolves the active `PrivateFieldRaids` or run geometry folder. |
+| [353](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L353) | `xp.cellPoint(part, pos)` | Clamps `pos` onto `part`'s oriented bounding box for accurate reach checks. |
+| [360](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L360) | `xp.mobAlive(part)` | Checks if a raid mob part still exists and has positive Health. |
+| [364](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L364) | `xp.speciesOf(part)` | Returns species/model name of a raid food or mob part. |
+| [369](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L369) | `xp.isSecondaryFood(part)` | Identifies high-XP secondary foods (`GoldenApple`, `GoldMushroom`, etc.). |
+| [376](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L376) | `xp.scan(now, force)` | Scans `NorthRiverRaidView` for live `RaidMob` and available `RaidFood` parts. |
+| [399](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L399) | `xp.getInterval(node)` | Computes server-aligned chew cooldown interval plus adaptive margin. |
+| [408](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L408) | `xp.ensureGraze()` | Sends `GrazeStart` once per active raid run. |
+| [416](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L416) | `xp.face(root, pos)` | Rotates root horizontally toward target position `pos`. |
+| [425](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L425) | `xp.sendChomp(nodeId, node, now, root)` | Fires `ChompRequest` with serial tracking and species/secondary metadata. |
+| [477](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L477) | `xp.biteNearby(now, root, rootPos)` | Bites in-range secondary foods, highest XP/HP mobs, or wheat on the move. |
+| [527](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L527) | `xp.addHazard(msg)` | Parses enemy telegraphs and schedules blink-dodges or projectile jinks. |
+| [573](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L573) | `xp.dropHazards(id)` | Removes active hazards belonging to canceled or defeated enemy `id`. |
+| [586](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L586) | `segDist(p, a, b)` | Computes flat XZ distance from point `p` to segment `a-b`. |
+| [595](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L595) | `xp.danger(pos, serverNow, horizon)` | Evaluates `FieldRaidCombat.Contains` against active hazards at `pos`. |
+| [617](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L617) | `xp.spotClear(char, from, spot)` | Raycasts wall/fence clearance and valid ground under candidate dodge `spot`. |
+| [627](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L627) | `xp.allowedSpot(spot, rootPos, holdF10)` | Enforces field X bounds and Field 10 Z-band clamping for dodge spots. |
+| [640](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L640) | `xp.jumpSilk(humanoid, pos, serverNow)` | Jumps a SilkTripline web about to catch the cow. |
+| [654](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L654) | `xp.blinkDodge(holdF10)` | Micro-teleports out of imminent telegraph footprints using radial clearance scoring. |
+| [690](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L690) | `xp.jink(shooterPos)` | Sidesteps perpendicular to an archer/thrower right before projectile release. |
+| [721](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L721) | `xp.dodgeStep(now, rootPos, humanoid, holdF10)` | Combines blink-dodge and `Humanoid:MoveTo` evasion from active telegraphs. |
+| [763](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L763) | `xp.setSprint(on, now)` | Toggles raid sprint via `SprintRequest` with rate limiting. |
+| [770](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L770) | `xp.walkTo(target, now, humanoid, root)` | Pathfinding-assisted movement with stuck detection and perpendicular unstick nudges. |
+| [842](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L842) | `xp.stopWalk()` | Clears active path and halts humanoid movement. |
+| [851](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L851) | `xp.prompts(now)` | Caches `OpenHarvestChest`, `GateExit`, and `RiverExit` ProximityPrompts in arena. |
+| [871](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L871) | `xp.promptPos(prompt)` | Resolves world position of a ProximityPrompt's parent part, attachment, or model. |
+| [879](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L879) | `xp.firePrompt(prompt)` | Triggers a ProximityPrompt safely via `fireproximityprompt`. |
+| [886](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L886) | `xp.tryChest(now, rootPos, humanoid, root)` | Walks to and opens healing harvest chests when hearts are low. |
+| [913](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L913) | `xp.exitSpot(via)` | Resolves `RiverExit` or `GateExit` prompt and world position fallback. |
+| [922](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L922) | `xp.bank(now, rootPos, humanoid, root)` | Navigates to chosen raid exit and fires its prompt to bank run XP/rewards. |
+| [950](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L950) | `xp.meadow(now, rootPos, humanoid)` | Collects owned Harvest Meadow gold chest then interacts with `HomePrompt`. |
+| [1003](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L1003) | `xp.startRun(now, rootPos, humanoid, root)` | Walks to raid camp sign-up and enters a Solo raid when outside. |
+| [1046](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L1046) | `xp.pickF10Target(rootPos, now, nearZ, farZ, allowFarmers)` | Scores Field 10 secondary foods, enemies, and wheat by estimated XP/sec. |
+| [1104](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L1104) | `xp.farmF10(now, rootPos, humanoid, root)` | Executes `Rush & Reset` clear-and-exit or continuous `Camp F10` farming inside Field 10. |
+| [1171](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L1171) | `xp.tick(now)` | Main 10Hz state machine orchestrating camp start, blitz to F10, farming, dodging, and exits. |
+| [1385](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L1385) | `xp.buildUI()` | Builds compact draggable `CowFieldRaidXPUI` HUD and controls. |
+| [1524](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L1524) | `xp.setRunning(on)` | Starts/stops automation and pauses conflicting `_G.CowHubFieldRaid.auto` and `_G.CowMillQuests`. |
+| [1548](file:///Users/jsph/cowhub/luascripts/field_raid_xp.lua#L1548) | `xp.destroy()` | Disconnects listeners, stops movement, removes UI, and clears `_G.CowFieldRaidXP`. |
 
 ---
