@@ -87,7 +87,13 @@ local mq = {
     ferryPrompt = nil,
     meadowChest = nil,
     homePrompt = nil,
-    bell = nil,          -- { Position, Opens, Closes, Row }
+    bell = nil,          -- { Position, Opens, Closes, Row, Bell }
+    -- Ripe bells come 3 per field (Bell = 1..3, ~55-75 s apart) at one spot of that field
+    bellSpot = {},       -- [field] = last bell Position
+    bellIndex = {},      -- [field] = highest Bell index seen this outing
+    holdSince = {},      -- [field] = os.clock() when the cow started holding it
+    lastBellAt = 0,      -- os.clock() of the last Bell event
+    BELL_TIMEOUT = 150,  -- no bell for this long while holding a field: give it up for the outing
     bossPos = nil,
     bossHealth = 0,
 
@@ -216,6 +222,9 @@ function mq.resetRunTrackers()
     mq.stompDodged = false
     mq.ogreStomp = nil
     mq.bell = nil
+    table.clear(mq.bellSpot)
+    table.clear(mq.bellIndex)
+    table.clear(mq.holdSince)
     mq.bossPos = nil
     mq.bossHealth = 0
     table.clear(mq.hazards)
@@ -307,6 +316,14 @@ function mq.bandZ(level)
     local k = planting.Size.Z / mq.FIELD_DEPTHS[11]
     local front = planting.Frame.Position.Z + planting.Size.Z * 0.5
     return front - mq.FIELD_DEPTHS[level] * k, front - mq.FIELD_DEPTHS[level + 1] * k
+end
+
+function mq.levelAtZ(z)
+    for level = 1, 10 do
+        local nearZ, farZ = mq.bandZ(level)
+        if nearZ and z <= nearZ and z >= farZ then return level end
+    end
+    return nil
 end
 
 function mq.sweepBounds()
@@ -1129,7 +1146,28 @@ function mq.huntRipeInField(now, rootPos, humanoid, root, targetLevel, statusPre
         end
     end
 
-    -- 3) Otherwise patrol laterally along midZ while waiting for the next ripe bell
+    -- 3) Bells are spent after the third one (or none rang for BELL_TIMEOUT): lost for the outing
+    mq.holdSince[targetLevel] = mq.holdSince[targetLevel] or now
+    local quiet = now - math.max(mq.holdSince[targetLevel], mq.lastBellAt) > mq.BELL_TIMEOUT
+    if (mq.bellIndex[targetLevel] or 0) >= 3 or quiet then
+        if targetLevel == 8 then mq.c2Missed = true else mq.c1Missed = true end
+        mq.refreshUI()
+        mq.setStatus(statusPrefix .. ": F" .. targetLevel .. " bells spent, next outing")
+        return
+    end
+
+    -- 4) The next bell rings near the last one: circle that spot (moving, so aim never settles)
+    local spot = mq.bellSpot[targetLevel]
+    if spot then
+        mq.orbitAngle = (mq.orbitAngle + 0.25) % (math.pi * 2)
+        local cx = math.clamp(spot.X, minX + 12, maxX - 12)
+        local cz = math.clamp(spot.Z, safeFarZ + 12, safeNearZ - 12)
+        mq.walkTo(Vector3.new(cx + math.cos(mq.orbitAngle) * 12, rootPos.Y, cz + math.sin(mq.orbitAngle) * 12), now, humanoid, root)
+        mq.setStatus(string.format("%s: circling F%d bell spot (bell %d/3)", statusPrefix, targetLevel, mq.bellIndex[targetLevel] or 0))
+        return
+    end
+
+    -- 5) No bell yet in this field: patrol laterally along midZ
     local dir = mq.sweepDir or 1
     if (dir > 0 and rootPos.X >= maxX - 15) or (dir < 0 and rootPos.X <= minX + 15) then
         dir = -dir
@@ -1419,6 +1457,12 @@ do
                 end
             elseif kind == "Bell" then
                 mq.bell = msg
+                mq.lastBellAt = os.clock()
+                local lv = typeof(msg.Position) == "Vector3" and mq.levelAtZ(msg.Position.Z)
+                if lv then
+                    mq.bellSpot[lv] = msg.Position
+                    mq.bellIndex[lv] = math.max(mq.bellIndex[lv] or 0, tonumber(msg.Bell) or 0)
+                end
             elseif kind == "Windup" or kind == "ProjectileAim" or kind == "BarrageMark" then
                 mq.addHazard(msg)
             elseif kind == "CancelWarning" or kind == "EnemyDefeated" then
