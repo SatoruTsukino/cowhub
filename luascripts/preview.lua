@@ -1,4 +1,4 @@
--- Cow Hub [46c6e6e] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
+-- Cow Hub [84bced0] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [46c6e6e]",
+    Name = "Cow Hub [84bced0]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -10591,9 +10591,9 @@ do
     function triggerRaftingCommand(cmd)
         if cmd == "Sail" or cmd == "Continue" or cmd == "Start" or cmd == "Vote" then
             sendRaftKey(Enum.KeyCode.N, 0.25)
-        elseif cmd == "Return" then
-            sendRaftKey(Enum.KeyCode.H, 0.25)
         end
+        -- No key for "Return": H is the pet "Spend time" / "Meet rabbit" prompt key and opened the pet menu.
+        -- Return goes through the raft button below and the RaftingRequest remote.
 
         local candidateNames = { cmd, cmd .. "Button" }
         if cmd == "Sail" or cmd == "Start" or cmd == "Vote" then
@@ -12931,7 +12931,6 @@ function rafting.endVoyage()
     rafting.status = "Idle"
 
     local mustering = not rafting.isSailing and Players.LocalPlayer:GetAttribute("CowRaftingTeam") ~= nil
-    sendRaftKey(Enum.KeyCode.H, 0.25)
     triggerRaftingCommand("Return")
     task.wait(0.2)
     rafting.fireRemoteSafely("Return", nil, 1.0)
