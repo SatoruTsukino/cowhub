@@ -70,6 +70,8 @@ local mq = {
     -- Per-run challenge trackers
     c1Fields = {},       -- [3] = true, [4] = true, [5] = true
     c1Missed = false,    -- passed a needed C1 field without its ripe harvest this outing
+    c2Missed = false,    -- passed Field 8 before 3 clean ripe bites this outing
+    holdNearZ = nil,     -- while holding a field: its near edge (moving back inside the field is allowed)
     pendingCells = {},   -- [nodeId] = field level: ripe cell bitten, credit once the server removes it
     f8RipeStreak = 0,    -- 0..3 clean ripe bites in Field 8
     c2DoneRun = false,
@@ -129,9 +131,9 @@ local mq = {
     -- Constants from FieldRaidLayout / geometry dump
     FIELD_DEPTHS = { 0, 55, 115, 180, 250, 325, 405, 490, 585, 690, 810.42096 },
     PLANTING_FALLBACK = { Frame = CFrame.new(54.6875, 701.7, 30476.408), Size = Vector3.new(1080.0925, 1, 4052.1047) },
-    GATE_FALLBACK = Vector3.new(-417.26, 706.95, 32532.46),
-    FERRY_FALLBACK = Vector3.new(-408.26, 707.0, 28454.36),
-    GATE_OFFSET = Vector3.new(-471.95, 5.75, 1043.03),
+    -- Exit prompts relative to the run's Planting center (arenas are placed at different X per run)
+    GATE_REL = Vector3.new(-471.95, 5.25, 2056.05),
+    FERRY_REL = Vector3.new(-462.95, 5.3, -2022.05),
 
     conns = {},
     gui = nil,
@@ -198,7 +200,7 @@ function mq.activeGoal()
     if mq.mode == "C3" then return (not mq.isDone(3)) and 3 or nil end
     -- C1 is lost for this outing once the cow is past a field it still needs (forward only)
     if not mq.isDone(1) and not mq.c1Complete() and not mq.c1Missed then return 1 end
-    if not mq.isDone(2) and not mq.c2Complete() then return 2 end
+    if not mq.isDone(2) and not mq.c2Complete() and not mq.c2Missed then return 2 end
     if not mq.isDone(3) then return 3 end
     return nil
 end
@@ -206,6 +208,8 @@ end
 function mq.resetRunTrackers()
     table.clear(mq.c1Fields)
     mq.c1Missed = false
+    mq.c2Missed = false
+    mq.holdNearZ = nil
     table.clear(mq.pendingCells)
     mq.f8RipeStreak = 0
     mq.c2DoneRun = false
@@ -253,7 +257,8 @@ function mq.refreshUI()
         u.c1Label.TextColor3 = (mq.isDone(1) or mq.c1Complete()) and Color3.fromRGB(145, 224, 158) or Color3.fromRGB(235, 230, 218)
     end
     if u.c2Label then
-        u.c2Label.Text = mark(mq.isDone(2) or mq.c2Complete()) .. "C2: 3x Ripe F8 " .. (mq.isDone(2) and "(Saved)" or string.format("(%d/3)", mq.f8RipeStreak))
+        u.c2Label.Text = mark(mq.isDone(2) or mq.c2Complete()) .. "C2: 3x Ripe F8 "
+            .. (mq.isDone(2) and "(Saved)" or (string.format("(%d/3)", mq.f8RipeStreak) .. (mq.c2Missed and " missed, next outing" or "")))
         u.c2Label.TextColor3 = (mq.isDone(2) or mq.c2Complete()) and Color3.fromRGB(145, 224, 158) or Color3.fromRGB(235, 230, 218)
     end
     if u.c3Label then
@@ -299,11 +304,24 @@ function mq.sweepBounds()
     return nil, nil
 end
 
+-- Raid arenas are separate models (PrivateFieldRaids, FR<course id>, ...) at different X offsets:
+-- the cow's arena is the one (with HarvestLandings) whose pivot is nearest the cow
 function mq.arena()
     local cw = workspace:FindFirstChild("CowWorld")
     local geom = cw and cw:FindFirstChild("Geometry")
-    local run = plr:GetAttribute("CowFieldRaidId")
-    return geom and (geom:FindFirstChild("PrivateFieldRaids") or (run and geom:FindFirstChild(tostring(run))))
+    if not geom then return nil end
+    local _, root = getChar()
+    local from = root and root.Position
+    if not from then return geom:FindFirstChild("PrivateFieldRaids") end
+    local best, bestD = nil, math.huge
+    for _, model in ipairs(geom:GetChildren()) do
+        if (model.Name == "PrivateFieldRaids" or string.sub(model.Name, 1, 2) == "FR") and model:IsA("Model") and model:FindFirstChild("HarvestLandings") then
+            local ok, pivot = pcall(function() return model:GetPivot().Position end)
+            local d = ok and math.abs(pivot.X - from.X) or math.huge
+            if d < bestD then best, bestD = model, d end
+        end
+    end
+    return best
 end
 
 function mq.cellPoint(part, pos)
@@ -686,8 +704,9 @@ function mq.walkTo(target, now, humanoid, root)
     mq.setSprint(true, now)
     local here = root.Position
     -- Forward only (fields deepen toward -Z); only the Mill-gate exit may walk back
-    if not (mq.leaving and mq.exitVia == "gate") and target.Z > here.Z + 4 then
-        target = Vector3.new(target.X, target.Y, here.Z)
+    local backZ = math.max(here.Z + 4, mq.holdNearZ or -math.huge)
+    if not (mq.leaving and mq.exitVia == "gate") and target.Z > backZ then
+        target = Vector3.new(target.X, target.Y, math.max(here.Z, math.min(target.Z, backZ)))
     end
     if not mq.stuckPos or (here - mq.stuckPos).Magnitude > 2 then
         mq.stuckPos, mq.stuckAt = here, now
@@ -735,8 +754,8 @@ function mq.walkTo(target, now, humanoid, root)
         end
         if wp then
             goal = wp.Position
-            if not (mq.leaving and mq.exitVia == "gate") and goal.Z > here.Z + 4 then
-                goal = Vector3.new(goal.X, goal.Y, here.Z)
+            if not (mq.leaving and mq.exitVia == "gate") and goal.Z > backZ then
+                goal = Vector3.new(goal.X, goal.Y, math.max(here.Z, math.min(goal.Z, backZ)))
             end
             if wp.Action == Enum.PathWaypointAction.Jump then humanoid.Jump = true end
         else
@@ -824,10 +843,9 @@ function mq.exitSpot(via)
     local prompt = via == "ferry" and mq.ferryPrompt or mq.gatePrompt
     local pos = prompt and prompt.Parent and mq.promptPos(prompt)
     if pos then return prompt, pos end
-    if via == "ferry" then return nil, mq.FERRY_FALLBACK end
-    local arena = mq.arena()
-    local soil = arena and arena:FindFirstChild("FieldSoil")
-    return nil, soil and (soil.Position + mq.GATE_OFFSET) or mq.GATE_FALLBACK
+    local planting = mq.planting or mq.PLANTING_FALLBACK
+    local center = planting.Frame.Position
+    return nil, center + (via == "ferry" and mq.FERRY_REL or mq.GATE_REL)
 end
 
 function mq.bank(now, rootPos, humanoid, root)
@@ -973,13 +991,14 @@ function mq.huntRipeInField(now, rootPos, humanoid, root, targetLevel, statusPre
         return
     end
     if rootPos.Z < farZ then
-        if targetLevel == 3 or targetLevel == 4 or targetLevel == 5 then
-            mq.c1Missed = true
-            mq.refreshUI()
-        end
-        mq.setStatus(statusPrefix .. ": past Field " .. targetLevel .. " (forward only)")
+        -- Past the field: this challenge is lost for the outing; the next goal takes over
+        if targetLevel == 8 then mq.c2Missed = true else mq.c1Missed = true end
+        mq.refreshUI()
+        mq.setStatus(statusPrefix .. ": past Field " .. targetLevel .. ", moving on")
         return
     end
+    -- Inside the field the cow may move back toward its near edge (it never leaves the field backwards)
+    mq.holdNearZ = safeNearZ
 
     -- 1) Live RaidRipe wheat cell inside this field band
     local ripePart, ripeDist = mq.findWheat(rootPos, now, true, farZ, nearZ)
@@ -990,7 +1009,7 @@ function mq.huntRipeInField(now, rootPos, humanoid, root, targetLevel, statusPre
             return
         end
         local tp = ripePart.Position
-        mq.walkTo(Vector3.new(math.clamp(tp.X, minX, maxX), rootPos.Y, math.clamp(tp.Z, safeFarZ, math.min(safeNearZ, rootPos.Z + 4))), now, humanoid, root)
+        mq.walkTo(Vector3.new(math.clamp(tp.X, minX, maxX), rootPos.Y, math.clamp(tp.Z, safeFarZ, safeNearZ)), now, humanoid, root)
         mq.setStatus(string.format("%s: rushing ripe wheat (%d studs)", statusPrefix, math.floor(ripeDist)))
         return
     end
@@ -1002,7 +1021,7 @@ function mq.huntRipeInField(now, rootPos, humanoid, root, targetLevel, statusPre
         local bz = bell.Position.Z
         if bz <= nearZ + 4 and bz >= farZ - 4 then
             local bx = math.clamp(bell.Position.X, minX, maxX)
-            local bzc = math.clamp(bz, safeFarZ, math.min(safeNearZ, rootPos.Z + 4))
+            local bzc = math.clamp(bz, safeFarZ, safeNearZ)
             local targetPos = Vector3.new(bx, rootPos.Y, bzc)
             local dist = (targetPos - rootPos).Magnitude
             if dist > 8 then
@@ -1154,6 +1173,7 @@ function mq.tick(now)
         return
     end
 
+    mq.holdNearZ = nil
     -- Determine active objective for this run
     local goal = mq.activeGoal()
     if not goal then

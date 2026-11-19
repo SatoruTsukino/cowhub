@@ -1,4 +1,4 @@
--- Cow Hub [dec43e8] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [35511d1] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -60,7 +60,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [dec43e8]",
+    Name = "Cow Hub [35511d1]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -555,8 +555,9 @@ local fieldraid = {
     focus = "Grazing",      -- "Grazing": farm the max field forever | "Loot Runs": every chest to the last plot, bank, restart
     chestLevels = {},       -- field levels whose chest this run opened
     LAST_CHEST_LEVEL = 9,   -- Planting.ChestPlots are on fields 1,3,5,7,9
-    GATE_FALLBACK = Vector3.new(-417.26, 706.95, 32532.46), -- GateExit (Mill gate) in the private arena
-    FERRY_FALLBACK = Vector3.new(-408.26, 707.0, 28454.36), -- RiverExit "Visit harvest meadow" (River ferry, field 10 far edge)
+    -- Exit prompts relative to the run's Planting center: arenas are placed at different X per run
+    GATE_REL = Vector3.new(-471.95, 5.25, 2056.05),   -- GateExit (Mill gate)
+    FERRY_REL = Vector3.new(-462.95, 5.3, -2022.05),  -- RiverExit "Visit harvest meadow" (River ferry, field 10 far edge)
     exitVia = nil,          -- "ferry" (forward, end of field 10) | "gate" (Mill gate, back at the start)
     status = "Idle",
     statusCard = nil,
@@ -566,7 +567,6 @@ local fieldraid = {
     mobs = {}, wheat = {}, chestPrompts = {}, chestTried = setmetatable({}, { __mode = "k" }), lastPromptScan = 0,
     path = nil, pathTarget = nil, pathIndex = 0, pathAt = 0, pathBusy = false, lastMove = 0,
     -- GateExit ("Bank and leave") relative to the arena's FieldSoil (geometry dump FR987d2b...)
-    GATE_OFFSET = Vector3.new(-471.95, 5.75, 1043.03),
     MOB_RANGE = 9,          -- bite reach toward raid mobs (client TargetDistance 9)
     chestUntil = 0, sprinting = nil, sprintAt = 0,
     fastChest = true,       -- close the chest reveal (it anchors the cow) once hearts are full; it heals while open
@@ -6474,10 +6474,23 @@ function fieldraid.stopWalk()
     end
 end
 
+-- Raid arenas are separate models (PrivateFieldRaids, FR<course id>, ...) at different X offsets:
+-- the cow's arena is the one (with HarvestLandings) whose pivot is nearest the cow
 function fieldraid.arena()
     local cowWorld = workspace:FindFirstChild("CowWorld")
     local geometry = cowWorld and cowWorld:FindFirstChild("Geometry")
-    return geometry and (geometry:FindFirstChild("PrivateFieldRaids") or geometry:FindFirstChild(tostring(fieldraid.runId())))
+    if not geometry then return nil end
+    local from = root and root.Parent and root.Position
+    if not from then return geometry:FindFirstChild("PrivateFieldRaids") end
+    local best, bestD = nil, math.huge
+    for _, model in ipairs(geometry:GetChildren()) do
+        if (model.Name == "PrivateFieldRaids" or string.sub(model.Name, 1, 2) == "FR") and model:IsA("Model") and model:FindFirstChild("HarvestLandings") then
+            local ok, pivot = pcall(function() return model:GetPivot().Position end)
+            local d = ok and math.abs(pivot.X - from.X) or math.huge
+            if d < bestD then best, bestD = model, d end
+        end
+    end
+    return best
 end
 
 -- Chest + gate prompts of the private arena (rescanned every 4 s: they stream in as the cow moves)
@@ -6552,10 +6565,8 @@ function fieldraid.exitSpot(via)
     local prompt = via == "ferry" and fieldraid.ferryPrompt or fieldraid.gatePrompt
     local pos = prompt and prompt.Parent and fieldraid.promptPos(prompt)
     if pos then return prompt, pos end
-    if via == "ferry" then return nil, fieldraid.FERRY_FALLBACK end
-    local arena = fieldraid.arena()
-    local soil = arena and arena:FindFirstChild("FieldSoil")
-    return nil, soil and (soil.Position + fieldraid.GATE_OFFSET) or fieldraid.GATE_FALLBACK
+    local planting = fieldraid.planting or PLANTING_FALLBACK
+    return nil, planting.Frame.Position + (via == "ferry" and fieldraid.FERRY_REL or fieldraid.GATE_REL)
 end
 
 -- Manual Bank & Leave picks the nearer exit; Loot Runs always take the ferry (never walk back)
