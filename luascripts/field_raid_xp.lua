@@ -1087,6 +1087,32 @@ function xp.meadow(now, rootPos, humanoid)
     end
 end
 
+-- Green gathering circle by the sign-up counter (arc parts under GatheringBoundary).
+-- The server only starts a run for a cow standing inside it. Returns center, inner radius.
+-- shortcut: center = centroid of the arc parts, assumes arcs spread evenly round the ring; fit a circle if they don't
+function xp.gatherCircle()
+    local node = workspace:FindFirstChild("CowWorld")
+    for _, name in ipairs({ "Decorations", "HayRaidEntrance", "Gathering Markers", "GatheringBoundary" }) do
+        node = node and node:FindFirstChild(name)
+    end
+    if not node then return nil end
+    if node:IsA("BasePart") then return node.Position, math.min(node.Size.X, node.Size.Z) / 2 end
+    local parts, sum = {}, Vector3.zero
+    for _, p in ipairs(node:GetDescendants()) do
+        if p:IsA("BasePart") then
+            parts[#parts + 1] = p
+            sum += p.Position
+        end
+    end
+    if #parts == 0 then return nil end
+    local center, radius = sum / #parts, math.huge
+    for _, p in ipairs(parts) do
+        local o = p.Position - center
+        radius = math.min(radius, Vector3.new(o.X, 0, o.Z).Magnitude)
+    end
+    return center, radius
+end
+
 function xp.startRun(now, rootPos, humanoid, root)
     if not xp.autoStart then
         xp.setStatus("Outside raid (auto-start off)")
@@ -1105,10 +1131,12 @@ function xp.startRun(now, rootPos, humanoid, root)
         xp.setStatus("Go near Field Raid camp to start")
         return
     end
-    -- The server ignores "Solo" unless the cow stands in the green sign-up circle: walk onto its center
-    local off = signup.Position - rootPos
+    -- The server ignores "Solo" unless the cow stands in the green gathering circle: walk onto its center
+    local spot, radius = xp.gatherCircle()
+    spot = spot or signup.Position
+    local off = spot - rootPos
     local d = Vector3.new(off.X, 0, off.Z).Magnitude
-    if d > 3 then
+    if d > math.clamp((radius or 6) * 0.5, 2, 3) then
         if d > 260 then
             xp.setStatus(string.format("Move closer to Field Raid camp (%d studs)", math.floor(d)))
             return
@@ -1117,11 +1145,11 @@ function xp.startRun(now, rootPos, humanoid, root)
             -- direct MoveTo: walkTo's forward-only clamp would stall short of the circle
             xp.path, xp.pathTarget = nil, nil
             xp.lastMove = now
-            humanoid:MoveTo(signup.Position)
+            humanoid:MoveTo(spot)
         else
-            xp.walkTo(signup.Position, now, humanoid, root)
+            xp.walkTo(spot, now, humanoid, root)
         end
-        xp.setStatus("Walking into raid sign-up circle")
+        xp.setStatus("Walking into raid gathering circle")
         return
     end
     xp.stopWalk()

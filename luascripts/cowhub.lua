@@ -1,4 +1,4 @@
--- Cow Hub [8b20f55] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [2e90c63] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -72,7 +72,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [8b20f55]",
+    Name = "Cow Hub [2e90c63]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -6781,6 +6781,32 @@ function fieldraid.meadow(now, rootPos)
 end
 
 -- Outside a raid: walk to the camp sign-up ("Set out") and start a solo run
+-- Green gathering circle by the sign-up counter (arc parts under GatheringBoundary).
+-- The server only starts a run for a cow standing inside it. Returns center, inner radius.
+-- shortcut: center = centroid of the arc parts, assumes arcs spread evenly round the ring; fit a circle if they don't
+function fieldraid.gatherCircle()
+    local node = workspace:FindFirstChild("CowWorld")
+    for _, name in ipairs({ "Decorations", "HayRaidEntrance", "Gathering Markers", "GatheringBoundary" }) do
+        node = node and node:FindFirstChild(name)
+    end
+    if not node then return nil end
+    if node:IsA("BasePart") then return node.Position, math.min(node.Size.X, node.Size.Z) / 2 end
+    local parts, sum = {}, Vector3.zero
+    for _, p in ipairs(node:GetDescendants()) do
+        if p:IsA("BasePart") then
+            parts[#parts + 1] = p
+            sum += p.Position
+        end
+    end
+    if #parts == 0 then return nil end
+    local center, radius = sum / #parts, math.huge
+    for _, p in ipairs(parts) do
+        local o = p.Position - center
+        radius = math.min(radius, Vector3.new(o.X, 0, o.Z).Magnitude)
+    end
+    return center, radius
+end
+
 function fieldraid.startRun(now, rootPos)
     if not fieldraid.autoStart then
         fieldraid.setStatus("Waiting (auto start off)")
@@ -6799,10 +6825,12 @@ function fieldraid.startRun(now, rootPos)
         fieldraid.setStatus("Go to the Field Raid camp (sign-up not loaded)")
         return
     end
-    -- The server ignores "Solo" unless the cow stands in the green sign-up circle: walk onto its center
-    local off = signup.Position - rootPos
+    -- The server ignores "Solo" unless the cow stands in the green gathering circle: walk onto its center
+    local spot, radius = fieldraid.gatherCircle()
+    spot = spot or signup.Position
+    local off = spot - rootPos
     local d = Vector3.new(off.X, 0, off.Z).Magnitude
-    if d > 3 then
+    if d > math.clamp((radius or 6) * 0.5, 2, 3) then
         if d > 250 then
             fieldraid.setStatus(string.format("Go to the Field Raid camp (%d studs)", math.floor(d)))
             return
@@ -6811,11 +6839,11 @@ function fieldraid.startRun(now, rootPos)
             -- direct MoveTo: walkTo's forward-only clamp would stall short of the circle
             fieldraid.path, fieldraid.pathTarget = nil, nil
             fieldraid.lastMove = now
-            humanoid:MoveTo(signup.Position)
+            humanoid:MoveTo(spot)
         else
-            fieldraid.walkTo(signup.Position, now)
+            fieldraid.walkTo(spot, now)
         end
-        fieldraid.setStatus("Walking into raid sign-up circle")
+        fieldraid.setStatus("Walking into raid gathering circle")
         return
     end
     fieldraid.stopWalk()
