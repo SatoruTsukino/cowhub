@@ -1,4 +1,4 @@
--- Cow Hub [6ad40e2] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [4d7693b] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -30,6 +30,12 @@ if _G.CowHubLoaded then
         for _, conn in ipairs(_G.CowHubConnections) do
             pcall(function() conn:Disconnect() end)
         end
+    end
+    -- Old Dailies hands its farms/voyage back before every tracked loop and connection dies
+    if _G.CowHubDailies and _G.CowHubDailies.stop then pcall(_G.CowHubDailies.stop) end
+    if _G.CowHubKillAll then
+        pcall(_G.CowHubKillAll)
+        _G.CowHubKillAll = nil
     end
     if _G.CowHubHeartbeat then
         pcall(function() _G.CowHubHeartbeat:Disconnect() end)
@@ -123,7 +129,7 @@ do
 end
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [6ad40e2]",
+    Name = "Cow Hub [4d7693b]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -360,6 +366,41 @@ end
 
 local scriptConnections = {}
 _G.CowHubConnections = scriptConnections
+
+-- Hub-wide registry: every signal connection and background loop is tracked here so
+-- one call (re-run teardown, Close button, Dailies stop) kills them all.
+local hub = { conns = {}, threads = {} }
+_G.CowHubKillAll = function() hub.killAll() end
+
+function hub.track(conn)
+    if conn then hub.conns[conn] = true end
+    return conn
+end
+
+function hub.release(conn)
+    if not conn then return end
+    hub.conns[conn] = nil
+    pcall(function() conn:Disconnect() end)
+end
+
+function hub.spawn(fn, ...)
+    return task.spawn(function(...)
+        local me = coroutine.running()
+        hub.threads[me] = true
+        fn(...)
+        hub.threads[me] = nil
+    end, ...)
+end
+
+function hub.killAll()
+    for conn in pairs(hub.conns) do pcall(function() conn:Disconnect() end) end
+    table.clear(hub.conns)
+    local self = coroutine.running()
+    for th in pairs(hub.threads) do
+        if th ~= self then pcall(task.cancel, th) end
+    end
+    table.clear(hub.threads)
+end
 
 -- Pre-cached character baseparts for zero-allocation collision toggling
 local charBaseParts = {}
@@ -674,7 +715,6 @@ dodge = {
     retreatAngle = 45,
     walkSpeed = 26,
     originalWalkSpeed = humanoid and humanoid.WalkSpeed or 16,
-    detectionRadius = 15,
     detectionRadiusSq = 15 * 15,
     lingerDelay = 0.6,
     prioritizeMobsOverManatite = false,
@@ -1793,7 +1833,7 @@ function afkRelog.startTimer()
     afkRelog.sessionStartTime = os.time()
     afkRelog.targetRejoinTime = os.time() + afkRelog.interval
 
-    afkRelog.timerThread = task.spawn(function()
+    afkRelog.timerThread = hub.spawn(function()
         while true do
             task.wait(1)
             if afkRelog.enabled and not afkRelog.isRejoining then
@@ -4282,9 +4322,9 @@ function cache.initRippleTracking()
         for _, desc in ipairs(fFolder:GetDescendants()) do
             cache.registerRipple(desc)
         end
-        local conn = fFolder.DescendantAdded:Connect(cache.registerRipple)
+        local conn = hub.track(fFolder.DescendantAdded:Connect(cache.registerRipple))
         table.insert(cache.rippleConnections, conn)
-        local remConn = fFolder.DescendantRemoving:Connect(cache.unregisterRipple)
+        local remConn = hub.track(fFolder.DescendantRemoving:Connect(cache.unregisterRipple))
         table.insert(cache.rippleConnections, remConn)
     end
 
@@ -4292,9 +4332,9 @@ function cache.initRippleTracking()
     for _, child in ipairs(workspace:GetChildren()) do
         cache.registerRipple(child)
     end
-    local wsConn = workspace.ChildAdded:Connect(cache.registerRipple)
+    local wsConn = hub.track(workspace.ChildAdded:Connect(cache.registerRipple))
     table.insert(cache.rippleConnections, wsConn)
-    local wsRemConn = workspace.ChildRemoved:Connect(cache.unregisterRipple)
+    local wsRemConn = hub.track(workspace.ChildRemoved:Connect(cache.unregisterRipple))
     table.insert(cache.rippleConnections, wsRemConn)
 
     -- 3. Scan direct CowWorld children if present (~20 instances)
@@ -4303,9 +4343,9 @@ function cache.initRippleTracking()
         for _, child in ipairs(cWorld:GetChildren()) do
             cache.registerRipple(child)
         end
-        local cwConn = cWorld.ChildAdded:Connect(cache.registerRipple)
+        local cwConn = hub.track(cWorld.ChildAdded:Connect(cache.registerRipple))
         table.insert(cache.rippleConnections, cwConn)
-        local cwRemConn = cWorld.ChildRemoved:Connect(cache.unregisterRipple)
+        local cwRemConn = hub.track(cWorld.ChildRemoved:Connect(cache.unregisterRipple))
         table.insert(cache.rippleConnections, cwRemConn)
     end
 end
@@ -4570,26 +4610,26 @@ do
             end
 
             if not chestESP.descendantAddedConn then
-                chestESP.descendantAddedConn = workspace.DescendantAdded:Connect(function(desc)
+                chestESP.descendantAddedConn = hub.track(workspace.DescendantAdded:Connect(function(desc)
                     if chestESP.show and isTeamChest(desc) then
                         task.wait(0.1)
                         chestESP.attach(desc)
                     end
-                end)
+                end))
             end
 
             if not chestESP.descendantRemovingConn then
-                chestESP.descendantRemovingConn = workspace.DescendantRemoving:Connect(function(desc)
+                chestESP.descendantRemovingConn = hub.track(workspace.DescendantRemoving:Connect(function(desc)
                     if chestESP.visuals[desc] then
                         chestESP.removeVisual(desc)
                     end
-                end)
+                end))
             end
 
             if not chestESP.espConn then
                 local lastChestUpdate = 0
                 local lastScan = 0
-                chestESP.espConn = RunService.Heartbeat:Connect(function()
+                chestESP.espConn = hub.track(RunService.Heartbeat:Connect(function()
                     if not chestESP.show then
                         chestESP.cleanup()
                         return
@@ -4628,7 +4668,7 @@ do
                             end
                         end
                     end
-                end)
+                end))
             end
         else
             if chestESP.descendantAddedConn then
@@ -4671,7 +4711,7 @@ function manatite.updateESP()
     if manatite.showESP then
         if not manatite.espConn then
             local lastEspUpdate = 0
-            manatite.espConn = RunService.Heartbeat:Connect(function()
+            manatite.espConn = hub.track(RunService.Heartbeat:Connect(function()
                 if not manatite.showESP then
                     manatite.cleanupVisuals()
                     return
@@ -4740,7 +4780,7 @@ function manatite.updateESP()
                         end
                     end
                 end
-            end)
+            end))
         end
     else
         manatite.cleanupVisuals()
@@ -4766,7 +4806,7 @@ function mithril.updateESP()
     if mithril.showESP then
         if not mithril.espConn then
             local lastEspUpdate = 0
-            mithril.espConn = RunService.Heartbeat:Connect(function()
+            mithril.espConn = hub.track(RunService.Heartbeat:Connect(function()
                 if not mithril.showESP then
                     mithril.cleanupVisuals()
                     return
@@ -4833,7 +4873,7 @@ function mithril.updateESP()
                         end
                     end
                 end
-            end)
+            end))
         end
     else
         mithril.cleanupVisuals()
@@ -7285,7 +7325,7 @@ function fieldraid.smithStart()
     s.running = true
     local token = {}
     _G.CowHubSmithToken = token
-    task.spawn(function()
+    hub.spawn(function()
         while s.enabled and _G.CowHubLoaded and _G.CowHubSmithToken == token do
             local ok, err = pcall(fieldraid.smithTick)
             if not ok then fieldraid.smithStatus("Error: " .. tostring(err)) end
@@ -7700,7 +7740,7 @@ end
 function updateHeartbeatConnection()
     if farm.on or farm.autoChomp or farm.autoFish or farm.autoChompMobs or dodge.auto or fieldraid.auto or (manatite and manatite.auto) or (mithril and mithril.auto) then
         if not HeartbeatConnection then
-            HeartbeatConnection = RunService.Heartbeat:Connect(function(dt)
+            HeartbeatConnection = hub.track(RunService.Heartbeat:Connect(function(dt)
             _G.CowHubHeartbeat = HeartbeatConnection
                 if not root or not root.Parent or not root:IsA("BasePart") then
                     local currentCharacter = resolveCharacter()
@@ -7830,7 +7870,7 @@ function updateHeartbeatConnection()
                 if mithril and mithril.auto and not dodge.isUnderground and not dodge.isDodging and not aerial.active and not (dodge.prioritizeMobsOverManatite and hasNearbyThreat) then
                     mithril.process(now, rootPos)
                 end
-            end)
+            end))
         end
     else
         if HeartbeatConnection then
@@ -8089,7 +8129,7 @@ do
         if not chomp.statusCard and MainTab.CreateParagraph then
             pcall(function() chomp.statusCard = MainTab:CreateParagraph({ Title = title, Content = body }) end)
         end
-        task.spawn(function()
+        hub.spawn(function()
             while chomp.statusCard and _G.CowHubConnections == scriptConnections do
                 task.wait(1)
                 if farm.autoChomp then
@@ -8258,7 +8298,6 @@ do
         CurrentValue = 15,
         Flag = "Slider_DodgeRange",
         Callback = function(Value)
-            dodge.detectionRadius = Value
             dodge.detectionRadiusSq = Value * Value
         end,
     })
@@ -8563,10 +8602,10 @@ do
                 for _, lotName in ipairs(auction.lotNames) do
                     local lot = skinAuction:FindFirstChild(lotName)
                     if lot then
-                        local conn = lot:GetAttributeChangedSignal("SkinId"):Connect(function()
+                        local conn = hub.track(lot:GetAttributeChangedSignal("SkinId"):Connect(function()
                             task.wait(1)
                             if auction.scannerRunning then auction.debouncedCheckLots() end
-                        end)
+                        end))
                         table.insert(auction.connections, conn)
                     end
                 end
@@ -9101,13 +9140,13 @@ do
                 end
             end
 
-            local c1 = lot:GetAttributeChangedSignal("LeaderName"):Connect(onLotAttributeChanged)
-            local c2 = lot:GetAttributeChangedSignal("MinimumBid"):Connect(onLotAttributeChanged)
-            local c3 = lot:GetAttributeChangedSignal("Bid"):Connect(function() auction.updateLotDisplay(lotName) end)
-            local c4 = lot:GetAttributeChangedSignal("Round"):Connect(onLotAttributeChanged)
-            local c5 = lot:GetAttributeChangedSignal("SkinId"):Connect(onLotAttributeChanged)
-            local c6 = lot:GetAttributeChangedSignal("SkinName"):Connect(function() auction.updateLotDisplay(lotName) end)
-            local c7 = lot:GetAttributeChangedSignal("EndsAt"):Connect(function() auction.updateLotDisplay(lotName) end)
+            local c1 = hub.track(lot:GetAttributeChangedSignal("LeaderName"):Connect(onLotAttributeChanged))
+            local c2 = hub.track(lot:GetAttributeChangedSignal("MinimumBid"):Connect(onLotAttributeChanged))
+            local c3 = hub.track(lot:GetAttributeChangedSignal("Bid"):Connect(function() auction.updateLotDisplay(lotName) end))
+            local c4 = hub.track(lot:GetAttributeChangedSignal("Round"):Connect(onLotAttributeChanged))
+            local c5 = hub.track(lot:GetAttributeChangedSignal("SkinId"):Connect(onLotAttributeChanged))
+            local c6 = hub.track(lot:GetAttributeChangedSignal("SkinName"):Connect(function() auction.updateLotDisplay(lotName) end))
+            local c7 = hub.track(lot:GetAttributeChangedSignal("EndsAt"):Connect(function() auction.updateLotDisplay(lotName) end))
 
             table.insert(auction.autoBidConnections, c1)
             table.insert(auction.autoBidConnections, c2)
@@ -9254,7 +9293,7 @@ end
 function townAuction.initOwnershipListener()
     local clientEvent = cowRemotes and cowRemotes:FindFirstChild("ClientEvent")
     if not (clientEvent and clientEvent:IsA("RemoteEvent")) then return end
-    table.insert(townAuction.connections, clientEvent.OnClientEvent:Connect(function(name)
+    table.insert(townAuction.connections, hub.track(clientEvent.OnClientEvent:Connect(function(name)
         if name ~= "Snapshot" or townAuction.ownershipRedrawQueued then return end
         townAuction.ownershipRedrawQueued = true
         -- let the game's own handler apply the new profile first
@@ -9262,7 +9301,7 @@ function townAuction.initOwnershipListener()
             townAuction.ownershipRedrawQueued = false
             townAuction.updateAllCards()
         end)
-    end))
+    end)))
 end
 
 function townAuction.formatRemainingTime(endsAt)
@@ -12259,7 +12298,7 @@ do
     local ProximityPromptService = game:GetService("ProximityPromptService")
     if ProximityPromptService then
         pcall(function()
-            ProximityPromptService.PromptTriggered:Connect(function(prompt, playerWhoTriggered)
+            hub.track(ProximityPromptService.PromptTriggered:Connect(function(prompt, playerWhoTriggered)
                 if playerWhoTriggered == (plr or Players.LocalPlayer) and prompt then
                     local promptName = ""
                     local pName = ""
@@ -12277,7 +12316,7 @@ do
                         rafting.pollRewardGuiUntilDismissed(8.0)
                     end
                 end
-            end)
+            end))
         end)
     end
 end
@@ -12288,7 +12327,7 @@ task.spawn(function()
         pg = (plr or Players.LocalPlayer):WaitForChild("PlayerGui", 5)
     end)
     if pg then
-        pg.ChildAdded:Connect(function(child)
+        hub.track(pg.ChildAdded:Connect(function(child)
             local childName = nil
             pcall(function() childName = child.Name end)
             if not childName then return end
@@ -12297,7 +12336,7 @@ task.spawn(function()
                 task.wait(0.2)
                 rafting.dismissChestRewardGui()
             end
-        end)
+        end))
     end
 end)
 
@@ -15664,7 +15703,7 @@ do
     end
 
     -- Own loop: runs whether or not any heartbeat farm is on; ends with this hub instance
-    task.spawn(function()
+    hub.spawn(function()
         while _G.CowHubConnections == scriptConnections do
             local ok, err = pcall(caravan.step, os.clock())
             if not ok then
@@ -15735,7 +15774,7 @@ do
         if not card and CaravanTab.CreateParagraph then
             pcall(function() card = CaravanTab:CreateParagraph({ Title = title, Content = body }) end)
         end
-        task.spawn(function()
+        hub.spawn(function()
             while card and _G.CowHubConnections == scriptConnections do
                 task.wait(1)
                 local s, st = caravan.stats, caravan.readState()
@@ -15777,7 +15816,7 @@ local dailies = {
     furniture = true,
     fisherman = true,
     slyMoon = true,
-    openBoxes = true,
+    openBoxes = false,           -- reward crates are the player's to open; never automatic unless enabled
     fishUntilReady = true,
     autoRaft = true,
     fishOwned = false,           -- dailies switched auto-fish on
@@ -16007,9 +16046,9 @@ function dailies.openFurnitureChest(today)
 
     local reply
     local ev = cowRemotes:FindFirstChild("ClientEvent")
-    local conn = ev and ev.OnClientEvent:Connect(function(name, data)
+    local conn = ev and hub.track(ev.OnClientEvent:Connect(function(name, data)
         if name == "FurnitureGiftOpened" then reply = type(data) == "table" and data or {} end
-    end)
+    end))
     local function waitReply(sec)
         local t0 = os.clock()
         while not reply and os.clock() - t0 < sec do task.wait(0.2) end
@@ -16032,7 +16071,7 @@ function dailies.openFurnitureChest(today)
         sendRaftKey(Enum.KeyCode.E, hold)
         if waitReply(3) then method = "E key" end
     end)
-    if conn then conn:Disconnect() end
+    hub.release(conn)
     if reply and reply.Ok ~= false then
         dailies.furnitureTries.n = 99
         safeNotify({ Title = "Dailies", Content = "Furniture Store daily gift opened (" .. tostring(method) .. ").", Duration = 4 })
@@ -16109,6 +16148,31 @@ end
 
 -- Returns true while a long activity (owned voyage / fishing) still has to run.
 -- One at a time: the voyage is short and bounded, so it goes first; fishing for the target size has no bound.
+-- Quest to work first: the one already in progress (owned voyage / fishing, or State Active),
+-- otherwise the one whose NPC is nearest the cow
+function dailies.questOrder(fq, rq)
+    local here = root and getRootPos(root)
+    local function key(id, q)
+        local owned = (id == "SlyMoon" and dailies.raftOwned) or (id == "Fisherman" and dailies.fishOwned)
+        local active = type(q) == "table" and q.State == "Active"
+        local dist = math.huge
+        local model = here and dailies.npcModel(id)
+        if model then
+            local ok, pos = pcall(function() return model:GetPivot().Position end)
+            if ok then dist = (here - pos).Magnitude end
+        end
+        return { id = id, owned = owned, active = active, dist = dist }
+    end
+    local list = { key("Fisherman", fq), key("SlyMoon", rq) }
+    table.sort(list, function(a, b)
+        if a.owned ~= b.owned then return a.owned end
+        if a.active ~= b.active then return a.active end
+        if a.dist ~= b.dist then return a.dist < b.dist end
+        return a.id < b.id
+    end)
+    return { list[1].id, list[2].id }
+end
+
 function dailies.questActivity(profile, fq, rq)
     if dailies.raftOwned then
         local elapsed = os.clock() - dailies.raftStartedAt
@@ -16129,25 +16193,28 @@ function dailies.questActivity(profile, fq, rq)
         dailies.setStatus("Sly Moon voyage: waiting for the Roblox window to be focused")
         wantRaft = false
     end
-    if wantRaft and dailies.raftSiteSelected() and dailies.raftAttemptsLeft(rq.Day) then
-        if dailies.fishOwned then
-            dailies.fishOwned = false
-            dailies.setFlag("Toggle_Fish", false)
-        end
-        dailies.startOwnedVoyage(rq.Day)
-        return true
-    end
+    local canRaft = wantRaft and dailies.raftSiteSelected() and dailies.raftAttemptsLeft(rq.Day)
+    local wantFish = dailies.fisherman and dailies.fishUntilReady and type(fq) == "table" and fq.State == "Active"
 
-    local fishing = dailies.fisherman and dailies.fishUntilReady and type(fq) == "table" and fq.State == "Active"
-    if fishing then
-        dailies.goFishingSpot()
-        if not farm.autoFish then
-            dailies.fishOwned = true
-            dailies.setFlag("Toggle_Fish", true)
+    for _, id in ipairs(dailies.questOrder(fq, rq)) do
+        if id == "SlyMoon" and canRaft then
+            if dailies.fishOwned then
+                dailies.fishOwned = false
+                dailies.setFlag("Toggle_Fish", false)
+            end
+            dailies.startOwnedVoyage(rq.Day)
+            return true
+        elseif id == "Fisherman" and wantFish then
+            dailies.goFishingSpot()
+            if not farm.autoFish then
+                dailies.fishOwned = true
+                dailies.setFlag("Toggle_Fish", true)
+            end
+            dailies.setStatus(string.format("Fishing for daily: %s >= %.1f cm", tostring(fq.FishId), tonumber(fq.TargetSize) or 0))
+            return true
         end
-        dailies.setStatus(string.format("Fishing for daily: %s >= %.1f cm", tostring(fq.FishId), tonumber(fq.TargetSize) or 0))
-        return true
-    elseif dailies.fishOwned then
+    end
+    if dailies.fishOwned then
         dailies.fishOwned = false
         dailies.setFlag("Toggle_Fish", false)
     end
@@ -16255,10 +16322,14 @@ function dailies.tick()
         if dailies.enabled and dailies.furniture and (tonumber(dr.LastFurnitureGiftDay) or today) < today then
             dailies.openFurnitureChest(today)
         end
-        if dailies.enabled and dailies.fisherman and profile.FishermanQuestStage == "Completed" and type(fq) == "table" then
-            dailies.claimQuest("Fisherman", fq)
+        for _, id in ipairs(dailies.questOrder(fq, rq)) do
+            if not dailies.enabled then break end
+            if id == "Fisherman" and dailies.fisherman and profile.FishermanQuestStage == "Completed" and type(fq) == "table" then
+                dailies.claimQuest("Fisherman", fq)
+            elseif id == "SlyMoon" and dailies.slyMoon and type(rq) == "table" then
+                dailies.claimQuest("SlyMoon", rq)
+            end
         end
-        if dailies.enabled and dailies.slyMoon and type(rq) == "table" then dailies.claimQuest("SlyMoon", rq) end
         if dailies.enabled and dailies.openBoxes then
             local mats = profile.Materials or {}
             for boxId, action in pairs(dailies.BOXES) do
@@ -16307,7 +16378,7 @@ function dailies.start()
     dailies.loadPaused()
     local token = {}
     _G.CowHubDailiesToken = token
-    task.spawn(function()
+    hub.spawn(function()
         while dailies.alive(token) do
             local ok, err = pcall(dailies.tick)
             if not ok then dailies.setStatus("Error: " .. tostring(err)) end
@@ -16361,7 +16432,7 @@ do
         { label = "Auto-Fish Until Fisherman Ready", default = true, fn = function(Value) dailies.fishUntilReady = Value end },
         { label = "Sly Moon Daily", default = true, fn = function(Value) dailies.slyMoon = Value end },
         { label = "Auto-Raft Sly Moon Daily", default = true, fn = function(Value) dailies.autoRaft = Value end },
-        { label = "Open Quest Boxes", default = true, fn = function(Value) dailies.openBoxes = Value end },
+        { label = "Open Quest Crates (manual by default)", default = false, fn = function(Value) dailies.openBoxes = Value end },
     })
 
     DailiesTab:CreateDropdown({
@@ -17481,6 +17552,8 @@ do
                         pcall(function() conn:Disconnect() end)
                     end
                 end
+                pcall(dailies.stop)
+                hub.killAll()
                 chomp.watchStats(false)
                 if mapOptimizer and mapOptimizer.stopStreamHook then
                     pcall(function() mapOptimizer.stopStreamHook() end)

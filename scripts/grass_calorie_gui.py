@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tkinter GUI for the Cow Game Grass Multiplier & Calorie Yield Calculator.
+"""Tkinter GUI for the Cow Game Grass Multiplier & Calorie Yield Calculator (Alpha V3.0.0).
 
 Theme-aware desktop application with high-contrast legibility across:
   - macOS Dark Mode (Night)
@@ -9,14 +9,19 @@ Theme-aware desktop application with high-contrast legibility across:
   - Automatic live system theme detection
 
 Factors in:
-  - Rebirth Multipliers ((1 + 0.22)^n)
+  - Rebirth Multipliers ((1 + 0.22)^n * (2 if All Auras Completed else 1))
+  - Spirit Lanterns (halves next rebirth cost per lit lantern: Req / 2^L)
+  - Alpha V3.0.0 Bonus Items: Heart o' Davy Jones (2.0x permanent intake), Bionic Stomach (1.33x intake)
+  - Trailblazer Aura (Lvl 0-5: +20% cal/lvl on excursions, Adventurous branch: 1.02^1 or 1.02^2)
+  - North River Field Raids (Fields 1-10: Spider Patch -> Ogre's Acre, 0.5x chew cooldown, Ripe Wheat Bell bonus)
+  - Raid Powerups: Strong Chompers (Lvl 0-99: up to +100% grazing calories), Mushroom Island (Lvl 0-99: up to +20,000 cal/s passive patch)
+  - Weekend Event (1.5x calories & -10% rebirth requirement)
   - Upgrades (Bite Power, Rumen Combo, Chew Speed)
   - Headwear / Mining Hat Base Calorie bonuses (+5 to +25 Base)
   - Titles (e.g. Title_CloverMarbles +3% grazing calories)
   - Back Bunnies (0 to 5 bunnies, +1% grazing calories each)
   - Pillar buffs (e.g. Grazer Pillar +10% grass calories)
   - Companion Familiarity / Pet bond (up to 1.15x)
-  - Golden grass node chances & secondary flora
 """
 
 from __future__ import annotations
@@ -34,11 +39,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from grass_calorie_calculator import (
     BITE_POWER_MAX_LEVEL,
     CHEW_SPEED_MAX_LEVEL,
+    FIELD_RAID_FIELDS,
     GRASS_TYPES,
     HEADWEAR_BONUSES,
     PILLARS,
+    RAID_POWERUP_MAX_LEVEL,
     RUMEN_MAX_LEVEL,
     TITLES,
+    TRAILBLAZER_MAX_LEVEL,
     ZONES,
     BiteCalculation,
     calculate_bite_yield,
@@ -46,9 +54,14 @@ from grass_calorie_calculator import (
     get_chew_cooldown,
     get_companion_multiplier,
     get_cumulative_rebirth_calories,
+    get_excursion_multiplier,
+    get_field_raid_ripe_bonus,
+    get_field_raid_ripe_opportunities,
+    get_mushroom_island_stats,
     get_rebirth_multiplier,
     get_rebirth_requirement,
     get_rumen_stats,
+    get_strong_chompers_multiplier,
 )
 
 # --- Color Palettes for Flawless Day & Night Legibility ---
@@ -139,6 +152,16 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "gamepass": False,
         "clover_aura": 0,
         "extra_mult": 1.0,
+        "all_auras": False,
+        "spirit_lanterns": 0,
+        "davy_heart": False,
+        "bionic_stomach": False,
+        "trailblazer": 0,
+        "trailblazer_branch": "None",
+        "weekend": False,
+        "strong_chompers": 0,
+        "mushroom_island": -1,
+        "ripe_wheat": False,
     },
     "Early Game (R1, Level 5 BP)": {
         "rebirth": 1,
@@ -156,6 +179,16 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "gamepass": False,
         "clover_aura": 0,
         "extra_mult": 1.0,
+        "all_auras": False,
+        "spirit_lanterns": 0,
+        "davy_heart": False,
+        "bionic_stomach": False,
+        "trailblazer": 0,
+        "trailblazer_branch": "None",
+        "weekend": False,
+        "strong_chompers": 0,
+        "mushroom_island": -1,
+        "ripe_wheat": False,
     },
     "Mid Game (R3, Rare Hat + Title)": {
         "rebirth": 3,
@@ -173,6 +206,16 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "gamepass": False,
         "clover_aura": 1,
         "extra_mult": 1.0,
+        "all_auras": False,
+        "spirit_lanterns": 0,
+        "davy_heart": False,
+        "bionic_stomach": False,
+        "trailblazer": 0,
+        "trailblazer_branch": "None",
+        "weekend": False,
+        "strong_chompers": 0,
+        "mushroom_island": -1,
+        "ripe_wheat": False,
     },
     "High Pastures (R5, Mountainside)": {
         "rebirth": 5,
@@ -190,6 +233,16 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "gamepass": False,
         "clover_aura": 2,
         "extra_mult": 1.0,
+        "all_auras": False,
+        "spirit_lanterns": 0,
+        "davy_heart": False,
+        "bionic_stomach": False,
+        "trailblazer": 0,
+        "trailblazer_branch": "None",
+        "weekend": False,
+        "strong_chompers": 0,
+        "mushroom_island": -1,
+        "ripe_wheat": False,
     },
     "Endgame Cavern Farmer (R10+, Maxed)": {
         "rebirth": 10,
@@ -207,6 +260,70 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "gamepass": True,
         "clover_aura": 5,
         "extra_mult": 1.0,
+        "all_auras": False,
+        "spirit_lanterns": 0,
+        "davy_heart": False,
+        "bionic_stomach": False,
+        "trailblazer": 0,
+        "trailblazer_branch": "None",
+        "weekend": False,
+        "strong_chompers": 0,
+        "mushroom_island": -1,
+        "ripe_wheat": False,
+    },
+    "V3.0 Raid Runner (R20, Field 8 Granary)": {
+        "rebirth": 20,
+        "zone": "FieldRaid8",
+        "grass": "Regular",
+        "bite_power": 25,
+        "rumen": 10,
+        "combo": "max",
+        "companion": 1.0,
+        "chew_speed": 15,
+        "headwear": "Mythic",
+        "title": "CloverMarbles",
+        "bunnies": 5,
+        "pillar": "Grazer",
+        "gamepass": True,
+        "clover_aura": 5,
+        "extra_mult": 1.0,
+        "all_auras": False,
+        "spirit_lanterns": 1,
+        "davy_heart": True,
+        "bionic_stomach": True,
+        "trailblazer": 5,
+        "trailblazer_branch": "Adventurous",
+        "weekend": False,
+        "strong_chompers": 50,
+        "mushroom_island": 50,
+        "ripe_wheat": False,
+    },
+    "V3.0 Max Ogre's Acre (R25, Field 10 + All Bonuses)": {
+        "rebirth": 25,
+        "zone": "FieldRaid10",
+        "grass": "Regular",
+        "bite_power": 25,
+        "rumen": 10,
+        "combo": "max",
+        "companion": 1.0,
+        "chew_speed": 15,
+        "headwear": "Mythic",
+        "title": "CloverMarbles",
+        "bunnies": 5,
+        "pillar": "Grazer",
+        "gamepass": True,
+        "clover_aura": 5,
+        "extra_mult": 1.0,
+        "all_auras": True,
+        "spirit_lanterns": 2,
+        "davy_heart": True,
+        "bionic_stomach": True,
+        "trailblazer": 5,
+        "trailblazer_branch": "Adventurous",
+        "weekend": True,
+        "strong_chompers": 99,
+        "mushroom_island": 99,
+        "ripe_wheat": False,
     },
 }
 
@@ -224,9 +341,9 @@ def detect_system_is_dark(root: tk.Tk) -> bool:
 class GrassCalorieGUI:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("Cow Game · Grass Multiplier & Calorie Yield Calculator")
-        self.root.geometry("1100x820")
-        self.root.minsize(960, 700)
+        self.root.title("Cow Game · Grass Multiplier, V3.0.0 Bonuses & Field Raids Calculator")
+        self.root.geometry("1180x860")
+        self.root.minsize(1000, 740)
 
         # Detect system dark mode on startup
         self.is_system_dark = detect_system_is_dark(self.root)
@@ -251,6 +368,19 @@ class GrassCalorieGUI:
         self.var_clover_aura = tk.IntVar(value=2)
         self.var_extra_mult = tk.DoubleVar(value=1.0)
 
+        # V3.0.0 Stat Bonus & Field Raid Variables
+        self.var_all_auras = tk.BooleanVar(value=False)
+        self.var_spirit_lanterns = tk.IntVar(value=0)
+        self.var_davy_heart = tk.BooleanVar(value=False)
+        self.var_bionic_stomach = tk.BooleanVar(value=False)
+        self.var_trailblazer = tk.IntVar(value=0)
+        self.var_trailblazer_branch = tk.StringVar(value="None")
+        self.var_weekend = tk.BooleanVar(value=False)
+        self.var_strong_chompers = tk.IntVar(value=0)
+        self.var_mushroom_island_on = tk.BooleanVar(value=False)
+        self.var_mushroom_island_lvl = tk.IntVar(value=0)
+        self.var_ripe_wheat = tk.BooleanVar(value=False)
+
         self._updating = False
 
         self._setup_fonts()
@@ -260,10 +390,10 @@ class GrassCalorieGUI:
         self._recalculate()
 
     def _setup_fonts(self) -> None:
-        self.font_header = tkfont.Font(family="Helvetica", size=15, weight="bold")
+        self.font_header = tkfont.Font(family="Helvetica", size=14, weight="bold")
         self.font_card_title = tkfont.Font(family="Helvetica", size=9, weight="bold")
-        self.font_card_val = tkfont.Font(family="Helvetica", size=18, weight="bold")
-        self.font_card_sub = tkfont.Font(family="Helvetica", size=10, weight="bold")
+        self.font_card_val = tkfont.Font(family="Helvetica", size=17, weight="bold")
+        self.font_card_sub = tkfont.Font(family="Helvetica", size=9, weight="bold")
         self.font_mono = tkfont.Font(family="Courier", size=11)
         self.font_bold = tkfont.Font(family="Helvetica", size=10, weight="bold")
 
@@ -286,7 +416,7 @@ class GrassCalorieGUI:
 
         self.lbl_title = tk.Label(
             self.top_bar,
-            text="🐄 Cow Game · Grass Multiplier & Calorie Calculator",
+            text="🐄 Cow Game · Grass, V3.0.0 Bonuses & Field Raids Calculator",
             font=self.font_header,
         )
         self.lbl_title.pack(side=tk.LEFT)
@@ -316,7 +446,7 @@ class GrassCalorieGUI:
             textvariable=self.var_preset,
             values=list(PRESETS.keys()),
             state="readonly",
-            width=28,
+            width=34,
         )
         preset_cb.pack(side=tk.LEFT)
         preset_cb.bind("<<ComboboxSelected>>", self._on_preset_selected)
@@ -353,8 +483,8 @@ class GrassCalorieGUI:
 
     def _build_controls(self, parent: ttk.Frame) -> None:
         # 1. Rebirth Section
-        sec_rebirth = ttk.LabelFrame(parent, text="Rebirth Status", padding="8 6 8 8")
-        sec_rebirth.pack(fill=tk.X, pady=(0, 8))
+        sec_rebirth = ttk.LabelFrame(parent, text="Rebirth & Requirement Modifiers", padding="8 6 8 8")
+        sec_rebirth.pack(fill=tk.X, pady=(0, 6))
 
         row1 = ttk.Frame(sec_rebirth)
         row1.pack(fill=tk.X, pady=2)
@@ -370,16 +500,132 @@ class GrassCalorieGUI:
         sp_rebirth.pack(side=tk.LEFT, padx=4)
         sp_rebirth.bind("<KeyRelease>", lambda e: self._recalculate())
 
+        row_lantern = ttk.Frame(sec_rebirth)
+        row_lantern.pack(fill=tk.X, pady=2)
+        ttk.Label(row_lantern, text="Spirit Lanterns:", width=16).pack(side=tk.LEFT)
+        sp_lantern = ttk.Spinbox(
+            row_lantern,
+            from_=0,
+            to=20,
+            textvariable=self.var_spirit_lanterns,
+            width=6,
+            command=self._recalculate,
+        )
+        sp_lantern.pack(side=tk.LEFT, padx=4)
+        sp_lantern.bind("<KeyRelease>", lambda e: self._recalculate())
+        self.lbl_lantern_hint = tk.Label(row_lantern, text="(÷1 Next Req)")
+        self.lbl_lantern_hint.pack(side=tk.LEFT)
+
+        row_auras_m = ttk.Frame(sec_rebirth)
+        row_auras_m.pack(fill=tk.X, pady=2)
+        ttk.Checkbutton(
+            row_auras_m,
+            text="All 5 Aura Paths Mastered (2× Rebirth Mult)",
+            variable=self.var_all_auras,
+            command=self._recalculate,
+        ).pack(side=tk.LEFT)
+
         self.lbl_rebirth_sub = tk.Label(sec_rebirth, text="Multiplier: 1.0000x | Next: 10,000 Cal", anchor="w")
         self.lbl_rebirth_sub.pack(fill=tk.X, pady=(2, 0))
 
-        # 2. Location & Flora
-        sec_zone = ttk.LabelFrame(parent, text="Zone & Flora", padding="8 6 8 8")
-        sec_zone.pack(fill=tk.X, pady=(0, 8))
+        # 2. Alpha V3.0.0 Progression Items & Field Raids
+        sec_v3 = ttk.LabelFrame(parent, text="Alpha V3.0.0 Bonuses & Field Raids", padding="8 6 8 8")
+        sec_v3.pack(fill=tk.X, pady=(0, 6))
+
+        row_davy = ttk.Frame(sec_v3)
+        row_davy.pack(fill=tk.X, pady=1)
+        ttk.Checkbutton(
+            row_davy,
+            text="Heart o’ Davy Jones (Permanent 2.0× Intake)",
+            variable=self.var_davy_heart,
+            command=self._recalculate,
+        ).pack(side=tk.LEFT)
+
+        row_stomach = ttk.Frame(sec_v3)
+        row_stomach.pack(fill=tk.X, pady=1)
+        ttk.Checkbutton(
+            row_stomach,
+            text="Bionic Stomach (1.33× Blacksmith Intake)",
+            variable=self.var_bionic_stomach,
+            command=self._recalculate,
+        ).pack(side=tk.LEFT)
+
+        row_tb = ttk.Frame(sec_v3)
+        row_tb.pack(fill=tk.X, pady=2)
+        ttk.Label(row_tb, text="Trailblazer (0-5):", width=16).pack(side=tk.LEFT)
+        sp_tb = ttk.Spinbox(
+            row_tb,
+            from_=0,
+            to=TRAILBLAZER_MAX_LEVEL,
+            textvariable=self.var_trailblazer,
+            width=4,
+            command=self._recalculate,
+        )
+        sp_tb.pack(side=tk.LEFT, padx=4)
+        sp_tb.bind("<KeyRelease>", lambda e: self._recalculate())
+        cb_tb_br = ttk.Combobox(
+            row_tb,
+            textvariable=self.var_trailblazer_branch,
+            values=["None", "Adventurous", "Unrelenting"],
+            state="readonly",
+            width=11,
+        )
+        cb_tb_br.pack(side=tk.LEFT, padx=2)
+        cb_tb_br.bind("<<ComboboxSelected>>", lambda e: self._recalculate())
+
+        row_chompers = ttk.Frame(sec_v3)
+        row_chompers.pack(fill=tk.X, pady=2)
+        ttk.Label(row_chompers, text="Strong Chompers:", width=16).pack(side=tk.LEFT)
+        sp_chompers = ttk.Spinbox(
+            row_chompers,
+            from_=0,
+            to=RAID_POWERUP_MAX_LEVEL,
+            textvariable=self.var_strong_chompers,
+            width=5,
+            command=self._recalculate,
+        )
+        sp_chompers.pack(side=tk.LEFT, padx=4)
+        sp_chompers.bind("<KeyRelease>", lambda e: self._recalculate())
+        self.lbl_chompers_hint = tk.Label(row_chompers, text="(+0% Raid Cal)")
+        self.lbl_chompers_hint.pack(side=tk.LEFT)
+
+        row_mi = ttk.Frame(sec_v3)
+        row_mi.pack(fill=tk.X, pady=2)
+        ttk.Checkbutton(
+            row_mi,
+            text="Mushroom Island Lvl:",
+            variable=self.var_mushroom_island_on,
+            command=self._recalculate,
+        ).pack(side=tk.LEFT)
+        sp_mi = ttk.Spinbox(
+            row_mi,
+            from_=0,
+            to=RAID_POWERUP_MAX_LEVEL,
+            textvariable=self.var_mushroom_island_lvl,
+            width=5,
+            command=self._recalculate,
+        )
+        sp_mi.pack(side=tk.LEFT, padx=4)
+        sp_mi.bind("<KeyRelease>", lambda e: self._recalculate())
+        self.lbl_mi_hint = tk.Label(row_mi, text="(Off)")
+        self.lbl_mi_hint.pack(side=tk.LEFT)
+
+        row_ripe = ttk.Frame(sec_v3)
+        row_ripe.pack(fill=tk.X, pady=1)
+        ttk.Checkbutton(
+            row_ripe,
+            text="Ripe Wheat Bell Window Active (Raid Burst)",
+            variable=self.var_ripe_wheat,
+            command=self._recalculate,
+        ).pack(side=tk.LEFT)
+
+        # 3. Location & Flora
+        sec_zone = ttk.LabelFrame(parent, text="Zone / Field Raid & Flora", padding="8 6 8 8")
+        sec_zone.pack(fill=tk.X, pady=(0, 6))
 
         row_z = ttk.Frame(sec_zone)
         row_z.pack(fill=tk.X, pady=2)
-        ttk.Label(row_z, text="Zone:", width=16).pack(side=tk.LEFT)
+        ttk.Label(row_z, text="Zone / Raid:", width=16).pack(side=tk.LEFT)
         cb_zone = ttk.Combobox(
             row_z,
             textvariable=self.var_zone,
@@ -399,16 +645,16 @@ class GrassCalorieGUI:
         cb_grass = ttk.Combobox(
             row_g,
             textvariable=self.var_grass,
-            values=[k for k in GRASS_TYPES.keys() if "CaveMoss" not in k or "Cave" in self.var_zone.get()],
+            values=list(GRASS_TYPES.keys()),
             state="readonly",
             width=18,
         )
         cb_grass.pack(side=tk.LEFT, padx=4)
         cb_grass.bind("<<ComboboxSelected>>", lambda e: self._recalculate())
 
-        # 3. Upgrades Section
+        # 4. Upgrades Section
         sec_upgrades = ttk.LabelFrame(parent, text="Cow Upgrades", padding="8 6 8 8")
-        sec_upgrades.pack(fill=tk.X, pady=(0, 8))
+        sec_upgrades.pack(fill=tk.X, pady=(0, 6))
 
         # Bite Power
         row_bp = ttk.Frame(sec_upgrades)
@@ -470,9 +716,9 @@ class GrassCalorieGUI:
         )
         sc_chew.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
 
-        # 4. Title, Headwear & Gear Buffs (NEW)
+        # 5. Title, Headwear & Gear Buffs
         sec_gear = ttk.LabelFrame(parent, text="Gear, Title & Cosmetics", padding="8 6 8 8")
-        sec_gear.pack(fill=tk.X, pady=(0, 8))
+        sec_gear.pack(fill=tk.X, pady=(0, 6))
 
         # Headwear Hat
         row_hw = ttk.Frame(sec_gear)
@@ -539,9 +785,9 @@ class GrassCalorieGUI:
         self.lbl_pillar_hint = tk.Label(row_pillar, text="+0% Cal")
         self.lbl_pillar_hint.pack(side=tk.LEFT)
 
-        # 5. Companion & Extra Boosts
-        sec_buffs = ttk.LabelFrame(parent, text="Companion & Boosts", padding="8 6 8 8")
-        sec_buffs.pack(fill=tk.X, pady=(0, 8))
+        # 6. Companion & Extra Boosts
+        sec_buffs = ttk.LabelFrame(parent, text="Companion & Event Boosts", padding="8 6 8 8")
+        sec_buffs.pack(fill=tk.X, pady=(0, 6))
 
         row_comp = ttk.Frame(sec_buffs)
         row_comp.pack(fill=tk.X, pady=2)
@@ -573,8 +819,17 @@ class GrassCalorieGUI:
         self.lbl_clover_hint = tk.Label(row_clover, text="(+3% gold / lvl)")
         self.lbl_clover_hint.pack(side=tk.LEFT)
 
+        row_wknd = ttk.Frame(sec_buffs)
+        row_wknd.pack(fill=tk.X, pady=2)
+        ttk.Checkbutton(
+            row_wknd,
+            text="Weekend Event (1.5× Cal & -10% Rebirth Cost)",
+            variable=self.var_weekend,
+            command=self._recalculate,
+        ).pack(side=tk.LEFT)
+
         row_gp = ttk.Frame(sec_buffs)
-        row_gp.pack(fill=tk.X, pady=4)
+        row_gp.pack(fill=tk.X, pady=2)
         cb_gp = ttk.Checkbutton(
             row_gp,
             text="2x Calories Gamepass",
@@ -604,7 +859,7 @@ class GrassCalorieGUI:
         self.cards_container.pack(fill=tk.X, pady=(0, 8))
 
         self.cards: list[Tuple[tk.Frame, tk.Label, tk.Label, tk.Label]] = []
-        self.cards.append(self._create_stat_card(self.cards_container, "GRASS MULTIPLIER", "1.0000×", "+0.0% vs R0", col=0))
+        self.cards.append(self._create_stat_card(self.cards_container, "REBIRTH MULTIPLIER", "1.0000×", "+0.0% vs R0", col=0))
         self.cards.append(self._create_stat_card(self.cards_container, "AVG BITE YIELD", "0.0 Cal", "Single Bite Yield", col=1))
         self.cards.append(self._create_stat_card(self.cards_container, "CALORIE RATE", "0.0 Cal/s", "0 Cal / hr", col=2))
         self.cards.append(self._create_stat_card(self.cards_container, "NEXT REBIRTH", "0 bites", "0.0 minutes", col=3))
@@ -621,14 +876,19 @@ class GrassCalorieGUI:
         self.notebook.add(self.tab_breakdown, text="Calculation Breakdown")
         self._build_breakdown_tab(self.tab_breakdown)
 
-        # Tab 2: Rebirth Progression Table
+        # Tab 2: Field Raids Comparison (NEW Alpha V3.0.0)
+        self.tab_raids = ttk.Frame(self.notebook, padding=6)
+        self.notebook.add(self.tab_raids, text="🌾 Field Raids (F1 - F10)")
+        self._build_raids_tab(self.tab_raids)
+
+        # Tab 3: Rebirth Progression Table
         self.tab_progression = ttk.Frame(self.notebook, padding=6)
-        self.notebook.add(self.tab_progression, text="Rebirth Table (R0 - R20)")
+        self.notebook.add(self.tab_progression, text="Rebirth Table (R0 - R30)")
         self._build_progression_tab(self.tab_progression)
 
-        # Tab 3: Zone Comparison Table
+        # Tab 4: Zone Comparison Table
         self.tab_zones = ttk.Frame(self.notebook, padding=6)
-        self.notebook.add(self.tab_zones, text="Zone Comparison")
+        self.notebook.add(self.tab_zones, text="All Zones Comparison")
         self._build_zones_tab(self.tab_zones)
 
     def _create_stat_card(
@@ -664,6 +924,34 @@ class GrassCalorieGUI:
         self.txt_breakdown.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
+    def _build_raids_tab(self, parent: ttk.Frame) -> None:
+        cols = ("Field", "Name", "BaseCal", "RipeBonus", "AvgBite", "RipeBite", "CalSec", "TimeToNext")
+        self.tree_raids = ttk.Treeview(parent, columns=cols, show="headings", height=14)
+
+        self.tree_raids.heading("Field", text="Field")
+        self.tree_raids.heading("Name", text="Raid Field Name")
+        self.tree_raids.heading("BaseCal", text="Base Cal")
+        self.tree_raids.heading("RipeBonus", text="Ripe Base (+)")
+        self.tree_raids.heading("AvgBite", text="Avg Bite Yield")
+        self.tree_raids.heading("RipeBite", text="Ripe Bell Bite")
+        self.tree_raids.heading("CalSec", text="Cal / Sec (0.2s)")
+        self.tree_raids.heading("TimeToNext", text="Est. Time")
+
+        self.tree_raids.column("Field", width=65, anchor="center")
+        self.tree_raids.column("Name", width=165, anchor="w")
+        self.tree_raids.column("BaseCal", width=85, anchor="e")
+        self.tree_raids.column("RipeBonus", width=105, anchor="e")
+        self.tree_raids.column("AvgBite", width=120, anchor="e")
+        self.tree_raids.column("RipeBite", width=130, anchor="e")
+        self.tree_raids.column("CalSec", width=120, anchor="e")
+        self.tree_raids.column("TimeToNext", width=100, anchor="center")
+
+        scroll = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=self.tree_raids.yview)
+        self.tree_raids.configure(yscrollcommand=scroll.set)
+
+        self.tree_raids.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
     def _build_progression_tab(self, parent: ttk.Frame) -> None:
         cols = ("Rebirth", "Multiplier", "Requirement", "AvgBite", "CalSec", "BitesToRebirth", "TimeToRebirth")
         self.tree_prog = ttk.Treeview(parent, columns=cols, show="headings", height=16)
@@ -678,9 +966,9 @@ class GrassCalorieGUI:
 
         self.tree_prog.column("Rebirth", width=85, anchor="center")
         self.tree_prog.column("Multiplier", width=95, anchor="center")
-        self.tree_prog.column("Requirement", width=120, anchor="e")
+        self.tree_prog.column("Requirement", width=130, anchor="e")
         self.tree_prog.column("AvgBite", width=115, anchor="e")
-        self.tree_prog.column("CalSec", width=105, anchor="e")
+        self.tree_prog.column("CalSec", width=110, anchor="e")
         self.tree_prog.column("BitesToRebirth", width=115, anchor="e")
         self.tree_prog.column("TimeToRebirth", width=105, anchor="center")
 
@@ -692,12 +980,12 @@ class GrassCalorieGUI:
 
     def _build_zones_tab(self, parent: ttk.Frame) -> None:
         cols = ("Zone", "Category", "BaseSec", "GoldenPct", "AvgBite", "CalSec", "BitesToNext", "Unlock")
-        self.tree_zones = ttk.Treeview(parent, columns=cols, show="headings", height=12)
+        self.tree_zones = ttk.Treeview(parent, columns=cols, show="headings", height=16)
 
         self.tree_zones.heading("Zone", text="Zone")
         self.tree_zones.heading("Category", text="Category")
         self.tree_zones.heading("BaseSec", text="Base+Sec")
-        self.tree_zones.heading("GoldenPct", text="Golden Rate")
+        self.tree_zones.heading("GoldenPct", text="Golden / Ripe")
         self.tree_zones.heading("AvgBite", text="Avg Bite Cal")
         self.tree_zones.heading("CalSec", text="Cal / Sec")
         self.tree_zones.heading("BitesToNext", text="Bites to Next")
@@ -705,10 +993,10 @@ class GrassCalorieGUI:
 
         self.tree_zones.column("Zone", width=155, anchor="w")
         self.tree_zones.column("Category", width=85, anchor="center")
-        self.tree_zones.column("BaseSec", width=85, anchor="e")
-        self.tree_zones.column("GoldenPct", width=95, anchor="center")
+        self.tree_zones.column("BaseSec", width=90, anchor="e")
+        self.tree_zones.column("GoldenPct", width=100, anchor="center")
         self.tree_zones.column("AvgBite", width=115, anchor="e")
-        self.tree_zones.column("CalSec", width=105, anchor="e")
+        self.tree_zones.column("CalSec", width=110, anchor="e")
         self.tree_zones.column("BitesToNext", width=110, anchor="e")
         self.tree_zones.column("Unlock", width=90, anchor="center")
 
@@ -740,6 +1028,9 @@ class GrassCalorieGUI:
         # Helper Text Labels
         helper_labels = [
             self.lbl_rebirth_sub,
+            self.lbl_lantern_hint,
+            self.lbl_chompers_hint,
+            self.lbl_mi_hint,
             self.lbl_zone_sub,
             self.lbl_bp_val,
             self.lbl_rumen_val,
@@ -822,7 +1113,8 @@ class GrassCalorieGUI:
     def _on_chew_scale(self, val: str) -> None:
         lvl = int(float(val))
         self.var_chew_speed.set(lvl)
-        cd = get_chew_cooldown(lvl)
+        is_raid = ZONES.get(self.var_zone.get(), {}).get("IsFieldRaid", False)
+        cd = get_chew_cooldown(lvl, is_field_raid=is_raid)
         self.lbl_chew_val.config(text=f"{lvl} ({cd:.2f}s)")
         self._recalculate()
 
@@ -855,12 +1147,26 @@ class GrassCalorieGUI:
         self.var_clover_aura.set(p["clover_aura"])
         self.var_extra_mult.set(p["extra_mult"])
 
+        self.var_all_auras.set(p.get("all_auras", False))
+        self.var_spirit_lanterns.set(p.get("spirit_lanterns", 0))
+        self.var_davy_heart.set(p.get("davy_heart", False))
+        self.var_bionic_stomach.set(p.get("bionic_stomach", False))
+        self.var_trailblazer.set(p.get("trailblazer", 0))
+        self.var_trailblazer_branch.set(p.get("trailblazer_branch", "None"))
+        self.var_weekend.set(p.get("weekend", False))
+        self.var_strong_chompers.set(p.get("strong_chompers", 0))
+        mi_val = p.get("mushroom_island", -1)
+        self.var_mushroom_island_on.set(mi_val >= 0)
+        self.var_mushroom_island_lvl.set(max(0, mi_val))
+        self.var_ripe_wheat.set(p.get("ripe_wheat", False))
+
         # Update slider label texts
         bp_b = get_bite_power_bonus(p["bite_power"])
         self.lbl_bp_val.config(text=f"{p['bite_power']} (+{bp_b})")
         r_cap, _ = get_rumen_stats(p["rumen"])
         self.lbl_rumen_val.config(text=f"{p['rumen']} (Cap {r_cap})")
-        cd = get_chew_cooldown(p["chew_speed"])
+        is_raid = ZONES.get(p["zone"], {}).get("IsFieldRaid", False)
+        cd = get_chew_cooldown(p["chew_speed"], is_field_raid=is_raid)
         self.lbl_chew_val.config(text=f"{p['chew_speed']} ({cd:.2f}s)")
         c_mult = get_companion_multiplier(p["companion"])
         self.lbl_comp_val.config(text=f"{c_mult:.4f}x ({int(p['companion'] * 100)}%)")
@@ -871,9 +1177,23 @@ class GrassCalorieGUI:
     def _on_tab_changed(self, event: Any) -> None:
         tab_idx = self.notebook.index(self.notebook.select())
         if tab_idx == 1:
-            self._update_progression_table()
+            self._update_raids_table()
         elif tab_idx == 2:
+            self._update_progression_table()
+        elif tab_idx == 3:
             self._update_zones_table()
+
+    def _safe_int(self, var: tk.IntVar, default: int = 0, lo: int = 0, hi: int = 1000) -> int:
+        try:
+            return max(lo, min(hi, int(var.get())))
+        except Exception:
+            return default
+
+    def _safe_float(self, var: tk.DoubleVar, default: float = 1.0, lo: float = 0.0, hi: float = 100.0) -> float:
+        try:
+            return max(lo, min(hi, float(var.get())))
+        except Exception:
+            return default
 
     # --- Calculation & View Updates ---
 
@@ -881,21 +1201,32 @@ class GrassCalorieGUI:
         if self._updating:
             return
 
-        r = max(0, self.var_rebirth.get())
+        r = self._safe_int(self.var_rebirth, 0, 0, 1000)
         zone = self.var_zone.get()
         grass = self.var_grass.get()
-        bp = self.var_bite_power.get()
-        rumen = self.var_rumen.get()
+        bp = self._safe_int(self.var_bite_power, 25, 0, BITE_POWER_MAX_LEVEL)
+        rumen = self._safe_int(self.var_rumen, 10, 0, RUMEN_MAX_LEVEL)
         combo = self.var_combo.get()
-        comp = self.var_companion.get()
-        chew = self.var_chew_speed.get()
+        comp = self._safe_float(self.var_companion, 1.0, 0.0, 1.0)
+        chew = self._safe_int(self.var_chew_speed, 15, 0, CHEW_SPEED_MAX_LEVEL)
         hw = self.var_headwear.get()
         title = self.var_title.get()
-        bunnies = max(0, min(5, self.var_bunnies.get()))
+        bunnies = self._safe_int(self.var_bunnies, 0, 0, 5)
         pillar = self.var_pillar.get()
-        gp = self.var_gamepass.get()
-        clover = self.var_clover_aura.get()
-        extra = max(0.1, self.var_extra_mult.get())
+        gp = bool(self.var_gamepass.get())
+        clover = self._safe_int(self.var_clover_aura, 0, 0, 5)
+        extra = self._safe_float(self.var_extra_mult, 1.0, 0.1, 100.0)
+
+        all_auras = bool(self.var_all_auras.get())
+        lanterns = self._safe_int(self.var_spirit_lanterns, 0, 0, 30)
+        davy = bool(self.var_davy_heart.get())
+        stomach = bool(self.var_bionic_stomach.get())
+        tb_lvl = self._safe_int(self.var_trailblazer, 0, 0, TRAILBLAZER_MAX_LEVEL)
+        tb_br = self.var_trailblazer_branch.get()
+        weekend = bool(self.var_weekend.get())
+        chompers = self._safe_int(self.var_strong_chompers, 0, 0, RAID_POWERUP_MAX_LEVEL)
+        mi_lvl = self._safe_int(self.var_mushroom_island_lvl, 0, 0, RAID_POWERUP_MAX_LEVEL) if self.var_mushroom_island_on.get() else -1
+        ripe = bool(self.var_ripe_wheat.get())
 
         calc = calculate_bite_yield(
             rebirth=r,
@@ -913,9 +1244,29 @@ class GrassCalorieGUI:
             gamepass_2x=gp,
             lucky_clover_level=clover,
             other_multiplier=extra,
+            all_auras_completed=all_auras,
+            spirit_lanterns=lanterns,
+            davy_jones_heart=davy,
+            bionic_stomach=stomach,
+            trailblazer_level=tb_lvl,
+            trailblazer_branch=tb_br,
+            weekend_event=weekend,
+            strong_chompers_level=chompers,
+            mushroom_island_level=mi_lvl,
+            ripe_wheat_active=ripe,
         )
 
-        # Update gear hints
+        # Update gear & V3.0.0 hints
+        self.lbl_lantern_hint.config(text=f"(÷{2**lanterns} Next Req)")
+        ch_m = get_strong_chompers_multiplier(chompers)
+        self.lbl_chompers_hint.config(text=f"(+{(ch_m - 1)*100:.0f}% Raid Cal)")
+        if mi_lvl >= 0:
+            p_rate, _ = get_mushroom_island_stats(mi_lvl)
+            self.lbl_mi_hint.config(text=f"(+{p_rate:,} cal/s)")
+        else:
+            self.lbl_mi_hint.config(text="(Off)")
+
+        self.lbl_chew_val.config(text=f"{chew} ({calc.chew_cooldown:.2f}s)")
         hw_b = HEADWEAR_BONUSES.get(hw, HEADWEAR_BONUSES["None"])["Bonus"]
         self.lbl_hw_hint.config(text=f"+{hw_b} Base Cal")
         t_mult = TITLES.get(title, TITLES["None"])["Multiplier"]
@@ -926,81 +1277,172 @@ class GrassCalorieGUI:
 
         # Update Rebirth Sub-label
         self.lbl_rebirth_sub.config(
-            text=f"Multiplier: {calc.rebirth_multiplier:,.4f}× | Next Req: {calc.next_rebirth_requirement:,} Cal"
+            text=f"Mult: {calc.rebirth_multiplier:,.2f}× | Next Req: {calc.next_rebirth_requirement:,} Cal"
         )
         z_info = ZONES[zone]
-        self.lbl_zone_sub.config(
-            text=f"Category: {z_info['Category']} | Base: {z_info['BaseValue']} | Golden: {z_info['GoldenChance']*100:.2f}%"
-        )
+        if calc.is_field_raid:
+            self.lbl_zone_sub.config(
+                text=f"Raid F{calc.raid_level} ({z_info['RaidName']}) | Base: {z_info['BaseValue']:,} | Ripe: +{calc.ripe_bonus_base:,}"
+            )
+        else:
+            self.lbl_zone_sub.config(
+                text=f"Category: {z_info['Category']} | Base: {z_info['BaseValue']} | Golden: {z_info['GoldenChance']*100:.2f}%"
+            )
 
         # Update Highlight Cards
         _, _, card0_val, card0_sub = self.cards[0]
-        card0_val.config(text=f"{calc.rebirth_multiplier:,.4f}×")
-        pct_increase = (calc.rebirth_multiplier - 1.0) * 100
-        card0_sub.config(text=f"+{pct_increase:,.1f}% vs Rebirth 0")
+        card0_val.config(text=f"{calc.rebirth_multiplier:,.2f}×")
+        aura_txt = " (All Auras 2×)" if calc.all_auras_completed else ""
+        card0_sub.config(text=f"Total Mult: {calc.total_multiplier:,.2f}×{aura_txt}")
 
         _, _, card1_val, card1_sub = self.cards[1]
         card1_val.config(text=f"{calc.avg_bite_calories:,.1f} Cal")
-        card1_sub.config(text=f"{calc.min_bite_calories:,} min – {calc.max_bite_calories:,} max")
+        if calc.is_field_raid:
+            card1_sub.config(text=f"Ripe Bell: {calc.ripe_bite_calories:,.0f} Cal")
+        else:
+            card1_sub.config(text=f"{calc.min_bite_calories:,} min – {calc.max_bite_calories:,} max")
 
         _, _, card2_val, card2_sub = self.cards[2]
         card2_val.config(text=f"{calc.calories_per_second:,.1f} /s")
         hr_rate = calc.calories_per_second * 3600
-        hr_str = f"{hr_rate / 1e6:,.2f}M /hr" if hr_rate >= 1e6 else f"{hr_rate:,.0f} /hr"
+        hr_str = f"{hr_rate / 1e9:,.2f}B /hr" if hr_rate >= 1e9 else (f"{hr_rate / 1e6:,.2f}M /hr" if hr_rate >= 1e6 else f"{hr_rate:,.0f} /hr")
         card2_sub.config(text=f"{hr_str} ({calc.chew_cooldown:.2f}s/bite)")
 
         _, _, card3_val, card3_sub = self.cards[3]
         mins = calc.expected_seconds_to_rebirth / 60.0
         time_str = f"{mins:,.1f} min" if mins < 120 else f"{mins / 60:,.1f} hrs"
-        card3_val.config(text=f"{calc.expected_bites_to_rebirth:,.0f} bites")
-        card3_sub.config(text=f"Req {calc.next_rebirth_requirement:,} ({time_str})")
+        card3_val.config(text=f"{time_str}")
+        card3_sub.config(text=f"Req: {calc.next_rebirth_requirement:,} ({calc.expected_bites_to_rebirth:,.0f} bites)")
 
         # Update Tab 1 (Breakdown Text)
         self._update_breakdown_text(calc)
 
-        # Update currently active tab if it's Table or Zones
+        # Update currently active tab
         current_tab = self.notebook.index(self.notebook.select())
         if current_tab == 1:
-            self._update_progression_table()
+            self._update_raids_table()
         elif current_tab == 2:
+            self._update_progression_table()
+        elif current_tab == 3:
             self._update_zones_table()
 
     def _update_breakdown_text(self, calc: BiteCalculation) -> None:
         self.txt_breakdown.delete("1.0", tk.END)
 
+        raid_line = (
+            f"   • Field Raid Ripe Bonus (R{calc.rebirth}):     +{calc.ripe_bonus_base if calc.ripe_wheat_active else 0:8,d} Cal  "
+            f"(Bell window burst: +{calc.ripe_bonus_base:,} base → {calc.ripe_bite_calories:,.1f} Cal/bite)\n"
+            if calc.is_field_raid
+            else f"   • Grass Seed Bonus ({calc.grass_type}):        +{calc.grass_bonus:8.1f} Cal\n"
+        )
+        patch_line = (
+            f"   • Mushroom Island Patch (Lvl {calc.mushroom_island_level:02d}):    +{calc.mushroom_patch_cal_per_sec:,} Cal/sec (Cap: {calc.mushroom_patch_capacity:,} Cal)\n"
+            if calc.mushroom_patch_cal_per_sec > 0
+            else ""
+        )
+
         text = (
-            f"=== BITE CALORIE CALCULATION BREAKDOWN (REBIRTH {calc.rebirth}) ===\n\n"
+            f"=== BITE CALORIE CALCULATION BREAKDOWN — V3.0.0 (REBIRTH {calc.rebirth}) ===\n\n"
             f"1. BASE CALORIES COMPOSITION:\n"
-            f"   • Zone Base ({calc.zone}):             {calc.zone_base:6.1f} Cal\n"
-            f"   • Grass Seed Bonus ({calc.grass_type}):        +{calc.grass_bonus:5.1f} Cal\n"
-            f"   • Bite Power Upgrade (Lvl {calc.bite_power_level:02d}/25):     +{calc.bite_power_bonus:5.1f} Cal  [formula: L*(L+3)/2]\n"
-            f"   • Headwear Hat Bonus ({calc.headwear}):        +{calc.headwear_bonus:5.1f} Cal  [MiningHatConfig.Benefits]\n"
-            f"   • Expected Secondary Spawns:          +{calc.expected_secondary_bonus:5.2f} Cal  (Rate: {ZONES[calc.zone]['SecondaryRate']*100:.0f}%, Kind: {ZONES[calc.zone]['SecondaryKind'] or 'None'})\n"
-            f"   ----------------------------------------------------\n"
-            f"   = Effective Base Calories:            {calc.effective_base_calories:6.2f} Cal\n\n"
-            f"2. MULTIPLIERS APPLIED (GrassEconomy.luau):\n"
-            f"   • Rebirth Multiplier (1.22^{calc.rebirth}):           {calc.rebirth_multiplier:7.4f}×\n"
-            f"   • Node Quality Multiplier:            {calc.expected_node_multiplier:7.4f}×  (Golden chance: {calc.golden_chance*100:.2f}%)\n"
-            f"   • Rumen Combo ({calc.combo_stacks} stacks @ +2%):        {calc.rumen_multiplier:7.2f}×  (Combo cap: {get_rumen_stats(calc.rumen_level)[0]})\n"
-            f"   • Companion Multiplier (Bond {calc.companion_bond:.2f}):      {calc.companion_multiplier:7.4f}×  (clamp(1 + bond*0.15, 1, 1.15))\n"
-            f"   • Title Buff ({calc.title}):             {calc.title_multiplier:7.4f}×  (Title_CloverMarbles +3% Cal)\n"
-            f"   • Back Friends ({calc.back_bunnies} Back Bunnies):       {calc.back_bunnies_multiplier:7.4f}×  (+1% per bunny on back)\n"
-            f"   • Pillar Buff ({calc.pillar}):             {calc.pillar_multiplier:7.4f}×  (Grazer Pillar +10% grass Cal)\n"
-            f"   • Gamepass / Extra Multipliers:       {2.0 if calc.gamepass_2x else 1.0:7.2f}×  (2x Gamepass: {calc.gamepass_2x})\n"
-            f"   ----------------------------------------------------\n"
-            f"   = Combined Total Multiplier:          {calc.total_multiplier:7.4f}×\n\n"
+            f"   • Zone Base ({calc.zone}):             {calc.zone_base:8,d} Cal\n"
+            f"{raid_line}"
+            f"   • Bite Power Upgrade (Lvl {calc.bite_power_level:02d}/25):     +{calc.bite_power_bonus:8.1f} Cal  [formula: L*(L+3)/2]\n"
+            f"   • Headwear Hat Bonus ({calc.headwear}):        +{calc.headwear_bonus:8.1f} Cal  [MiningHatConfig.Benefits]\n"
+            f"   • Expected Secondary Spawns:          +{calc.expected_secondary_bonus:8.2f} Cal  (Rate: {ZONES[calc.zone]['SecondaryRate']*100:.0f}%, Kind: {ZONES[calc.zone]['SecondaryKind'] or 'None'})\n"
+            f"   ------------------------------------------------------------\n"
+            f"   = Effective Base Calories:            {calc.effective_base_calories:8,.2f} Cal\n\n"
+            f"2. MULTIPLIERS APPLIED (GrassEconomy.luau v3):\n"
+            f"   • Rebirth Multiplier (1.22^{calc.rebirth}):         {calc.rebirth_multiplier:9.4f}×  (All Auras Mastered 2×: {calc.all_auras_completed})\n"
+            f"   • V3.0 Intake Multiplier:             {calc.intake_multiplier:9.4f}×  (DavyHeart 2×: {calc.davy_jones_heart}, BionicStomach 1.33×: {calc.bionic_stomach}, Chompers: {calc.strong_chompers_multiplier:.2f}×)\n"
+            f"   • Excursion Multiplier (Trailblazer): {calc.excursion_multiplier:9.4f}×  (Lvl {calc.trailblazer_level}/5, Branch: {calc.trailblazer_branch})\n"
+            f"   • Node Quality Multiplier:            {calc.expected_node_multiplier:9.4f}×  (Golden chance: {calc.golden_chance*100:.2f}%)\n"
+            f"   • Rumen Combo ({calc.combo_stacks} stacks @ +2%):      {calc.rumen_multiplier:9.2f}×  (Combo cap: {get_rumen_stats(calc.rumen_level)[0]})\n"
+            f"   • Companion Multiplier (Bond {calc.companion_bond:.2f}):    {calc.companion_multiplier:9.4f}×  (clamp(1 + bond*0.15, 1, 1.15))\n"
+            f"   • Title Buff ({calc.title}):           {calc.title_multiplier:9.4f}×  (Title_CloverMarbles +3% Cal)\n"
+            f"   • Back Friends ({calc.back_bunnies} Back Bunnies):     {calc.back_bunnies_multiplier:9.4f}×  (+1% per bunny on back)\n"
+            f"   • Pillar Buff ({calc.pillar}):           {calc.pillar_multiplier:9.4f}×  ({'N/A on Raid Wheat' if calc.is_field_raid else 'Grazer Pillar +10% grass Cal'})\n"
+            f"   • Weekend / 2x Gamepass:              {calc.weekend_multiplier * (2.0 if calc.gamepass_2x else 1.0):9.2f}×  (Weekend 1.5×: {calc.weekend_event}, 2x GP: {calc.gamepass_2x})\n"
+            f"   ------------------------------------------------------------\n"
+            f"   = Combined Total Multiplier:          {calc.total_multiplier:9,.4f}×\n\n"
             f"3. CALORIE YIELD & PROGRESSION SUMMARY:\n"
             f"   ★ AVERAGE BITE YIELD:                 {calc.avg_bite_calories:,.1f} Calories / bite\n"
+            f"   ★ RIPE WHEAT BELL BITE YIELD:         {calc.ripe_bite_calories:,.1f} Calories / ripe bite\n"
             f"   • Minimum Plain Bite (zero sec):      {calc.min_bite_calories:,} Calories\n"
-            f"   • Maximum Golden Bite (max sec):      {calc.max_bite_calories:,} Calories\n"
-            f"   • Chew Cooldown (Chew Speed {calc.chew_speed_level:02d}):     {calc.chew_cooldown:.2f} seconds\n"
-            f"   • Calorie Income Rate:                {calc.calories_per_second:,.1f} Cal/sec ({calc.calories_per_second * 3600:,.0f} Cal/hr)\n"
-            f"   • Next Rebirth Requirement (R{calc.rebirth}→R{calc.rebirth+1}): {calc.next_rebirth_requirement:,} Calories\n"
+            f"   • Maximum Golden / Ripe Bite:         {calc.max_bite_calories:,} Calories\n"
+            f"   • Chew Cooldown (Chew Speed {calc.chew_speed_level:02d}):     {calc.chew_cooldown:.2f} seconds{' (0.5× Raid Wheat speed)' if calc.is_field_raid else ''}\n"
+            f"   • Grazing Bite Rate:                  {calc.bite_calories_per_second:,.1f} Cal/sec\n"
+            f"{patch_line}"
+            f"   • Total Calorie Income Rate:          {calc.calories_per_second:,.1f} Cal/sec ({calc.calories_per_second * 3600:,.0f} Cal/hr)\n"
+            f"   • Next Rebirth Requirement (R{calc.rebirth}→R{calc.rebirth+1}): {calc.next_rebirth_requirement:,} Calories (Spirit Lanterns: {calc.spirit_lanterns})\n"
             f"   • Bites Needed to Next Rebirth:       {calc.expected_bites_to_rebirth:,.0f} bites\n"
-            f"   • Estimated Time to Next Rebirth:     {calc.expected_seconds_to_rebirth / 60:.1f} minutes ({calc.expected_seconds_to_rebirth:,.0f} seconds)\n"
-            f"   • Cumulative Calories up to R{calc.rebirth}:     {get_cumulative_rebirth_calories(calc.rebirth):,} Calories\n"
+            f"   • Estimated Time to Next Rebirth:     {calc.expected_seconds_to_rebirth / 60:.1f} minutes ({calc.expected_seconds_to_rebirth / 3600:.2f} hours)\n"
         )
         self.txt_breakdown.insert(tk.END, text)
+
+    def _get_common_kwargs(self) -> Dict[str, Any]:
+        mi_lvl = self._safe_int(self.var_mushroom_island_lvl, 0, 0, RAID_POWERUP_MAX_LEVEL) if self.var_mushroom_island_on.get() else -1
+        return {
+            "grass_type": self.var_grass.get(),
+            "bite_power_level": self._safe_int(self.var_bite_power, 25, 0, BITE_POWER_MAX_LEVEL),
+            "rumen_level": self._safe_int(self.var_rumen, 10, 0, RUMEN_MAX_LEVEL),
+            "combo_mode": self.var_combo.get(),
+            "companion_bond": self._safe_float(self.var_companion, 1.0, 0.0, 1.0),
+            "chew_speed_level": self._safe_int(self.var_chew_speed, 15, 0, CHEW_SPEED_MAX_LEVEL),
+            "headwear": self.var_headwear.get(),
+            "title": self.var_title.get(),
+            "back_bunnies": self._safe_int(self.var_bunnies, 0, 0, 5),
+            "pillar": self.var_pillar.get(),
+            "gamepass_2x": bool(self.var_gamepass.get()),
+            "lucky_clover_level": self._safe_int(self.var_clover_aura, 0, 0, 5),
+            "other_multiplier": self._safe_float(self.var_extra_mult, 1.0, 0.1, 100.0),
+            "all_auras_completed": bool(self.var_all_auras.get()),
+            "spirit_lanterns": self._safe_int(self.var_spirit_lanterns, 0, 0, 30),
+            "davy_jones_heart": bool(self.var_davy_heart.get()),
+            "bionic_stomach": bool(self.var_bionic_stomach.get()),
+            "trailblazer_level": self._safe_int(self.var_trailblazer, 0, 0, TRAILBLAZER_MAX_LEVEL),
+            "trailblazer_branch": self.var_trailblazer_branch.get(),
+            "weekend_event": bool(self.var_weekend.get()),
+            "strong_chompers_level": self._safe_int(self.var_strong_chompers, 0, 0, RAID_POWERUP_MAX_LEVEL),
+            "mushroom_island_level": mi_lvl,
+            "ripe_wheat_active": bool(self.var_ripe_wheat.get()),
+        }
+
+    def _update_raids_table(self) -> None:
+        p = self._get_current_palette()
+        for item in self.tree_raids.get_children():
+            self.tree_raids.delete(item)
+
+        r = self._safe_int(self.var_rebirth, 0, 0, 1000)
+        current_zone = self.var_zone.get()
+        kwargs = self._get_common_kwargs()
+
+        for lvl in range(1, 11):
+            f_info = FIELD_RAID_FIELDS[lvl]
+            z_key = f_info["ZoneKey"]
+            c = calculate_bite_yield(rebirth=r, zone=z_key, **kwargs)
+            mins = c.expected_seconds_to_rebirth / 60.0
+            time_str = f"{mins:,.1f} min" if mins < 120 else f"{mins / 60:,.1f} hrs"
+            tag = "current" if z_key == current_zone else ("even" if lvl % 2 == 0 else "odd")
+
+            self.tree_raids.insert(
+                "",
+                tk.END,
+                values=(
+                    f"Field {lvl}",
+                    f_info["Name"] + (" (Selected)" if z_key == current_zone else ""),
+                    f"{f_info['BaseCalories']:,}",
+                    f"+{c.ripe_bonus_base:,}",
+                    f"{c.avg_bite_calories:,.1f}",
+                    f"{c.ripe_bite_calories:,.1f}",
+                    f"{c.calories_per_second:,.1f}",
+                    time_str,
+                ),
+                tags=(tag,),
+            )
+
+        self.tree_raids.tag_configure("current", background=p["bg_table_current"], foreground=p["fg_table_current"])
+        self.tree_raids.tag_configure("even", background=p["bg_table_even"], foreground=p["fg_table"])
+        self.tree_raids.tag_configure("odd", background=p["bg_table_odd"], foreground=p["fg_table"])
 
     def _update_progression_table(self) -> None:
         p = self._get_current_palette()
@@ -1008,39 +1450,11 @@ class GrassCalorieGUI:
             self.tree_prog.delete(item)
 
         zone = self.var_zone.get()
-        grass = self.var_grass.get()
-        bp = self.var_bite_power.get()
-        rumen = self.var_rumen.get()
-        combo = self.var_combo.get()
-        comp = self.var_companion.get()
-        chew = self.var_chew_speed.get()
-        hw = self.var_headwear.get()
-        title = self.var_title.get()
-        bunnies = max(0, min(5, self.var_bunnies.get()))
-        pillar = self.var_pillar.get()
-        gp = self.var_gamepass.get()
-        clover = self.var_clover_aura.get()
-        extra = self.var_extra_mult.get()
-        current_r = self.var_rebirth.get()
+        current_r = self._safe_int(self.var_rebirth, 0, 0, 1000)
+        kwargs = self._get_common_kwargs()
 
-        for r in range(21):
-            c = calculate_bite_yield(
-                rebirth=r,
-                zone=zone,
-                grass_type=grass,
-                bite_power_level=bp,
-                rumen_level=rumen,
-                combo_mode=combo,
-                companion_bond=comp,
-                chew_speed_level=chew,
-                headwear=hw,
-                title=title,
-                back_bunnies=bunnies,
-                pillar=pillar,
-                gamepass_2x=gp,
-                lucky_clover_level=clover,
-                other_multiplier=extra,
-            )
+        for r in range(31):
+            c = calculate_bite_yield(rebirth=r, zone=zone, **kwargs)
             mins = c.expected_seconds_to_rebirth / 60.0
             time_str = f"{mins:,.1f} min" if mins < 120 else f"{mins / 60:,.1f} hrs"
             tag = "current" if r == current_r else ("even" if r % 2 == 0 else "odd")
@@ -1050,7 +1464,7 @@ class GrassCalorieGUI:
                 tk.END,
                 values=(
                     f"R{r}" + (" (Current)" if r == current_r else ""),
-                    f"{c.rebirth_multiplier:.4f}×",
+                    f"{c.rebirth_multiplier:,.2f}×",
                     f"{c.next_rebirth_requirement:,}",
                     f"{c.avg_bite_calories:,.1f}",
                     f"{c.calories_per_second:,.1f}",
@@ -1069,42 +1483,15 @@ class GrassCalorieGUI:
         for item in self.tree_zones.get_children():
             self.tree_zones.delete(item)
 
-        r = self.var_rebirth.get()
-        grass = self.var_grass.get()
-        bp = self.var_bite_power.get()
-        rumen = self.var_rumen.get()
-        combo = self.var_combo.get()
-        comp = self.var_companion.get()
-        chew = self.var_chew_speed.get()
-        hw = self.var_headwear.get()
-        title = self.var_title.get()
-        bunnies = max(0, min(5, self.var_bunnies.get()))
-        pillar = self.var_pillar.get()
-        gp = self.var_gamepass.get()
-        clover = self.var_clover_aura.get()
-        extra = self.var_extra_mult.get()
+        r = self._safe_int(self.var_rebirth, 0, 0, 1000)
         current_zone = self.var_zone.get()
+        kwargs = self._get_common_kwargs()
 
-        for z_name, z_info in ZONES.items():
-            c = calculate_bite_yield(
-                rebirth=r,
-                zone=z_name,
-                grass_type=grass,
-                bite_power_level=bp,
-                rumen_level=rumen,
-                combo_mode=combo,
-                companion_bond=comp,
-                chew_speed_level=chew,
-                headwear=hw,
-                title=title,
-                back_bunnies=bunnies,
-                pillar=pillar,
-                gamepass_2x=gp,
-                lucky_clover_level=clover,
-                other_multiplier=extra,
-            )
+        for idx, (z_name, z_info) in enumerate(ZONES.items()):
+            c = calculate_bite_yield(rebirth=r, zone=z_name, **kwargs)
             unlocked = "Unlocked" if r >= z_info["MinRebirth"] else f"Req R{z_info['MinRebirth']}"
-            tag = "current" if z_name == current_zone else ("even" if list(ZONES.keys()).index(z_name) % 2 == 0 else "odd")
+            tag = "current" if z_name == current_zone else ("even" if idx % 2 == 0 else "odd")
+            gold_or_ripe = f"Ripe +{c.ripe_bonus_base:,}" if c.is_field_raid else f"{z_info['GoldenChance'] * 100:.2f}%"
 
             self.tree_zones.insert(
                 "",
@@ -1112,8 +1499,8 @@ class GrassCalorieGUI:
                 values=(
                     z_name + (" (Selected)" if z_name == current_zone else ""),
                     z_info["Category"],
-                    f"{c.effective_base_calories:.1f}",
-                    f"{z_info['GoldenChance'] * 100:.2f}%",
+                    f"{c.effective_base_calories:,.1f}",
+                    gold_or_ripe,
                     f"{c.avg_bite_calories:,.1f}",
                     f"{c.calories_per_second:,.1f}",
                     f"{c.expected_bites_to_rebirth:,.0f}",
