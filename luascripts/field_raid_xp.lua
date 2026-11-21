@@ -1105,14 +1105,23 @@ function xp.startRun(now, rootPos, humanoid, root)
         xp.setStatus("Go near Field Raid camp to start")
         return
     end
-    local d = (signup.Position - rootPos).Magnitude
-    if d > 10 then
+    -- The server ignores "Solo" unless the cow stands in the green sign-up circle: walk onto its center
+    local off = signup.Position - rootPos
+    local d = Vector3.new(off.X, 0, off.Z).Magnitude
+    if d > 3 then
         if d > 260 then
             xp.setStatus(string.format("Move closer to Field Raid camp (%d studs)", math.floor(d)))
             return
         end
-        xp.walkTo(signup.Position, now, humanoid, root)
-        xp.setStatus("Walking to raid sign-up")
+        if d < 30 and humanoid then
+            -- direct MoveTo: walkTo's forward-only clamp would stall short of the circle
+            xp.path, xp.pathTarget = nil, nil
+            xp.lastMove = now
+            humanoid:MoveTo(signup.Position)
+        else
+            xp.walkTo(signup.Position, now, humanoid, root)
+        end
+        xp.setStatus("Walking into raid sign-up circle")
         return
     end
     xp.stopWalk()

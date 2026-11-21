@@ -1,4 +1,4 @@
--- Cow Hub [1ae70f2] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [0569047] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -66,7 +66,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [1ae70f2]",
+    Name = "Cow Hub [0569047]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -6759,14 +6759,23 @@ function fieldraid.startRun(now, rootPos)
         fieldraid.setStatus("Go to the Field Raid camp (sign-up not loaded)")
         return
     end
-    local d = (signup.Position - rootPos).Magnitude
-    if d > 10 then
+    -- The server ignores "Solo" unless the cow stands in the green sign-up circle: walk onto its center
+    local off = signup.Position - rootPos
+    local d = Vector3.new(off.X, 0, off.Z).Magnitude
+    if d > 3 then
         if d > 250 then
             fieldraid.setStatus(string.format("Go to the Field Raid camp (%d studs)", math.floor(d)))
             return
         end
-        fieldraid.walkTo(signup.Position, now)
-        fieldraid.setStatus("Walking to raid sign-up")
+        if d < 30 and humanoid then
+            -- direct MoveTo: walkTo's forward-only clamp would stall short of the circle
+            fieldraid.path, fieldraid.pathTarget = nil, nil
+            fieldraid.lastMove = now
+            humanoid:MoveTo(signup.Position)
+        else
+            fieldraid.walkTo(signup.Position, now)
+        end
+        fieldraid.setStatus("Walking into raid sign-up circle")
         return
     end
     fieldraid.stopWalk()
