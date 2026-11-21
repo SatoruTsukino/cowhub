@@ -1,4 +1,4 @@
--- Cow Hub [f563eb4] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [300bbf0] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -66,7 +66,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [f563eb4]",
+    Name = "Cow Hub [300bbf0]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -556,6 +556,8 @@ local caravan = {
 local fieldraid = {
     auto = false,           -- Auto Field Raid (farm the run, bank, restart)
     autoStart = true,       -- start the next solo raid from the camp sign-up
+    suppliesOn = false,     -- fire SUPPLIES once per run (FieldRaidRequest "UseSupply")
+    SUPPLIES = { "PotOfGreed" }, -- shortcut: only PotOfGreed's call was captured; add PotOfLuck/WindCharge ids when seen
     maxLevel = 10,          -- don't walk deeper than this field
     maxMinutes = 0,         -- max run time in minutes before heading to the River ferry (0 = off)
     pushDeeper = true,      -- deeper fields grow richer wheat: keep walking in, bite only what is in reach
@@ -6418,6 +6420,21 @@ function fieldraid.ensureGraze()
     end
 end
 
+-- Once per run; the server rejects ids we do not own, so a missing supply is harmless
+function fieldraid.useSupplies(run)
+    if not fieldraid.suppliesOn or fieldraid.suppliesRun == run then return end
+    fieldraid.suppliesRun = run
+    for _, id in ipairs(fieldraid.SUPPLIES) do
+        fieldraid.fire("UseSupply", { Run = run, Id = id })
+    end
+end
+
+-- Leave from anywhere in the run (skips the ferry/gate exit bonuses)
+function fieldraid.quickLeave()
+    local run = fieldraid.runId()
+    if run then fieldraid.fire("QuickLeave", run) end
+end
+
 function fieldraid.chompWheat(now, rootPos)
     if not fieldraid.inRaid() or fieldraid.chestBusy then return false end
     fieldraid.scan(now)
@@ -6817,6 +6834,7 @@ function fieldraid.tick(now, rootPos)
         fieldraid.lastWheatSeen, fieldraid.farmEntryZ, fieldraid.sweepZ = now, nil, nil
         table.clear(fieldraid.chestLevels)
     end
+    fieldraid.useSupplies(run)
     if not fieldraid.planting and now - (fieldraid.lastSnapshotAsk or 0) > 10 then
         -- Reloaded mid-run: ask for the run snapshot (the game does this on join) to learn the Planting
         fieldraid.lastSnapshotAsk = now
@@ -17045,6 +17063,7 @@ do
         { label = "Blink Dodge", default = true, fn = function(Value) fieldraid.blink = Value end },
         { label = "Dodge Assist (manual play)", default = false, fn = function(Value) fieldraid.dodgeAssist = Value end },
         { label = "Close Chest Once Healed", default = true, fn = function(Value) fieldraid.fastChest = Value end },
+        { label = "Use Supplies (Pot of Greed)", default = false, fn = function(Value) fieldraid.suppliesOn = Value end },
     })
 
     RaidTab:CreateSlider({
@@ -17084,6 +17103,11 @@ do
                 end
             end
         end,
+    })
+
+    actions:CreateButton({
+        Name = "Quick Leave",
+        Callback = function() fieldraid.quickLeave() end,
     })
 
     RaidTab:CreateSection({ Name = "Blacksmith Anvil Shift (Day)" })
