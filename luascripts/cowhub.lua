@@ -1,4 +1,4 @@
--- Cow Hub [5d7931f] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [92aeb90] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -129,7 +129,7 @@ do
 end
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [5d7931f]",
+    Name = "Cow Hub [92aeb90]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -12228,7 +12228,7 @@ do
                     end
                 end
                 if dismissed or (rGui:GetAttribute("RewardBox") ~= nil) then
-                    if vi and vi.SendKeyEvent then
+                    if vi and vi.SendKeyEvent and not game:GetService("GuiService").MenuIsOpen then
                         pcall(function()
                             vi:SendKeyEvent(true, Enum.KeyCode.Escape, false, game)
                             task.wait(0.04)
@@ -12283,7 +12283,8 @@ do
             end
         end
 
-        if dismissed and vi and vi.SendKeyEvent then
+        -- Escape toggles the Roblox menu when no reveal sinks it: never send it while the menu is up
+        if dismissed and vi and vi.SendKeyEvent and not game:GetService("GuiService").MenuIsOpen then
             pcall(function()
                 vi:SendKeyEvent(true, Enum.KeyCode.Escape, false, game)
                 task.wait(0.04)
@@ -12332,6 +12333,8 @@ do
                             end
                         end
                     end)
+                    -- Field Raid harvest chests close via the game's CloseChest flow; a dismiss Escape there opens the Roblox menu
+                    if promptName == "openharvestchest" then return end
                     if promptName:find("chest") or pName:find("chest") or grandParentName:find("chest") or pName == "localteamchest" or grandParentName == "localteamchest" then
                         rafting.pollRewardGuiUntilDismissed(8.0)
                     end
