@@ -1,4 +1,4 @@
--- Cow Hub [300bbf0] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [3db2a1f] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -65,8 +65,65 @@ end
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
+-- Seed merged controls' new flags from the old ones before Rayfield loads the config.
+-- The file is shared with cowhub.lua, so only add missing keys; never rewrite or delete old ones.
+do
+    local path = "Rayfield/Configurations/CowHub/CowHubConfig.rfld"
+    pcall(function()
+        if not (isfile and readfile and writefile and isfile(path)) then return end
+        local http = game:GetService("HttpService")
+        local cfg = http:JSONDecode(readfile(path))
+        if type(cfg) ~= "table" then return end
+        local changed = false
+        local function seed(flag, value)
+            if cfg[flag] == nil and value ~= nil then cfg[flag], changed = value, true end
+        end
+        local function list(v) return type(v) == "table" and v or nil end
+        -- Ore farm: Manatite and Mithril never run together
+        local mith = cfg.Toggle_MithrilFarm == true and cfg.Toggle_ManatiteFarm ~= true
+        local pre = mith and "Mithril" or "Manatite"
+        if cfg.Toggle_ManatiteFarm ~= nil or cfg.Toggle_MithrilFarm ~= nil then
+            seed("Toggle_OreFarm", cfg.Toggle_ManatiteFarm == true or cfg.Toggle_MithrilFarm == true)
+            seed("Dropdown_OreType", { mith and "Mithril (Crystal Geode)" or "Manatite (Sea Maze)" })
+        end
+        local a, b = list(cfg.Dropdown_ManatiteOptions), list(cfg.Dropdown_MithrilOptions)
+        if a or b then
+            local union, seen = {}, {}
+            for _, l in ipairs(a or {}) do if not seen[l] then seen[l] = true; table.insert(union, l) end end
+            for _, l in ipairs(b or {}) do if not seen[l] then seen[l] = true; table.insert(union, l) end end
+            if not a then table.insert(union, "Safe Crystal Retreat") end -- its default was on
+            seed("Dropdown_OreOptions", union)
+        end
+        seed("Dropdown_OreOrder", list(cfg["Dropdown_" .. pre .. "Order"]))
+        seed("Slider_OreDelay", cfg["Slider_" .. pre .. "Delay"])
+        seed("Slider_OreHeight", cfg["Slider_" .. pre .. "Height"])
+        -- Rafting: Natural Mode joined the safety options
+        local safety = list(cfg.Dropdown_RaftSafetyOptions)
+        if safety or cfg.Toggle_Rafting_NaturalMode ~= nil then
+            local v = table.clone(safety or { "Auto-Recover", "Auto-Boost", "Auto-Evade", "Auto-Repair Beams" })
+            if cfg.Toggle_Rafting_NaturalMode == true then table.insert(v, "Natural Mode (no teleports)") end
+            seed("Dropdown_RaftSafety", v)
+        end
+        -- Debug logs
+        if cfg.Toggle_ChompDebugLog ~= nil or cfg.Toggle_CaravanDebugLog ~= nil then
+            local v = {}
+            if cfg.Toggle_ChompDebugLog == true then table.insert(v, "Chomp Log") end
+            if cfg.Toggle_CaravanDebugLog == true then table.insert(v, "Caravan Log") end
+            seed("Dropdown_DebugLogs", v)
+        end
+        -- Toggle + slider pairs became one slider (0 = off)
+        if cfg.Toggle_FPSCap ~= nil then
+            seed("Slider_FPSCapOrOff", cfg.Toggle_FPSCap == true and (tonumber(cfg.Slider_FPSCap) or 60) or 0)
+        end
+        if cfg.Toggle_AFK_Rejoin ~= nil or cfg.Slider_AFK_Interval ~= nil then
+            seed("Slider_AFKRejoin", cfg.Toggle_AFK_Rejoin == false and 0 or (tonumber(cfg.Slider_AFK_Interval) or 6))
+        end
+        if changed then writefile(path, http:JSONEncode(cfg)) end
+    end)
+end
+
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [300bbf0]",
+    Name = "Cow Hub [3db2a1f]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -79,6 +136,12 @@ local Window = Rayfield:CreateWindow({
     KeySystem = false
 })
 _G.CowHubWindow = Window
+
+-- Tab bar order is creation order: make all six up front; each UI block below fills its own
+local tabs = {}
+for _, name in ipairs({ "Farm", "Auction", "Rafting", "Raids", "Dailies", "Settings" }) do
+    tabs[name] = Window:CreateTab({ Name = name, Icon = 4483362458 })
+end
 
 -- ==========================
 -- OPTION DROPDOWNS (one multi-select dropdown in place of a cluster of on/off toggles)
@@ -874,9 +937,8 @@ local mapOptimizer = {
     descendantConnection = nil,
 }
 
-function mapOptimizer.optimizeInstance(inst)
-    if not inst then return end
-    pcall(function()
+-- Runs on every streamed instance (DescendantAdded): pcall a named function so no closure is allocated per call
+local function optimizeOne(inst)
         if inst:IsA("BasePart") then
             if mapOptimizer.disableShadows then
                 inst.CastShadow = false
@@ -906,7 +968,10 @@ function mapOptimizer.optimizeInstance(inst)
                 inst.Enabled = false
             end
         end
-    end)
+end
+
+function mapOptimizer.optimizeInstance(inst)
+    if inst then pcall(optimizeOne, inst) end
 end
 
 function mapOptimizer.applyLighting()
@@ -1663,12 +1728,12 @@ function afkRelog.checkAndResumeState()
         if data.Manatite and data.Manatite.Auto and manatite then
             manatite.auto = true
             manatite.preCFrame = root and root.CFrame
-            pcall(function() Window:Set("Toggle_ManatiteFarm", true) end)
+            pcall(function() _G.CowHubOre.enable("Manatite") end)
         end
         if data.Mithril and data.Mithril.Auto and mithril then
             mithril.auto = true
             mithril.preCFrame = root and root.CFrame
-            pcall(function() Window:Set("Toggle_MithrilFarm", true) end)
+            pcall(function() _G.CowHubOre.enable("Mithril") end)
         end
         if data.TownAuction then
             local ta = data.TownAuction
@@ -4388,6 +4453,8 @@ end
 do
     local function isTeamChest(inst)
         if not inst then return false end
+        -- DescendantAdded fires thousands of times a second (grass): reject on name before IsA / string.lower
+        if not string.find(inst.Name, "[Cc][Hh][Ee][Ss][Tt]") then return false end
         if not (inst:IsA("Model") or inst:IsA("BasePart")) then return false end
         local parent = inst.Parent
         if parent and parent:IsA("Model") then
@@ -7806,7 +7873,7 @@ end
 -- ==========================
 -- UI SETUP: Main Farming Tab
 -- ==========================
-local MainTab = Window:CreateTab({ Name = "Autofarm", Icon = 4483362458 })
+local MainTab = tabs.Farm
 do
 
     MainTab:CreateSection({ Name = "Main Toggles" })
@@ -7945,7 +8012,7 @@ do
     })
 
 
-    MainTab:CreateSection({ Name = "Aura & Pattern Configuration" })
+    MainTab:CreateSection({ Name = "Chomp, Aura & Walking" })
 
     MainTab:CreateDropdown({
         Name = "Chomp Mode",
@@ -7992,31 +8059,27 @@ do
         end,
     })
 
-    MainTab:CreateToggle({
-        Name = "Chomp Debug Log (cowhub/chomplogs)",
-        CurrentValue = false,
-        Flag = "Toggle_ChompDebugLog",
-        Callback = function(Value)
-            if Value then
-                chomp.debug = true
-                chomp.logPath = nil
-                chomp.log("start", {
-                    placeId = game.PlaceId, jobId = game.JobId, mode = chomp.mode, autoMax = chomp.autoMax,
-                    manualDelay = chomp.manualDelay, toggleSetting = plr:GetAttribute("CowGrazeToggle") == true,
-                    chewCooldown = plr:GetAttribute("ChewCooldown"), mult = plr:GetAttribute("CowGrazingSpeedMultiplier"),
-                    statsBefore = chomp.stats,
-                })
-                chomp.flushLog(true)
-                chomp.watchStats(true)
-                safeNotify({ Title = "Chomp Debug Log", Content = "Writing to " .. tostring(chomp.logPath), Duration = 6 })
-            else
-                chomp.log("stop", { stats = chomp.stats })
-                chomp.watchStats(false)
-                chomp.flushLog(true)
-                chomp.debug = false
-            end
-        end,
-    })
+    -- Debug Logs dropdown (Settings) calls this
+    function chomp.setDebug(Value)
+        if Value then
+            chomp.debug = true
+            chomp.logPath = nil
+            chomp.log("start", {
+                placeId = game.PlaceId, jobId = game.JobId, mode = chomp.mode, autoMax = chomp.autoMax,
+                manualDelay = chomp.manualDelay, toggleSetting = plr:GetAttribute("CowGrazeToggle") == true,
+                chewCooldown = plr:GetAttribute("ChewCooldown"), mult = plr:GetAttribute("CowGrazingSpeedMultiplier"),
+                statsBefore = chomp.stats,
+            })
+            chomp.flushLog(true)
+            chomp.watchStats(true)
+            safeNotify({ Title = "Chomp Debug Log", Content = "Writing to " .. tostring(chomp.logPath), Duration = 6 })
+        else
+            chomp.log("stop", { stats = chomp.stats })
+            chomp.watchStats(false)
+            chomp.flushLog(true)
+            chomp.debug = false
+        end
+    end
 
     do
         local title, body = "Chomp: --", "Interval: --"
@@ -8160,7 +8223,7 @@ do
         end,
     })
 
-    MainTab:CreateSection({ Name = "Mob Attack Dodge Configuration" })
+    MainTab:CreateSection({ Name = "Mob Attack Dodge" })
 
     MainTab:CreateDropdown({
         Name = "Dodge Method",
@@ -8261,94 +8324,150 @@ do
         end,
     })
 
-    MainTab:CreateSection({ Name = "Visuals / ESP" })
-
-    ui.optionDropdown(MainTab, "ESP", "Dropdown_ESP", {
-        { label = "Pen Boundary", default = false, fn = function(Value)
-            penESP.show = Value
-            penESP.update()
-        end },
-        { label = "Team Chest", default = false, fn = function(Value)
-            chestESP.show = Value
-            chestESP.update()
-        end },
-    })
-
-    MainTab:CreateSection({ Name = "Virtual Input Spammer (0.05s CD)" })
-
-    ui.optionDropdown(MainTab, "Spam Keys", "Dropdown_SpamKeys", {
-        { label = "Spam [E] Key", default = false, fn = function(Value) HandleSpam("E", Value, 0.05) end },
-        { label = "Spam [Q] Key", default = false, fn = function(Value) HandleSpam("Q", Value, 0.05) end },
-    })
 
 end
 
--- Teleports get their own tab, second in the bar. Its buttons are added near the end of the script,
--- once rafting, townAuction and caravan exist.
-local TeleportsTab = Window:CreateTab({ Name = "Teleports", Icon = 4483362458 })
 
 -- ==========================
--- UI SETUP: Manatite & Mithril Tab
+-- UI SETUP: Farm -> Ore Farm (Manatite or Mithril; they never run together)
 -- ==========================
 do
-    local MiningTab = Window:CreateTab({ Name = "Manatite & Mithril", Icon = 4483362458 })
+    local MiningTab = tabs.Farm
+    local ORE_MANATITE, ORE_MITHRIL = "Manatite (Sea Maze)", "Mithril (Crystal Geode)"
+    local ore = { kind = ORE_MANATITE, on = false }
 
-    MiningTab:CreateSection({ Name = "Manatite Farm (Sea Maze)" })
-
-    MiningTab:CreateToggle({
-        Name = "Enable Manatite Farm (Sea Maze)",
-        CurrentValue = false,
-        Flag = "Toggle_ManatiteFarm",
-        Callback = function(Value)
-            manatite.auto = Value
-            if Value then
-                if root then
-                    manatite.preCFrame = root.CFrame
-                end
-                manatite.model = nil
-                manatite.target = nil
-                manatite.payload = nil
-                manatite.lastSearchTime = 0
-
-                Window:Notify({
-                    Title = "Manatite Farm Enabled",
-                    Content = "Teleporting to Sea Maze Manatite clusters & chomping...",
-                    Duration = 3,
-                    Image = 4483362458,
-                })
-            else
-                if manatite.anchor and root then
-                    pcall(function() root.Anchored = false end)
-                end
-                if manatite.returnOnDisable and manatite.preCFrame and root and char then
-                    char:PivotTo(manatite.preCFrame)
-                    root.CFrame = manatite.preCFrame
-                    for _, part in ipairs(charBaseParts) do
-                        part.AssemblyLinearVelocity = Vector3.zero
-                        part.AssemblyAngularVelocity = Vector3.zero
-                    end
-                end
-                manatite.model = nil
-                manatite.target = nil
-                manatite.payload = nil
+    local function setManatite(Value)
+        manatite.auto = Value
+        if Value then
+            if root then
+                manatite.preCFrame = root.CFrame
             end
-            updateHeartbeatConnection()
+            manatite.model = nil
+            manatite.target = nil
+            manatite.payload = nil
+            manatite.lastSearchTime = 0
+
+            Window:Notify({
+                Title = "Manatite Farm Enabled",
+                Content = "Teleporting to Sea Maze Manatite clusters & chomping...",
+                Duration = 3,
+                Image = 4483362458,
+            })
+        else
+            if manatite.anchor and root then
+                pcall(function() root.Anchored = false end)
+            end
+            if manatite.returnOnDisable and manatite.preCFrame and root and char then
+                char:PivotTo(manatite.preCFrame)
+                root.CFrame = manatite.preCFrame
+                for _, part in ipairs(charBaseParts) do
+                    part.AssemblyLinearVelocity = Vector3.zero
+                    part.AssemblyAngularVelocity = Vector3.zero
+                end
+            end
+            manatite.model = nil
+            manatite.target = nil
+            manatite.payload = nil
+        end
+        updateHeartbeatConnection()
+    end
+
+    local function setMithril(Value)
+        mithril.auto = Value
+        if Value then
+            if root then
+                mithril.preCFrame = root.CFrame
+            end
+            mithril.model = nil
+            mithril.orePart = nil
+            mithril.payload = nil
+            mithril.lastSearchTime = 0
+
+            Window:Notify({
+                Title = "Mithril Farm Enabled",
+                Content = "Teleporting to Crystal Geode Mithril ores & chomping...",
+                Duration = 3,
+                Image = 4483362458,
+            })
+        else
+            if mithril.anchor and root then
+                pcall(function() root.Anchored = false end)
+            end
+            if mithril.returnOnDisable and mithril.preCFrame and root and char then
+                char:PivotTo(mithril.preCFrame)
+                root.CFrame = mithril.preCFrame
+                for _, part in ipairs(charBaseParts) do
+                    part.AssemblyLinearVelocity = Vector3.zero
+                    part.AssemblyAngularVelocity = Vector3.zero
+                end
+            end
+            mithril.model = nil
+            mithril.orePart = nil
+            mithril.payload = nil
+        end
+        updateHeartbeatConnection()
+    end
+
+    -- Turn the selected ore on/off; the other one is always off
+    function ore.apply()
+        local wantMan = ore.on and ore.kind == ORE_MANATITE
+        local wantMit = ore.on and ore.kind == ORE_MITHRIL
+        if manatite.auto ~= wantMan then setManatite(wantMan) end
+        if mithril.auto ~= wantMit then setMithril(wantMit) end
+    end
+
+    -- AFK resume / dailies restore still name the old per-ore flags
+    function ore.enable(kind)
+        -- on first: the dropdown callback below must not switch the resumed ore off
+        ore.kind, ore.on = kind == "Mithril" and ORE_MITHRIL or ORE_MANATITE, true
+        pcall(function() Window:Set("Dropdown_OreType", { ore.kind }) end)
+        pcall(function() Window:Set("Toggle_OreFarm", true) end)
+        ore.apply()
+    end
+    _G.CowHubOre = ore
+
+    MiningTab:CreateSection({ Name = "Ore Farm" })
+
+    MiningTab:CreateDropdown({
+        Name = "Ore",
+        Options = { ORE_MANATITE, ORE_MITHRIL },
+        CurrentOption = { ORE_MANATITE },
+        MultipleOptions = false,
+        Flag = "Dropdown_OreType",
+        Callback = function(Option)
+            local pick = type(Option) == "table" and Option[1] or Option
+            ore.kind = pick == ORE_MITHRIL and ORE_MITHRIL or ORE_MANATITE
+            ore.apply()
         end,
     })
 
-    ui.optionDropdown(MiningTab, "Manatite Options", "Dropdown_ManatiteOptions", {
+    MiningTab:CreateToggle({
+        Name = "Enable Ore Farm",
+        CurrentValue = false,
+        Flag = "Toggle_OreFarm",
+        Callback = function(Value)
+            ore.on = Value == true
+            ore.apply()
+        end,
+    })
+
+    ui.optionDropdown(MiningTab, "Ore Options", "Dropdown_OreOptions", {
         { label = "ESP", default = false, fn = function(Value)
             manatite.showESP = Value
+            mithril.showESP = Value
             manatite.updateESP()
+            mithril.updateESP()
         end },
         { label = "Anchor Root", default = false, fn = function(Value)
             manatite.anchor = Value
+            mithril.anchor = Value
             if not Value and root and not dodge.isUnderground then
                 pcall(function() root.Anchored = false end)
             end
         end },
         { label = "Return on Disable", default = false, fn = function(Value)
             manatite.returnOnDisable = Value
+            mithril.returnOnDisable = Value
         end },
         { label = "Safe Crystal Retreat", default = true, fn = function(Value)
             dodge.retreatOnThreat = Value
@@ -8357,143 +8476,44 @@ do
     })
 
     MiningTab:CreateDropdown({
-        Name = "Cluster Selection Order",
+        Name = "Selection Order (Yield: Manatite only)",
         Options = {"Nearest Available", "Alphabetical (A-Z)", "Largest Crystal Yield"},
         CurrentOption = {"Largest Crystal Yield"},
         MultipleOptions = false,
-        Flag = "Dropdown_ManatiteOrder",
+        Flag = "Dropdown_OreOrder",
         Callback = function(Option)
-            local selection = type(Option) == "table" and Option[1] or Option
+            local selection = tostring(type(Option) == "table" and Option[1] or Option)
             if selection == "Alphabetical (A-Z)" then
-                manatite.order = "Alphabetical (A-Z)"
-            elseif selection == "Largest Crystal Yield" or string.find(tostring(selection), "Yield") or string.find(tostring(selection), "yield") then
-                manatite.order = "Largest Crystal Yield"
+                manatite.order, mithril.order = selection, selection
+            elseif string.find(string.lower(selection), "yield", 1, true) then
+                manatite.order, mithril.order = "Largest Crystal Yield", "Nearest Available"
             else
-                manatite.order = "Nearest Available"
+                manatite.order, mithril.order = "Nearest Available", "Nearest Available"
             end
         end,
     })
 
     MiningTab:CreateSlider({
-        Name = "Manatite Chomp Delay",
+        Name = "Ore Chomp Delay",
         Range = {0.05, 0.5},
         Increment = 0.01,
         Suffix = "s",
         CurrentValue = 0.1,
-        Flag = "Slider_ManatiteDelay",
+        Flag = "Slider_OreDelay",
         Callback = function(Value)
-            manatite.delay = Value
+            manatite.delay, mithril.delay = Value, Value
         end,
     })
 
     MiningTab:CreateSlider({
-        Name = "Manatite Teleport Height Offset",
+        Name = "Ore Teleport Height Offset",
         Range = {0, 8},
         Increment = 0.5,
         Suffix = "Studs",
         CurrentValue = 2.5,
-        Flag = "Slider_ManatiteHeight",
+        Flag = "Slider_OreHeight",
         Callback = function(Value)
-            manatite.heightOffset = Value
-        end,
-    })
-
-    MiningTab:CreateSection({ Name = "Mithril Farm (Crystal Geode)" })
-
-    MiningTab:CreateToggle({
-        Name = "Enable Mithril Farm (Crystal Geode)",
-        CurrentValue = false,
-        Flag = "Toggle_MithrilFarm",
-        Callback = function(Value)
-            mithril.auto = Value
-            if Value then
-                if root then
-                    mithril.preCFrame = root.CFrame
-                end
-                mithril.model = nil
-                mithril.orePart = nil
-                mithril.payload = nil
-                mithril.lastSearchTime = 0
-
-                Window:Notify({
-                    Title = "Mithril Farm Enabled",
-                    Content = "Teleporting to Crystal Geode Mithril ores & chomping...",
-                    Duration = 3,
-                    Image = 4483362458,
-                })
-            else
-                if mithril.anchor and root then
-                    pcall(function() root.Anchored = false end)
-                end
-                if mithril.returnOnDisable and mithril.preCFrame and root and char then
-                    char:PivotTo(mithril.preCFrame)
-                    root.CFrame = mithril.preCFrame
-                    for _, part in ipairs(charBaseParts) do
-                        part.AssemblyLinearVelocity = Vector3.zero
-                        part.AssemblyAngularVelocity = Vector3.zero
-                    end
-                end
-                mithril.model = nil
-                mithril.orePart = nil
-                mithril.payload = nil
-            end
-            updateHeartbeatConnection()
-        end,
-    })
-
-    ui.optionDropdown(MiningTab, "Mithril Options", "Dropdown_MithrilOptions", {
-        { label = "ESP", default = false, fn = function(Value)
-            mithril.showESP = Value
-            mithril.updateESP()
-        end },
-        { label = "Anchor Root", default = false, fn = function(Value)
-            mithril.anchor = Value
-            if not Value and root and not dodge.isUnderground then
-                pcall(function() root.Anchored = false end)
-            end
-        end },
-        { label = "Return on Disable", default = false, fn = function(Value)
-            mithril.returnOnDisable = Value
-        end },
-    })
-
-    MiningTab:CreateDropdown({
-        Name = "Mithril Selection Order",
-        Options = {"Nearest Available", "Alphabetical (A-Z)"},
-        CurrentOption = {"Nearest Available"},
-        MultipleOptions = false,
-        Flag = "Dropdown_MithrilOrder",
-        Callback = function(Option)
-            local selection = type(Option) == "table" and Option[1] or Option
-            if selection == "Alphabetical (A-Z)" then
-                mithril.order = "Alphabetical (A-Z)"
-            else
-                mithril.order = "Nearest Available"
-            end
-        end,
-    })
-
-    MiningTab:CreateSlider({
-        Name = "Mithril Chomp Delay",
-        Range = {0.05, 0.5},
-        Increment = 0.01,
-        Suffix = "s",
-        CurrentValue = 0.1,
-        Flag = "Slider_MithrilDelay",
-        Callback = function(Value)
-            mithril.delay = Value
-        end,
-    })
-
-    MiningTab:CreateSlider({
-        Name = "Mithril Teleport Height Offset",
-        Range = {0, 8},
-        Increment = 0.5,
-        Suffix = "Studs",
-        CurrentValue = 2.5,
-        Flag = "Slider_MithrilHeight",
-        Callback = function(Value)
-            mithril.heightOffset = Value
+            manatite.heightOffset, mithril.heightOffset = Value, Value
         end,
     })
 end
@@ -8502,9 +8522,9 @@ end
 -- UI SETUP: Scanner Tab
 -- ==========================
 do
-    local ScannerTab = Window:CreateTab({ Name = "Auction Scanner", Icon = 4483362458 })
+    local ScannerTab = tabs.Auction
 
-    ScannerTab:CreateSection({ Name = "Discord Webhook Integration" })
+    ScannerTab:CreateSection({ Name = "Auction House: Discord Webhook" })
 
     ScannerTab:CreateInput({
         Name = "Discord Webhook URL",
@@ -9999,7 +10019,7 @@ end
 -- UI SETUP: Town Auction Tab
 -- ==========================
 do
-    local TownAuctionTab = Window:CreateTab({ Name = "Town Auction", Icon = 4483362458 })
+    local TownAuctionTab = tabs.Auction
 
     TownAuctionTab:CreateSection({ Name = "Town Store & Live Controls" })
 
@@ -14393,7 +14413,7 @@ _G.CowHubRaftingCleanup = rafting.cleanup
 -- UI SETUP: Fjord Rafting Tab
 -- ==========================
 do
-    local RaftingTab = Window:CreateTab({ Name = "Fjord Rafting", Icon = 4483362458 })
+    local RaftingTab = tabs.Rafting
 
     RaftingTab:CreateSection({ Name = "Live Voyage Telemetry" })
 
@@ -14489,6 +14509,17 @@ do
             Name = "Return to Shore / Dock",
             Callback = function()
                 rafting.endVoyage()
+            end,
+        })
+        row:CreateButton({
+            Name = "Dismiss Reward GUI Now",
+            Callback = function()
+                local didDismiss = rafting.dismissChestRewardGui(true)
+                if didDismiss then
+                    Window:Notify({ Title = "Chest GUI", Content = "Dismissed reward popup.", Duration = 2 })
+                else
+                    Window:Notify({ Title = "Chest GUI", Content = "No active reward popup found.", Duration = 2 })
+                end
             end,
         })
     end
@@ -14634,31 +14665,13 @@ do
         end },
     })
 
-    RaftingTab:CreateButton({
-        Name = "Dismiss Reward GUI Now",
-        Callback = function()
-            local didDismiss = rafting.dismissChestRewardGui(true)
-            if didDismiss then
-                Window:Notify({ Title = "Chest GUI", Content = "Dismissed reward popup.", Duration = 2 })
-            else
-                Window:Notify({ Title = "Chest GUI", Content = "No active reward popup found.", Duration = 2 })
-            end
-        end,
-    })
-
     RaftingTab:CreateSection({ Name = "Automation & Safety" })
 
-    RaftingTab:CreateToggle({
-        Name = "Natural Mode (Walk & Pathfind, No Teleports)",
-        CurrentValue = false,
-        Flag = "Toggle_Rafting_NaturalMode",
-        Callback = function(Value)
+    ui.optionDropdown(RaftingTab, "Safety Options", "Dropdown_RaftSafety", {
+        { label = "Natural Mode (no teleports)", default = false, fn = function(Value)
             rafting.naturalMode = Value
             rafting.updateCards()
-        end,
-    })
-
-    ui.optionDropdown(RaftingTab, "Safety Options", "Dropdown_RaftSafetyOptions", {
+        end },
         { label = "Auto-Recover", default = true, fn = function(Value)
             rafting.autoRecoverOverboard = Value
         end },
@@ -15671,7 +15684,7 @@ end
 -- UI SETUP: Caravan Raid Tab
 -- ==========================
 do
-    local CaravanTab = Window:CreateTab({ Name = "Caravan Raid", Icon = 4483362458 })
+    local CaravanTab = tabs.Raids
 
     CaravanTab:CreateSection({ Name = "Caravan Raid" })
 
@@ -15707,15 +15720,11 @@ do
         { label = "Loot Only", default = false, fn = function(Value) caravan.lootOnly = Value == true end },
     })
 
-    CaravanTab:CreateToggle({
-        Name = "Caravan Debug Log",
-        CurrentValue = false,
-        Flag = "Toggle_CaravanDebugLog",
-        Callback = function(Value)
-            caravan.debug = Value == true
-            if not caravan.debug then caravan.flushLog(true) end
-        end,
-    })
+    -- Debug Logs dropdown (Settings) calls this
+    function caravan.setDebug(Value)
+        caravan.debug = Value == true
+        if not caravan.debug then caravan.flushLog(true) end
+    end
 
     do
         local card
@@ -15749,60 +15758,6 @@ do
                 end)
             end
         end)
-    end
-end
-
--- ==========================
--- UI SETUP: Teleports Tab
--- ==========================
-do
-    TeleportsTab:CreateSection({ Name = "Locations" })
-    do
-        local row = TeleportsTab:CreateGroup()
-        row:CreateButton({
-            Name = "Teleport to Farming Area",
-            Callback = function()
-                farm.teleportTo(CFrame.new(6269, 706, -185))
-            end,
-        })
-        row:CreateButton({
-            Name = "Teleport to Barn",
-            Callback = function() caravan.teleportBarn() end,
-        })
-        row:CreateButton({
-            Name = "Teleport to Town Auction",
-            Callback = function()
-                townAuction.teleportToStore()
-            end,
-        })
-        row:CreateButton({
-            Name = "Teleport to Fisherman Dock",
-            Callback = function()
-                -- Dock end of the Fisherman's walking route; fixed fallback if the house hasn't streamed in
-                local ok, spot = pcall(function()
-                    return workspace.CowWorld.Geometry.FarmerHouses.FishermansForest_FishermansHouse.FishingRoute["07_FishingSpot"]
-                end)
-                local pos = ok and spot and spot.Position or Vector3.new(-673, 700.5, 50)
-                farm.teleportTo(CFrame.new(pos + Vector3.new(0, 3.5, 0), pos + Vector3.new(10, 3.5, 0)))
-            end,
-        })
-    end
-
-    TeleportsTab:CreateSection({ Name = "Fjord Rafting" })
-    do
-        local row = TeleportsTab:CreateGroup()
-        row:CreateButton({
-            Name = "Teleport to Raft Yard Dock",
-            Callback = function()
-                rafting.teleportToRaftYard()
-            end,
-        })
-        row:CreateButton({
-            Name = "Teleport Above Raft Deck",
-            Callback = function()
-                rafting.teleportToDeck()
-            end,
-        })
     end
 end
 
@@ -15855,8 +15810,7 @@ dailies.PAUSABLE = {
     { flag = "Toggle_CaravanAutofarm", on = function() return caravan.enabled == true end },
     { flag = "Toggle_Rafting_AutoLoop", on = function() return rafting.autoLoop == true end },
     { flag = "Toggle_Rafting_Enabled", on = function() return rafting.enabled == true end },
-    { flag = "Toggle_ManatiteFarm", on = function() return (manatite and manatite.auto) == true end },
-    { flag = "Toggle_MithrilFarm", on = function() return (mithril and mithril.auto) == true end },
+    { flag = "Toggle_OreFarm", on = function() return (manatite and manatite.auto) == true or (mithril and mithril.auto) == true end },
     { flag = "Toggle_FieldRaidAuto", on = function() return fieldraid.auto == true end },
     { flag = "Toggle_MobAura", on = function() return farm.autoChompMobs == true end },
     { flag = "Toggle_Chomp", on = function() return farm.autoChomp == true end },
@@ -15878,6 +15832,11 @@ function dailies.setStatus(text)
 end
 
 function dailies.setFlag(flag, on)
+    -- A paused list saved before the Ore Farm merge names the old per-ore toggles
+    if on and (flag == "Toggle_ManatiteFarm" or flag == "Toggle_MithrilFarm") and _G.CowHubOre then
+        pcall(_G.CowHubOre.enable, flag == "Toggle_MithrilFarm" and "Mithril" or "Manatite")
+        return
+    end
     pcall(function() Window:Set(flag, on) end)
 end
 
@@ -16373,7 +16332,7 @@ end
 -- UI SETUP: Dailies Tab
 -- ==========================
 do
-    local DailiesTab = Window:CreateTab({ Name = "Dailies", Icon = 4483362458 })
+    local DailiesTab = tabs.Dailies
 
     DailiesTab:CreateSection({ Name = "Daily Rewards & Quests" })
 
@@ -16940,21 +16899,21 @@ end
 _G.CowHubBake = bake
 
 -- ==========================
--- UI SETUP: Autofarm -> North River Bakehouse Section
+-- UI SETUP: Dailies -> North River Bakehouse Section
 -- ==========================
 do
-    MainTab:CreateSection({ Name = "North River Bakehouse (Auto Bread Maker)" })
+    tabs.Dailies:CreateSection({ Name = "North River Bakehouse (Auto Bread Maker)" })
 
-    if MainTab.CreateText then
-        pcall(function() bake.statusCard = MainTab:CreateText({ name = "Auto Bakehouse", text = bake.status }) end)
+    if tabs.Dailies.CreateText then
+        pcall(function() bake.statusCard = tabs.Dailies:CreateText({ name = "Auto Bakehouse", text = bake.status }) end)
     end
-    if not bake.statusCard and MainTab.CreateParagraph then
-        pcall(function() bake.statusCard = MainTab:CreateParagraph({ Title = "Auto Bakehouse", Content = bake.status }) end)
+    if not bake.statusCard and tabs.Dailies.CreateParagraph then
+        pcall(function() bake.statusCard = tabs.Dailies:CreateParagraph({ Title = "Auto Bakehouse", Content = bake.status }) end)
     end
     bake.setStatus("Idle")
 
     local initialOptions, initialChoice = bake.buildOptions()
-    bake.recipeDropdown = MainTab:CreateDropdown({
+    bake.recipeDropdown = tabs.Dailies:CreateDropdown({
         Name = "Bread Recipe",
         Options = initialOptions,
         CurrentOption = { initialChoice },
@@ -16967,7 +16926,7 @@ do
         end,
     })
 
-    MainTab:CreateDropdown({
+    tabs.Dailies:CreateDropdown({
         Name = "Crafting Mode",
         Options = { "Custom", "Maximum" },
         CurrentOption = { "Maximum" },
@@ -16980,7 +16939,7 @@ do
         end,
     })
 
-    MainTab:CreateInput({
+    tabs.Dailies:CreateInput({
         Name = "Custom Amount",
         Placeholder = "Enter loaves to bake (default 1)",
         RemoveTextAfterFocusLost = false,
@@ -16994,7 +16953,7 @@ do
         end,
     })
 
-    MainTab:CreateToggle({
+    tabs.Dailies:CreateToggle({
         Name = "Auto Bake Bread",
         CurrentValue = false,
         Flag = "Toggle_AutoBake",
@@ -17017,7 +16976,7 @@ end
 -- UI SETUP: Field Raid Tab
 -- ==========================
 do
-    local RaidTab = Window:CreateTab({ Name = "Field Raid", Icon = 4483362458 })
+    local RaidTab = tabs.Raids
     -- Horizontal row (Gen2 groups); falls back to the tab when groups are unavailable
     local function row()
         local ok, group = pcall(function() return RaidTab:CreateGroup({ direction = "row" }) end)
@@ -17110,12 +17069,15 @@ do
         Callback = function() fieldraid.quickLeave() end,
     })
 
-    RaidTab:CreateSection({ Name = "Blacksmith Anvil Shift (Day)" })
-    if RaidTab.CreateParagraph then
-        pcall(function() fieldraid.smith.statusCard = RaidTab:CreateParagraph({ Title = "Blacksmith Shift", Content = fieldraid.smith.status }) end)
+    -- Blacksmith shift lives on the Dailies tab
+    local SmithTab = tabs.Dailies
+    SmithTab:CreateSection({ Name = "Blacksmith Anvil Shift (Day)" })
+    if SmithTab.CreateParagraph then
+        pcall(function() fieldraid.smith.statusCard = SmithTab:CreateParagraph({ Title = "Blacksmith Shift", Content = fieldraid.smith.status }) end)
     end
 
-    local smithRow = row()
+    local okRow, smithRow = pcall(function() return SmithTab:CreateGroup({ direction = "row" }) end)
+    if not okRow or not smithRow then smithRow = SmithTab end
     smithRow:CreateToggle({
         Name = "Auto Blacksmith Shift",
         CurrentValue = false,
@@ -17147,7 +17109,7 @@ _G.CowHubFieldRaid = fieldraid -- debug handle (executor-side tests)
 -- UI SETUP: Settings Tab
 -- ==========================
 do
-    local SettingsTab = Window:CreateTab({ Name = "Settings", Icon = 4483362458 })
+    local SettingsTab = tabs.Settings
 
     SettingsTab:CreateSection({ Name = "Performance & Anti-Lag" })
 
@@ -17178,51 +17140,93 @@ do
         end },
     })
 
-    SettingsTab:CreateToggle({
-        Name = "Enable FPS Cap",
-        CurrentValue = false,
-        Flag = "Toggle_FPSCap",
+    SettingsTab:CreateSlider({
+        Name = "FPS Cap (0 = off)",
+        Range = {0, 60},
+        Increment = 1,
+        Suffix = "FPS",
+        CurrentValue = 0,
+        Flag = "Slider_FPSCapOrOff",
         Callback = function(Value)
-            fps.capEnabled = Value
+            fps.capEnabled = Value > 0
+            if fps.capEnabled then fps.currentCap = math.max(15, Value) end
             if setfpscap then pcall(function() setfpscap(fps.capEnabled and fps.currentCap or 60) end) end
         end,
     })
 
-    SettingsTab:CreateSlider({
-        Name = "FPS Cap Limit",
-        Range = {15, 60},
-        Increment = 1,
-        Suffix = "FPS",
-        CurrentValue = 60,
-        Flag = "Slider_FPSCap",
-        Callback = function(Value)
-            fps.currentCap = Value
-            if fps.capEnabled and setfpscap then pcall(function() setfpscap(fps.currentCap) end) end
-        end,
+    SettingsTab:CreateSection({ Name = "Visuals / ESP" })
+
+    ui.optionDropdown(SettingsTab, "ESP", "Dropdown_ESP", {
+        { label = "Pen Boundary", default = false, fn = function(Value)
+            penESP.show = Value
+            penESP.update()
+        end },
+        { label = "Team Chest", default = false, fn = function(Value)
+            chestESP.show = Value
+            chestESP.update()
+        end },
     })
+
+    SettingsTab:CreateSection({ Name = "Virtual Input Spammer (0.05s CD)" })
+
+    ui.optionDropdown(SettingsTab, "Spam Keys", "Dropdown_SpamKeys", {
+        { label = "Spam [E] Key", default = false, fn = function(Value) HandleSpam("E", Value, 0.05) end },
+        { label = "Spam [Q] Key", default = false, fn = function(Value) HandleSpam("Q", Value, 0.05) end },
+    })
+
+    SettingsTab:CreateSection({ Name = "Teleports" })
+    do
+        local TELEPORTS = {
+            { "Farming Area", function() farm.teleportTo(CFrame.new(6269, 706, -185)) end },
+            { "Barn", function() caravan.teleportBarn() end },
+            { "Town Auction", function() townAuction.teleportToStore() end },
+            { "Fisherman Dock", function()
+                -- Dock end of the Fisherman's walking route; fixed fallback if the house hasn't streamed in
+                local ok, spot = pcall(function()
+                    return workspace.CowWorld.Geometry.FarmerHouses.FishermansForest_FishermansHouse.FishingRoute["07_FishingSpot"]
+                end)
+                local pos = ok and spot and spot.Position or Vector3.new(-673, 700.5, 50)
+                farm.teleportTo(CFrame.new(pos + Vector3.new(0, 3.5, 0), pos + Vector3.new(10, 3.5, 0)))
+            end },
+            { "Raft Yard Dock", function() rafting.teleportToRaftYard() end },
+            { "Above Raft Deck", function() rafting.teleportToDeck() end },
+        }
+        local names, pick = {}, TELEPORTS[1][1]
+        for _, t in ipairs(TELEPORTS) do table.insert(names, t[1]) end
+        -- Picking only selects; the button teleports, so a saved pick never teleports on load
+        SettingsTab:CreateDropdown({
+            Name = "Teleport Location",
+            Options = names,
+            CurrentOption = { pick },
+            MultipleOptions = false,
+            Flag = "Dropdown_TeleportTarget",
+            Callback = function(Option) pick = type(Option) == "table" and Option[1] or Option end,
+        })
+        SettingsTab:CreateButton({
+            Name = "Teleport",
+            Callback = function()
+                for _, t in ipairs(TELEPORTS) do
+                    if t[1] == pick then t[2]() return end
+                end
+            end,
+        })
+    end
 
     SettingsTab:CreateSection({ Name = "AFK Auto-Rejoin" })
 
-    SettingsTab:CreateToggle({
-        Name = "Enable 6-Hour Auto-Rejoin & Resume",
-        CurrentValue = true,
-        Flag = "Toggle_AFK_Rejoin",
-        Callback = function(Value)
-            afkRelog.enabled = Value
-            afkRelog.updateUI()
-        end,
-    })
-
     SettingsTab:CreateSlider({
-        Name = "Rejoin Interval (Hours)",
-        Range = {0.5, 12.0},
+        Name = "Auto-Rejoin & Resume Every (0 = off)",
+        Range = {0, 12.0},
         Increment = 0.5,
         Suffix = " Hours",
         CurrentValue = 6.0,
-        Flag = "Slider_AFK_Interval",
+        Flag = "Slider_AFKRejoin",
         Callback = function(Value)
-            afkRelog.interval = Value * 3600
-            afkRelog.targetRejoinTime = os.time() + afkRelog.interval
+            afkRelog.enabled = Value > 0
+            if Value > 0 then
+                afkRelog.interval = Value * 3600
+                afkRelog.targetRejoinTime = os.time() + afkRelog.interval
+            end
             afkRelog.updateUI()
         end,
     })
@@ -17303,7 +17307,12 @@ do
         })
     end
 
-    SettingsTab:CreateSection({ Name = "Script Controls" })
+    SettingsTab:CreateSection({ Name = "Debug Logs & Script Controls" })
+
+    ui.optionDropdown(SettingsTab, "Debug Logs (cowhub/chomplogs, caravan)", "Dropdown_DebugLogs", {
+        { label = "Chomp Log", default = false, fn = function(Value) chomp.setDebug(Value) end },
+        { label = "Caravan Log", default = false, fn = function(Value) caravan.setDebug(Value) end },
+    })
 
     SettingsTab:CreateButton({
         Name = "Close Script & Destroy UI",
