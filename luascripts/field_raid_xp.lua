@@ -1087,30 +1087,14 @@ function xp.meadow(now, rootPos, humanoid)
     end
 end
 
--- Green gathering circle by the sign-up counter (arc parts under GatheringBoundary).
--- The server only starts a run for a cow standing inside it. Returns center, inner radius.
--- shortcut: center = centroid of the arc parts, assumes arcs spread evenly round the ring; fit a circle if they don't
-function xp.gatherCircle()
+-- Green gathering zone by the sign-up counter: the server only starts a run for a cow standing inside it.
+-- Its floor (GatheringFloor, 48x35) sits ~18 studs inside the arc wall, so its center is a safe spot.
+function xp.gatherSpot()
     local node = workspace:FindFirstChild("CowWorld")
-    for _, name in ipairs({ "Decorations", "HayRaidEntrance", "Gathering Markers", "GatheringBoundary" }) do
+    for _, name in ipairs({ "Decorations", "HayRaidEntrance", "Gathering Markers", "GatheringBoundary", "GatheringFloor" }) do
         node = node and node:FindFirstChild(name)
     end
-    if not node then return nil end
-    if node:IsA("BasePart") then return node.Position, math.min(node.Size.X, node.Size.Z) / 2 end
-    local parts, sum = {}, Vector3.zero
-    for _, p in ipairs(node:GetDescendants()) do
-        if p:IsA("BasePart") then
-            parts[#parts + 1] = p
-            sum += p.Position
-        end
-    end
-    if #parts == 0 then return nil end
-    local center, radius = sum / #parts, math.huge
-    for _, p in ipairs(parts) do
-        local o = p.Position - center
-        radius = math.min(radius, Vector3.new(o.X, 0, o.Z).Magnitude)
-    end
-    return center, radius
+    return node and node:IsA("BasePart") and node.Position or nil
 end
 
 function xp.startRun(now, rootPos, humanoid, root)
@@ -1131,12 +1115,11 @@ function xp.startRun(now, rootPos, humanoid, root)
         xp.setStatus("Go near Field Raid camp to start")
         return
     end
-    -- The server ignores "Solo" unless the cow stands in the green gathering circle: walk onto its center
-    local spot, radius = xp.gatherCircle()
-    spot = spot or signup.Position
+    -- The server ignores "Solo" unless the cow stands in the green gathering zone: walk onto its center
+    local spot = xp.gatherSpot() or signup.Position
     local off = spot - rootPos
     local d = Vector3.new(off.X, 0, off.Z).Magnitude
-    if d > math.clamp((radius or 6) * 0.5, 2, 3) then
+    if d > 3 then
         if d > 260 then
             xp.setStatus(string.format("Move closer to Field Raid camp (%d studs)", math.floor(d)))
             return
@@ -1149,7 +1132,7 @@ function xp.startRun(now, rootPos, humanoid, root)
         else
             xp.walkTo(spot, now, humanoid, root)
         end
-        xp.setStatus("Walking into raid gathering circle")
+        xp.setStatus("Walking into raid gathering zone")
         return
     end
     xp.stopWalk()
