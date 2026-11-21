@@ -88,6 +88,8 @@ local xp = {
     gainLog = {}, -- { { c = farmClock, amt = xp } }
     tickDt = 0.1,
     exitRule = "Marginal", -- "Marginal" | "Legacy" (Rush & Reset exit gate)
+    collectChests = true, -- open own harvest chests ahead of the cow for loot, not only to heal
+    CHEST_COLLECT_RANGE = 60, -- studs; loot chests must also be ahead (<= 10 studs behind)
     EXIT_BONUS = 1500, -- Far Riverbank 1,000 + Safe Exit 500
     EXIT_OVERHEAD = 8, -- meadow chest + requeue seconds
     RATE_WINDOW = 10,
@@ -246,6 +248,9 @@ function xp.refreshUI()
     end
     if u.exitBtn then
         u.exitBtn.Text = "Rush exit: " .. xp.exitRule
+    end
+    if u.chestBtn then
+        u.chestBtn.Text = "Chests: " .. (xp.collectChests and "On" or "Off")
     end
     if u.fieldLabel then
         local run = plr:GetAttribute("CowFieldRaidId")
@@ -970,24 +975,31 @@ end
 function xp.tryChest(now, rootPos, humanoid, root)
     local hearts = tonumber(plr:GetAttribute("Hearts")) or 0
     local maxHearts = tonumber(plr:GetAttribute("MaxHealth")) or 0
-    if maxHearts <= 0 or hearts > maxHearts - 1 then return false end
+    if maxHearts <= 0 then return false end
+    local hurt = hearts <= maxHearts - 1
+    local collect = xp.collectChests and not xp.leaving
+    if not hurt and not collect then return false end
     if xp.leaving and hearts / maxHearts > 0.25 then return false end
     -- Only detour far when badly hurt; otherwise heal at a chest that is already close
-    local maxDist = hearts / maxHearts <= 0.5 and 80 or 30
+    local healDist = hurt and (hearts / maxHearts <= 0.5 and 80 or 30) or 0
+    local maxDist = collect and math.max(healDist, xp.CHEST_COLLECT_RANGE) or healDist
     for _, prompt in ipairs(xp.chestPrompts) do
         local owner = prompt:GetAttribute("RaidChestOwner")
         if prompt.Parent and prompt.Enabled and (owner == nil or owner == plr.UserId) then
             local pos = xp.promptPos(prompt)
             local d = pos and (pos - rootPos).Magnitude or math.huge
-            if d < maxDist and now - (xp.chestTried[prompt] or 0) > 6 then
+            -- Beyond heal range it is a loot detour: forward only (fields deepen toward -Z)
+            local ok = d < healDist or (d < maxDist and pos.Z <= rootPos.Z + 10)
+            if ok and now - (xp.chestTried[prompt] or 0) > 6 then
+                local why = d < healDist and "heal" or "loot"
                 if d > math.max(4, prompt.MaxActivationDistance - 2) then
                     xp.walkTo(pos, now, humanoid, root)
-                    xp.setStatus("Walking to chest (heal)")
+                    xp.setStatus("Walking to chest (" .. why .. ")")
                 else
                     xp.stopWalk()
                     xp.chestTried[prompt] = now
                     xp.firePrompt(prompt)
-                    xp.setStatus("Opening harvest chest (heal)")
+                    xp.setStatus("Opening harvest chest (" .. why .. ")")
                 end
                 return true
             end
@@ -1640,18 +1652,24 @@ function xp.buildUI()
     xp.ui.modeBtn = makeBtn(165, 134, 145, "Mode: Rush & Reset", Color3.fromRGB(62, 82, 118))
     local bankBtn = makeBtn(10, 172, 145, "Bank & Leave", Color3.fromRGB(115, 88, 52))
     local syncBtn = makeBtn(165, 172, 145, "Sync XP", Color3.fromRGB(72, 76, 92))
-    xp.ui.exitBtn = makeBtn(10, 210, 300, "Rush exit: " .. xp.exitRule, Color3.fromRGB(86, 70, 112))
+    xp.ui.exitBtn = makeBtn(10, 210, 145, "Rush exit: " .. xp.exitRule, Color3.fromRGB(86, 70, 112))
+    xp.ui.chestBtn = makeBtn(165, 210, 145, "Chests: On", Color3.fromRGB(96, 84, 48))
 
     -- Elements below the powerups label: { instance, x, baseY } (shifted by xp.layoutUI)
     xp.ui.frame, xp.ui.baseHeight, xp.ui.extra = frame, 252, 0
     xp.ui.below = {
         { xp.ui.statsLabel, 10, 76 }, { xp.ui.statusLabel, 10, 102 },
         { xp.ui.startBtn, 10, 134 }, { xp.ui.modeBtn, 165, 134 },
-        { bankBtn, 10, 172 }, { syncBtn, 165, 172 }, { xp.ui.exitBtn, 10, 210 },
+        { bankBtn, 10, 172 }, { syncBtn, 165, 172 }, { xp.ui.exitBtn, 10, 210 }, { xp.ui.chestBtn, 165, 210 },
     }
 
     xp.ui.exitBtn.Activated:Connect(function()
         xp.exitRule = xp.exitRule == "Marginal" and "Legacy" or "Marginal"
+        xp.refreshUI()
+    end)
+
+    xp.ui.chestBtn.Activated:Connect(function()
+        xp.collectChests = not xp.collectChests
         xp.refreshUI()
     end)
 
