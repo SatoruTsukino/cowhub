@@ -1087,6 +1087,16 @@ function xp.meadow(now, rootPos, humanoid)
     end
 end
 
+-- Green gathering zone by the sign-up counter: the server only starts a run for a cow standing inside it.
+-- Its floor (GatheringFloor, 48x35) sits ~18 studs inside the arc wall, so its center is a safe spot.
+function xp.gatherSpot()
+    local node = workspace:FindFirstChild("CowWorld")
+    for _, name in ipairs({ "Decorations", "HayRaidEntrance", "Gathering Markers", "GatheringBoundary", "GatheringFloor" }) do
+        node = node and node:FindFirstChild(name)
+    end
+    return node and node:IsA("BasePart") and node.Position or nil
+end
+
 function xp.startRun(now, rootPos, humanoid, root)
     if not xp.autoStart then
         xp.setStatus("Outside raid (auto-start off)")
@@ -1105,14 +1115,24 @@ function xp.startRun(now, rootPos, humanoid, root)
         xp.setStatus("Go near Field Raid camp to start")
         return
     end
-    local d = (signup.Position - rootPos).Magnitude
-    if d > 10 then
+    -- The server ignores "Solo" unless the cow stands in the green gathering zone: walk onto its center
+    local spot = xp.gatherSpot() or signup.Position
+    local off = spot - rootPos
+    local d = Vector3.new(off.X, 0, off.Z).Magnitude
+    if d > 3 then
         if d > 260 then
             xp.setStatus(string.format("Move closer to Field Raid camp (%d studs)", math.floor(d)))
             return
         end
-        xp.walkTo(signup.Position, now, humanoid, root)
-        xp.setStatus("Walking to raid sign-up")
+        if d < 30 and humanoid then
+            -- direct MoveTo: walkTo's forward-only clamp would stall short of the circle
+            xp.path, xp.pathTarget = nil, nil
+            xp.lastMove = now
+            humanoid:MoveTo(spot)
+        else
+            xp.walkTo(spot, now, humanoid, root)
+        end
+        xp.setStatus("Walking into raid gathering zone")
         return
     end
     xp.stopWalk()

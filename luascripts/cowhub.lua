@@ -1,4 +1,4 @@
--- Cow Hub [1ae70f2] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [752f76b] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -72,7 +72,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/gen2'))()
 _G.CowHubRayfield = Rayfield
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [1ae70f2]",
+    Name = "Cow Hub [752f76b]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -6781,6 +6781,16 @@ function fieldraid.meadow(now, rootPos)
 end
 
 -- Outside a raid: walk to the camp sign-up ("Set out") and start a solo run
+-- Green gathering zone by the sign-up counter: the server only starts a run for a cow standing inside it.
+-- Its floor (GatheringFloor, 48x35) sits ~18 studs inside the arc wall, so its center is a safe spot.
+function fieldraid.gatherSpot()
+    local node = workspace:FindFirstChild("CowWorld")
+    for _, name in ipairs({ "Decorations", "HayRaidEntrance", "Gathering Markers", "GatheringBoundary", "GatheringFloor" }) do
+        node = node and node:FindFirstChild(name)
+    end
+    return node and node:IsA("BasePart") and node.Position or nil
+end
+
 function fieldraid.startRun(now, rootPos)
     if not fieldraid.autoStart then
         fieldraid.setStatus("Waiting (auto start off)")
@@ -6799,14 +6809,24 @@ function fieldraid.startRun(now, rootPos)
         fieldraid.setStatus("Go to the Field Raid camp (sign-up not loaded)")
         return
     end
-    local d = (signup.Position - rootPos).Magnitude
-    if d > 10 then
+    -- The server ignores "Solo" unless the cow stands in the green gathering zone: walk onto its center
+    local spot = fieldraid.gatherSpot() or signup.Position
+    local off = spot - rootPos
+    local d = Vector3.new(off.X, 0, off.Z).Magnitude
+    if d > 3 then
         if d > 250 then
             fieldraid.setStatus(string.format("Go to the Field Raid camp (%d studs)", math.floor(d)))
             return
         end
-        fieldraid.walkTo(signup.Position, now)
-        fieldraid.setStatus("Walking to raid sign-up")
+        if d < 30 and humanoid then
+            -- direct MoveTo: walkTo's forward-only clamp would stall short of the circle
+            fieldraid.path, fieldraid.pathTarget = nil, nil
+            fieldraid.lastMove = now
+            humanoid:MoveTo(spot)
+        else
+            fieldraid.walkTo(spot, now)
+        end
+        fieldraid.setStatus("Walking into raid gathering zone")
         return
     end
     fieldraid.stopWalk()
