@@ -312,9 +312,9 @@ Primary CowHub script containing autofarm engines, mining, dodging, auction scan
 | [14292](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L14292) | `rafting.teleportToRaftYard()` | Teleports player character to Fjord rafting entrance. |
 | [14301](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L14301) | `rafting.teleportToDeck()` | Teleports character onto raft deck safely. |
 | [14311](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L14311) | `rafting.initClientListener()` | Hooks server network events for rafting snapshots. |
-| [14372](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L14372) | `rafting.startSteeringLoop()` | Starts background steering task loop. |
-| [14404](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L14404) | `rafting.stopSteeringLoop()` | Stops steering task loop. |
-| [14439](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L14439) | `rafting.cleanup()` | Full teardown of rafting state, timers, and connections. |
+| [14388](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L14388) | `rafting.startSteeringLoop()` | Starts background steering task loop. |
+| [14420](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L14420) | `rafting.stopSteeringLoop()` | Stops steering task loop. |
+| [14455](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L14455) | `rafting.cleanup()` | Full teardown of rafting state, timers, and connections. |
 | [6187](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6187) | `fieldraid.runId()` | Current field raid run id (player attribute `CowFieldRaidId`). |
 | [6191](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6191) | `fieldraid.inRaid()` | True while the cow is in a field raid run. |
 | [6195](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L6195) | `fieldraid.fire(...)` | Fires `FieldRaidRequest` (raid start, graze, smith job) safely. |
@@ -367,8 +367,8 @@ Primary CowHub script containing autofarm engines, mining, dodging, auction scan
 | [7236](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7236) | `fieldraid.smithReturn()` | Teleports back to where the shift started. |
 | [7245](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7245) | `fieldraid.smithTick()` | Walk-by shift dialogue: Status → Accept → Hammer (anvil) → Turn in; never walks the cow. |
 | [7342](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7342) | `fieldraid.smithStart()` | Starts the tokened smith loop. |
-| [17191](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L17191) | `fieldraid.setFlag(flag, on)` | Sets a Rayfield flag (debug handle). |
-| [17195](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L17195) | `fieldraid.setOption(label, on)` | Sets one Raid Options dropdown entry (debug handle). |
+| [17207](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L17207) | `fieldraid.setFlag(flag, on)` | Sets a Rayfield flag (debug handle). |
+| [17211](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L17211) | `fieldraid.setOption(label, on)` | Sets one Raid Options dropdown entry (debug handle). |
 
 ---
 

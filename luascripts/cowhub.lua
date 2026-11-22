@@ -1,4 +1,4 @@
--- Cow Hub [ae4ff60] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [2592384] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -129,7 +129,7 @@ do
 end
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [ae4ff60]",
+    Name = "Cow Hub [2592384]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -14323,6 +14323,22 @@ function rafting.initClientListener()
             rafting.telemetryEvent(eventName, payload)
             if eventName == "RaftingSnapshot" then
                 rafting.handleSnapshot(payload)
+            elseif eventName == "RaftingPatch" then
+                -- Server streams deltas after one full RaftingSnapshot; merge onto a copy, then reuse the snapshot path
+                if type(payload) == "table" then
+                    local base = rafting.currentSnapshot
+                    local merged = {}
+                    if base and base.Id == payload.Id then
+                        for k, v in pairs(base) do merged[k] = v end
+                    end
+                    for k, v in pairs(payload) do
+                        if k ~= "Removed" then merged[k] = v end
+                    end
+                    if type(payload.Removed) == "table" then
+                        for _, k in ipairs(payload.Removed) do merged[k] = nil end
+                    end
+                    rafting.handleSnapshot(merged)
+                end
             elseif eventName == "RaftingBoard" then
                 rafting.handleBoarding(payload)
             elseif eventName == "RaftingEnded" then
