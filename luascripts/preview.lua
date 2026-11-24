@@ -1,4 +1,4 @@
--- Cow Hub [eccc316] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [0d111a1] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -129,7 +129,7 @@ do
 end
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [eccc316]",
+    Name = "Cow Hub [0d111a1]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -690,7 +690,7 @@ local fieldraid = {
     run = nil, runStartedAt = 0, level = 0, bagCalories = 0,
     grazeRun = nil, leaving = false, chestBusy = false,
     lastTick = 0, lastScan = 0, lastWheatSeen = 0, lastStartTry = 0, startTries = 0, returnedAt = 0,
-    mobs = {}, wheat = {}, chestPrompts = {}, chestTried = setmetatable({}, { __mode = "k" }), lastPromptScan = 0,
+    mobs = {}, wheat = {}, chestPrompts = {}, chestTried = setmetatable({}, { __mode = "k" }), chestFires = setmetatable({}, { __mode = "k" }), lastPromptScan = 0,
     path = nil, pathTarget = nil, pathIndex = 0, pathAt = 0, pathBusy = false, lastMove = 0,
     -- GateExit ("Bank and leave") relative to the arena's FieldSoil (geometry dump FR987d2b...)
     MOB_RANGE = 9,          -- bite reach toward raid mobs (client TargetDistance 9)
@@ -6822,19 +6822,30 @@ function fieldraid.firePrompt(prompt)
 end
 
 -- Walk to and open the nearest earned chest (prompt enabled for us, model not Open). Whole field width,
--- up to CHEST_BACK studs behind the cow; retried every 6 s until the chest model reports Open.
-local CHEST_RANGE, CHEST_BACK = 600, 25
+-- up to CHEST_BACK studs behind the cow (CHEST_BACK_TRIED once fired at: the server drops some fires).
+-- Re-fired every CHEST_REFIRE s, holding still meanwhile; after CHEST_FAST fires every 6 s; CHEST_MAX gives up.
+local CHEST_RANGE, CHEST_BACK, CHEST_BACK_TRIED = 600, 25, 150
+local CHEST_REFIRE, CHEST_FAST, CHEST_MAX = 1.2, 5, 8
 function fieldraid.tryChest(now, rootPos)
     if not fieldraid.lootChests then return false end
     local best, bestPos, bestD = nil, nil, CHEST_RANGE
     for _, prompt in ipairs(fieldraid.chestPrompts) do
         local owner = prompt:GetAttribute("RaidChestOwner")
-        if prompt.Parent and prompt.Enabled and (owner == nil or owner == plr.UserId)
-            and now - (fieldraid.chestTried[prompt] or 0) > 6 then
-            local model = prompt:FindFirstAncestorOfClass("Model")
-            local pos = not (model and model:GetAttribute("Open") == true) and fieldraid.promptPos(prompt)
+        local fires = fieldraid.chestFires[prompt] or 0
+        local model = prompt:FindFirstAncestorOfClass("Model")
+        if prompt.Parent and prompt.Enabled and (owner == nil or owner == plr.UserId) and fires < CHEST_MAX
+            and not (model and model:GetAttribute("Open") == true) then
+            local since = now - (fieldraid.chestTried[prompt] or 0)
+            if since <= CHEST_REFIRE then
+                -- Fired just now: stay put (no dodge/blitz) until ChestOpening sets chestBusy or the refire
+                fieldraid.stopWalk()
+                return true
+            end
+            local pos = since > (fires < CHEST_FAST and CHEST_REFIRE or 6) and fieldraid.promptPos(prompt)
             local d = pos and (pos - rootPos).Magnitude or math.huge
-            if d < bestD and pos.Z <= rootPos.Z + CHEST_BACK then best, bestPos, bestD = prompt, pos, d end
+            if d < bestD and pos.Z <= rootPos.Z + (fires > 0 and CHEST_BACK_TRIED or CHEST_BACK) then
+                best, bestPos, bestD = prompt, pos, d
+            end
         end
     end
     if not best then return false end
@@ -6848,6 +6859,7 @@ function fieldraid.tryChest(now, rootPos)
     else
         fieldraid.stopWalk()
         fieldraid.chestTried[best] = now
+        fieldraid.chestFires[best] = (fieldraid.chestFires[best] or 0) + 1
         -- End the raid graze first (FieldRaidGraze sends GrazeStop on release); ensureGraze restarts it after
         local run = fieldraid.runId()
         if run and fieldraid.grazeRun == run then
