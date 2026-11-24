@@ -1,4 +1,4 @@
--- Cow Hub [8694d87] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [43ac5f6] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -129,7 +129,7 @@ do
 end
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [8694d87]",
+    Name = "Cow Hub [43ac5f6]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -6603,8 +6603,13 @@ function fieldraid.quickLeave()
     if run then fieldraid.fire("QuickLeave", run) end
 end
 
+-- Opening a chest: bites (auto-chomp, mob aura, raid farm) would turn the cow off the prompt and keep it grazing
+function fieldraid.chestNear(now)
+    return now - (fieldraid.chestEngageAt or 0) < 0.5
+end
+
 function fieldraid.chompWheat(now, rootPos)
-    if not fieldraid.inRaid() or fieldraid.chestBusy then return false end
+    if not fieldraid.inRaid() or fieldraid.chestBusy or fieldraid.chestNear(now) then return false end
     fieldraid.scan(now)
     local part, dist = fieldraid.findWheat(rootPos, now)
     if not part or dist > chomp.REACH then return false end
@@ -6617,7 +6622,7 @@ end
 
 -- Mob bite: same wire; the client only targets a raid mob it faces (dot >= 0.9), so face it first
 function fieldraid.biteMob(part, now)
-    if fieldraid.chestBusy then return false end
+    if fieldraid.chestBusy or fieldraid.chestNear(now) then return false end
     if farm.lastChompedMob == part and now - farm.mobChompCooldown <= farm.mobAuraDelay then return false end
     if not dodge.isUnderground and not dodge.isDodging then
         fieldraid.face(part.Position)
@@ -6833,12 +6838,22 @@ function fieldraid.tryChest(now, rootPos)
         end
     end
     if not best then return false end
+    if bestD <= 20 then
+        fieldraid.chestEngageAt = now
+        fieldraid.face(bestPos)
+    end
     if bestD > math.max(4, best.MaxActivationDistance - 2) then
         fieldraid.walkTo(bestPos, now, true)
         fieldraid.setStatus(string.format("Walking to harvest chest (%d studs)", math.floor(bestD)))
     else
         fieldraid.stopWalk()
         fieldraid.chestTried[best] = now
+        -- End the raid graze first (FieldRaidGraze sends GrazeStop on release); ensureGraze restarts it after
+        local run = fieldraid.runId()
+        if run and fieldraid.grazeRun == run then
+            fieldraid.fire("GrazeStop", run)
+            fieldraid.grazeRun = nil
+        end
         fieldraid.firePrompt(best)
         fieldraid.setStatus("Opening harvest chest")
     end
@@ -7215,7 +7230,7 @@ function fieldraid.xpPick(rootPos, now, nearZ, farZ, allowFarmers)
 end
 
 function fieldraid.biteFood(part, now)
-    if fieldraid.chestBusy or now - chomp.lastFire < chomp.getInterval(part) then return end
+    if fieldraid.chestBusy or fieldraid.chestNear(now) or now - chomp.lastFire < chomp.getInterval(part) then return end
     fieldraid.ensureGraze()
     fieldraid.face(part.Position)
     if chomp.send(part:GetAttribute("NodeId"), part, now) then fieldraid.xpSent(part) end
@@ -8276,7 +8291,9 @@ function updateHeartbeatConnection()
                 end
 
                 -- 3. Raycast Grass Chomp Logic (Yields to Mobs & Dodging)
-                if farm.autoChomp and chomp.mode == "Natural" then
+                if farm.autoChomp and chomp.mode == "Natural" and fieldraid.chestNear(now) then
+                    chomp.release() -- let go of the graze key while a raid chest is being opened
+                elseif farm.autoChomp and chomp.mode == "Natural" then
                     -- Natural: the game's InputController targets and paces; we keep E engaged
                     if not (manatite and manatite.auto) and not (mithril and mithril.auto) and not dodge.isUnderground then
                         chomp.tickNatural(now)
