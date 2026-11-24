@@ -1,4 +1,4 @@
--- Cow Hub [3faec99] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [ed29b87] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -129,7 +129,7 @@ do
 end
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [3faec99]",
+    Name = "Cow Hub [ed29b87]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -7630,7 +7630,11 @@ function fieldraid.smithReach(pos, range, label)
     local d = (pos - root.Position).Magnitude
     if d <= range then return true end
     if s.teleport then
-        s.returnCF = s.returnCF or root.CFrame
+        -- One hop per 4 s: the smith walks forge <-> anvil, chasing him every tick pins the cow in place
+        local t = os.clock()
+        if t - (s.lastTp or 0) < 4 then return false end
+        s.lastTp = t
+        if not s.returnCF then s.returnCF, s.progressAt = root.CFrame, t end
         local flat = Vector3.new(root.Position.X - pos.X, 0, root.Position.Z - pos.Z)
         local dir = flat.Magnitude > 0.1 and flat.Unit or Vector3.new(0, 0, 1)
         local stand = pos + dir * math.max(2.5, range - 3) + Vector3.new(0, 3, 0)
@@ -7685,7 +7689,17 @@ function fieldraid.smithTick()
     local dHead = head and (head.Position - pos).Magnitude or math.huge
     local dAnvil = (anvilPos - pos).Magnitude
     local atAnvil = plr:GetAttribute("SmithJobAtAnvil")
-    local fresh = s.statusAt > 0 and now - s.statusAt < 6 and s.cycle == cycle
+    -- A "come back next Day" reply can omit Cycle: accept it as this cycle's
+    local fresh = s.statusAt > 0 and now - s.statusAt < 6 and (s.cycle == nil or s.cycle == cycle)
+    -- Teleported but the shift isn't moving (no state / anvil change in 20 s): go back, skip this Day
+    local key = tostring(s.state) .. "|" .. tostring(atAnvil)
+    if key ~= s.progressKey then s.progressKey, s.progressAt = key, now end
+    if s.returnCF and now - (s.progressAt or now) > 20 then
+        s.doneCycle = cycle
+        fieldraid.smithReturn()
+        fieldraid.smithStatus("No shift progress in 20 s: skipped this Day (" .. tostring(s.message or s.state) .. ")")
+        return
+    end
     -- Sheet turned in and no shift left: done for this Day, teleport straight back
     if s.claimedCycle == cycle and atAnvil ~= "Ready" and atAnvil ~= "Active" and now - s.lastClaim > 2 then
         s.doneCycle = cycle
@@ -7754,8 +7768,12 @@ function fieldraid.smithTick()
             fieldraid.fire("SmithJobAccept", cycle)
             fieldraid.smithStatus("Taking the shift")
             s.statusAt = 0
-        elseif s.state == "Paid" then
+        elseif s.state == "Paid" or (s.state ~= "Available" and s.state ~= "Active" and s.state ~= "Ready"
+            and (s.message or plr:GetAttribute("SmithJobCycle") == cycle)) then
+            -- Already paid / no shift today: done for this Day, back to where the cow was
             s.doneCycle = cycle
+            fieldraid.smithReturn()
+            fieldraid.smithStatus("Done for this Day" .. (s.message and (": " .. tostring(s.message)) or ""))
         elseif s.message then
             fieldraid.smithStatus("Blacksmith: " .. tostring(s.message))
         end
