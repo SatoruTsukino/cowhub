@@ -1,4 +1,4 @@
--- Cow Hub [3cde879] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [de46123] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -129,7 +129,7 @@ do
 end
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [3cde879]",
+    Name = "Cow Hub [de46123]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
@@ -16313,7 +16313,6 @@ local dailies = {
     furniture = true,
     fisherman = true,
     slyMoon = true,
-    openBoxes = false,           -- reward crates are the player's to open; never automatic unless enabled
     fishUntilReady = true,
     autoRaft = true,
     fishOwned = false,           -- dailies switched auto-fish on
@@ -16329,7 +16328,6 @@ local dailies = {
     status = "Idle",
     statusCard = nil,
     QUEST_REMOTES = { Fisherman = "FishermanQuestRequest", SlyMoon = "RaftingRequest" },
-    BOXES = { FishermanRewardBox = "OpenFishermanBox", SlyMoonRewardBox = "OpenSlyMoonBox" },
     TALK_RANGE = 8,
     PAUSE_FILE = "DailiesPaused.json",
     -- Sly Moon daily counts Lv2-4 chests (RaftingDailyRules MinLevel 2, MaxLevel 4). Levels are the server's
@@ -16742,13 +16740,6 @@ function dailies.goFishingSpot()
     end
 end
 
-function dailies.boxesOwned(profile)
-    local mats = profile.Materials or {}
-    local n = 0
-    for boxId in pairs(dailies.BOXES) do n += tonumber(mats[boxId]) or 0 end
-    return n
-end
-
 -- Anything for the queue to do right now?
 function dailies.hasWork(snap, today)
     local p = snap.Profile or {}
@@ -16771,7 +16762,6 @@ function dailies.hasWork(snap, today)
         if focused and dailies.autoRaft and type(rq) == "table" and rq.State == "Active"
             and dailies.raftAttemptsLeft(rq.Day) and dailies.raftSiteSelected() then return true end
     end
-    if dailies.openBoxes and dailies.boxesOwned(p) > 0 then return true end
     return false
 end
 
@@ -16825,16 +16815,6 @@ function dailies.tick()
                 dailies.claimQuest("Fisherman", fq)
             elseif id == "SlyMoon" and dailies.slyMoon and type(rq) == "table" then
                 dailies.claimQuest("SlyMoon", rq)
-            end
-        end
-        if dailies.enabled and dailies.openBoxes then
-            local mats = profile.Materials or {}
-            for boxId, action in pairs(dailies.BOXES) do
-                for _ = 1, math.min(tonumber(mats[boxId]) or 0, 10) do
-                    if not dailies.enabled then break end
-                    dailies.fire("CraftRequest", { Action = action })
-                    task.wait(2)
-                end
             end
         end
     end
@@ -16897,6 +16877,110 @@ function dailies.start()
 end
 
 -- ==========================
+-- LUCKY CRATE OPENER: opens the selected crates only while Lucky Skies AND Barnyard Bonus are both
+-- active (crate rolls use luck). Own loop, not the daily queue: waiting for luck must never hold farms paused.
+--   Lucky Skies:    LuckySkiesRules.IsActive(serverTime)
+--   Barnyard Bonus: state.Runtime.CountyFair.BoostEndsAt > serverTime
+--   Open:           CraftRequest:FireServer({ Action = <action> }) (CraftingController:_send)
+-- ==========================
+local luckyCrates = {
+    enabled = false,
+    running = false,
+    selected = {},               -- crate label -> true
+    opened = 0,
+    status = "Idle",
+    statusCard = nil,
+    OPEN_DELAY = 1.5,            -- game: 0.5 s action cooldown, up to 3 s for the result
+    CRATES = {
+        { label = "Halloween Crate", id = "HalloweenCrate", action = "OpenHalloweenCrate" },
+        { label = "Blacksmith Crate", id = "BlacksmithCrate", action = "OpenBlacksmithCrate" },
+        { label = "Sly Moon Box", id = "SlyMoonRewardBox", action = "OpenSlyMoonBox" },
+        { label = "Fisherman Box", id = "FishermanRewardBox", action = "OpenFishermanBox" },
+    },
+}
+
+function luckyCrates.setStatus(text)
+    if luckyCrates.status == text then return end
+    luckyCrates.status = text
+    if luckyCrates.statusCard then
+        pcall(function()
+            if luckyCrates.statusCard.SetTitle then
+                luckyCrates.statusCard:Set(text)
+            else
+                luckyCrates.statusCard:Set({ Title = "Lucky Crates", Content = text })
+            end
+        end)
+    end
+end
+
+function luckyCrates.count(mats, id)
+    local c = mats[id]
+    if type(c) == "table" then return tonumber(c.Quantity or c.Count) or 0 end
+    return tonumber(c) or 0
+end
+
+-- true, nil when both boosts are on; else false plus a reason for the status line
+function luckyCrates.fullLuck(state)
+    local now = workspace:GetServerTimeNow()
+    local fair = state.Runtime and state.Runtime.CountyFair
+    local barnyard = type(fair) == "table" and (tonumber(fair.BoostEndsAt) or 0) > now
+    if luckyCrates.luckyRules == nil then
+        local ok, mod = pcall(function() return require(cowGame.Shared.LuckySkiesRules) end)
+        luckyCrates.luckyRules = ok and type(mod) == "table" and mod or false
+    end
+    local rules = luckyCrates.luckyRules
+    local okL, lucky = pcall(function() return rules and rules.IsActive(now) end)
+    lucky = okL and lucky == true
+    if lucky and barnyard then return true end
+    return false, "Lucky Skies " .. (lucky and "on" or "off") .. ", Barnyard Bonus " .. (barnyard and "on" or "off")
+end
+
+function luckyCrates.tick()
+    if not (cosmetics.getProfile() and cosmetics.profileStore) then
+        luckyCrates.setStatus("Waiting: game store not found")
+        return 5
+    end
+    local ok, state = pcall(function() return cosmetics.profileStore:GetState() end)
+    if not (ok and type(state) == "table" and type(state.Profile) == "table") then return 5 end
+    local mats = state.Profile.Materials or {}
+    local pick, total = nil, 0
+    for _, c in ipairs(luckyCrates.CRATES) do
+        if luckyCrates.selected[c.label] then
+            local n = luckyCrates.count(mats, c.id)
+            total += n
+            if n > 0 and not pick then pick = c end
+        end
+    end
+    if not pick then
+        luckyCrates.setStatus(string.format("No selected crates owned · opened %d", luckyCrates.opened))
+        return 10
+    end
+    local full, why = luckyCrates.fullLuck(state)
+    if not full then
+        luckyCrates.setStatus(string.format("Waiting: %s · %d crate(s)", why, total))
+        return 1
+    end
+    dailies.fire("CraftRequest", { Action = pick.action })
+    luckyCrates.opened += 1
+    luckyCrates.setStatus(string.format("Opened %s · %d this session · %d left", pick.label, luckyCrates.opened, total - 1))
+    return luckyCrates.OPEN_DELAY
+end
+
+function luckyCrates.start()
+    if luckyCrates.running then return end
+    luckyCrates.running = true
+    hub.spawn(function()
+        while luckyCrates.enabled and _G.CowHubLoaded do
+            local ok, wait = pcall(luckyCrates.tick)
+            if not ok then luckyCrates.setStatus("Error: " .. tostring(wait)) wait = 5 end
+            task.wait(wait)
+        end
+        luckyCrates.running = false
+        luckyCrates.setStatus("Idle")
+    end)
+end
+
+-- ==========================
 -- UI SETUP: Dailies Tab
 -- ==========================
 do
@@ -16929,7 +17013,6 @@ do
         { label = "Auto-Fish Until Fisherman Ready", default = true, fn = function(Value) dailies.fishUntilReady = Value end },
         { label = "Sly Moon Daily", default = true, fn = function(Value) dailies.slyMoon = Value end },
         { label = "Auto-Raft Sly Moon Daily", default = true, fn = function(Value) dailies.autoRaft = Value end },
-        { label = "Open Quest Crates (manual by default)", default = false, fn = function(Value) dailies.openBoxes = Value end },
     })
 
     DailiesTab:CreateDropdown({
@@ -16953,6 +17036,31 @@ do
                 dailies.enabled = was
                 if not ok then dailies.setStatus("Error: " .. tostring(err)) end
             end)
+        end,
+    })
+
+    DailiesTab:CreateSection({ Name = "Lucky Crate Opener" })
+
+    if DailiesTab.CreateText then
+        pcall(function() luckyCrates.statusCard = DailiesTab:CreateText({ name = "Lucky Crates", text = luckyCrates.status }) end)
+    end
+    if not luckyCrates.statusCard and DailiesTab.CreateParagraph then
+        pcall(function() luckyCrates.statusCard = DailiesTab:CreateParagraph({ Title = "Lucky Crates", Content = luckyCrates.status }) end)
+    end
+
+    local crateOptions = {}
+    for _, c in ipairs(luckyCrates.CRATES) do
+        table.insert(crateOptions, { label = c.label, default = false, fn = function(Value) luckyCrates.selected[c.label] = Value or nil end })
+    end
+    ui.optionDropdown(DailiesTab, "Crates to Open", "Dropdown_LuckyCrates", crateOptions)
+
+    DailiesTab:CreateToggle({
+        Name = "Auto Open Crates (Lucky Skies + Barnyard Bonus only)",
+        CurrentValue = false,
+        Flag = "Toggle_LuckyCrates",
+        Callback = function(Value)
+            luckyCrates.enabled = Value
+            if Value then luckyCrates.start() end
         end,
     })
 end

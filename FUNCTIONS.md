@@ -367,8 +367,8 @@ Primary CowHub script containing autofarm engines, mining, dodging, auction scan
 | [7660](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7660) | `fieldraid.smithReturn()` | Teleports back to where the shift started. |
 | [7669](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7669) | `fieldraid.smithTick()` | Walk-by shift dialogue: Status → Accept → Hammer (anvil) → Turn in; never walks the cow. |
 | [7798](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L7798) | `fieldraid.smithStart()` | Starts the tokened smith loop. |
-| [17675](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L17675) | `fieldraid.setFlag(flag, on)` | Sets a Rayfield flag (debug handle). |
-| [17679](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L17679) | `fieldraid.setOption(label, on)` | Sets one Raid Options dropdown entry (debug handle). |
+| [17783](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L17783) | `fieldraid.setFlag(flag, on)` | Sets a Rayfield flag (debug handle). |
+| [17787](file:///Users/jsph/cowhub/luascripts/cowhub.lua#L17787) | `fieldraid.setOption(label, on)` | Sets one Raid Options dropdown entry (debug handle). |
 
 ---
 
