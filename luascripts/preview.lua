@@ -1,4 +1,4 @@
--- Cow Hub [4e01246] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [f83a165] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -129,7 +129,7 @@ do
 end
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [4e01246]",
+    Name = "Cow Hub [f83a165]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -6926,14 +6926,21 @@ function fieldraid.meadow(now, rootPos)
         fieldraid.setStatus("Harvest meadow: collecting gold chest")
         return
     end
-    if now - (fieldraid.lastMeadowScan or 0) > 2 then
+    -- The gold chest streams in after arrival: rescan fast until it's found, and never take the gate
+    -- before it is open (or 10 s passed with no chest)
+    local room = plr:GetAttribute("CowFieldRaidRewardRoom")
+    if fieldraid.meadowRoom ~= room then
+        fieldraid.meadowRoom, fieldraid.meadowAt, fieldraid.meadowOpened = room, now, false
+    end
+    if now - (fieldraid.lastMeadowScan or 0) > (fieldraid.meadowChest and 2 or 0.5) then
         fieldraid.lastMeadowScan = now
         fieldraid.meadowChest, fieldraid.homePrompt = nil, nil
         local cowWorld = workspace:FindFirstChild("CowWorld")
         local dynamic = cowWorld and cowWorld:FindFirstChild("Dynamic")
         if dynamic then
             for _, d in ipairs(dynamic:GetDescendants()) do
-                if d:IsA("ProximityPrompt") and d.Name == "OpenHarvestChest" and d:GetAttribute("RaidChestOwner") == plr.UserId then
+                local model = d:IsA("ProximityPrompt") and d.Name == "OpenHarvestChest" and d:FindFirstAncestorOfClass("Model")
+                if model and (d:GetAttribute("RaidChestOwner") or model:GetAttribute("RaidChestOwner")) == plr.UserId then
                     fieldraid.meadowChest = d
                 end
             end
@@ -6949,9 +6956,13 @@ function fieldraid.meadow(now, rootPos)
     local chest = fieldraid.meadowChest
     local chestModel = chest and chest:FindFirstAncestorOfClass("Model")
     local chestUnopened = chest and chest.Parent and chest.Enabled and not (chestModel and chestModel:GetAttribute("Open") == true)
+    if chest and chest.Parent and not chestUnopened then fieldraid.meadowOpened = true end
     local target, label = nil, nil
     if chestUnopened then
         target, label = chest, "gold chest"
+    elseif not fieldraid.meadowOpened and now - fieldraid.meadowAt < 10 then
+        fieldraid.setStatus("Harvest meadow: waiting for the gold chest")
+        return
     elseif fieldraid.homePrompt and fieldraid.homePrompt.Parent and fieldraid.homePrompt.Enabled then
         target, label = fieldraid.homePrompt, "Meadow gate"
     end
