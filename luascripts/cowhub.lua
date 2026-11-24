@@ -1,4 +1,4 @@
--- Cow Hub [f83a165] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [3cde879] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -129,7 +129,7 @@ do
 end
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [f83a165]",
+    Name = "Cow Hub [3cde879]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "rose",
