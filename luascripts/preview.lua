@@ -1,4 +1,4 @@
--- Cow Hub [2de909e] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
+-- Cow Hub [fea5efa] | Rayfield Gen2 Autofarm, Manatite Farm, Raycast Grass Chomper, Auto-Fishing & Alive-Only Priority Mob Aura, Field Raid Autofarm & Anvil Shift
 -- Optimized for high framerates, zero-allocation math, memory safety, and executor stability.
 
 if not game:IsLoaded() then
@@ -129,7 +129,7 @@ do
 end
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cow Hub [2de909e]",
+    Name = "Cow Hub [fea5efa]",
     Subtitle = "by Gemini & I",
     showIconOnly = true,
     theme = "frost",
@@ -660,12 +660,25 @@ local caravan = {
 local fieldraid = {
     auto = false,           -- Auto Field Raid (farm the run, bank, restart)
     autoStart = true,       -- start the next solo raid from the camp sign-up
-    suppliesOn = false,     -- fire SUPPLIES once per run (FieldRaidRequest "UseSupply")
-    SUPPLIES = { "PotOfGreed" }, -- shortcut: only PotOfGreed's call was captured; add PotOfLuck/WindCharge ids when seen
+    suppliesOn = false,     -- use the one packed supply per run (FieldRaidRequest "UseSupply")
+    -- FieldRaidLoadout.SupplyOrder; luck pots map to their duration (Greed 2x 180 s, Luck 1.5x 300 s)
+    SUPPLY_ORDER = { "PotOfGreed", "PotOfLuck", "WindCharge", "HeartCanister", "ThermiteCharge", "SpareCladding" },
+    LUCK_SECONDS = { PotOfGreed = 180, PotOfLuck = 300 },
+    LUCK_LEVEL = 8,         -- fire a luck pot on reaching this field: covers the F9 tier-3 chest and the meadow gold chest
+    charges = nil,          -- State.Loadout.Charges (1 = unused); only the packed supply is listed
+    supplyRun = nil, supplyTries = 0, supplyAt = 0, luckUntil = nil,
+    lootChests = true,      -- detour to and open every owned harvest chest
+    CHEST_LANE_X = -451.95, -- plot chests sit at this X relative to the Planting center (arena dump 2026-11-18: F1/F3/F5)
+    killOgre = false,       -- hunt the Field Ogre in field 10
+    OGRE_GIVEUP = 45,       -- seconds without an Ogre HP change before giving up the chase
+    boss = { hp = 0, max = 0, pos = nil, seenHp = nil, seenAt = 0 },
+    CAMP_POS = Vector3.new(-409, 706, -242), -- Field Raid sign-up counter (probes/menu.txt); gathering zone streams in later
+    lastCampTp = 0,
     maxLevel = 10,          -- don't walk deeper than this field
     maxMinutes = 0,         -- max run time in minutes before heading to the River ferry (0 = off)
     pushDeeper = true,      -- deeper fields grow richer wheat: keep walking in, bite only what is in reach
     focus = "Grazing",      -- "Grazing": farm the max field forever | "Loot Runs": every chest to the last plot, bank, restart
+                            -- | "XP Focus": field_raid_xp.lua Rush & Reset (blitz to F10, best XP/s targets, marginal exit)
     chestLevels = {},       -- field levels whose chest this run opened
     LAST_CHEST_LEVEL = 9,   -- Planting.ChestPlots are on fields 1,3,5,7,9
     -- Exit prompts relative to the run's Planting center: arenas are placed at different X per run
@@ -2425,6 +2438,7 @@ do
             end
             if p.NodeId ~= res.NodeId then return end
             chomp.pending[res.RequestId] = nil
+            fieldraid.xpResult(p.NodeId, res.Accepted == true)
             local now = os.clock()
             chomp.rtt = chomp.rtt * 0.8 + math.clamp(now - p.SentAt, 0, 2) * 0.2
             local reason = res.Reason
@@ -6234,7 +6248,11 @@ function fieldraid.scan(now, force)
         if part then
             local kind = part:GetAttribute("CowBiteTargetKind")
             if kind == "RaidMob" then
-                if fieldraid.mobAlive(part) then mobs[#mobs + 1] = part end
+                if fieldraid.mobAlive(part) then
+                    mobs[#mobs + 1] = part
+                elseif model.Name == "FieldOgre" then
+                    fieldraid.boss.hp = 0 -- dead Ogre still in view
+                end
             elseif kind == "RaidFood" and part:GetAttribute("Available") == true then
                 wheat[#wheat + 1] = part
             end
@@ -6513,9 +6531,12 @@ function fieldraid.face(pos)
     if not root then return end
     local rp = root.Position
     local dx, dz = pos.X - rp.X, pos.Z - rp.Z
-    if dx * dx + dz * dz > 0.01 then
-        root.CFrame = CFrame.lookAt(rp, Vector3.new(pos.X, rp.Y, pos.Z))
-    end
+    local len = math.sqrt(dx * dx + dz * dz)
+    if len <= 0.1 then return end
+    -- Already inside the bite cone (dot >= 0.9): don't snap the root, it stutters the walk
+    local look = root.CFrame.LookVector
+    if (look.X * dx + look.Z * dz) / len >= 0.95 then return end
+    root.CFrame = CFrame.lookAt(rp, Vector3.new(pos.X, rp.Y, pos.Z))
 end
 
 -- The server pairs raid bites with an active raid graze (FieldRaidGraze.Hold sends GrazeStart once per run)
@@ -6527,12 +6548,52 @@ function fieldraid.ensureGraze()
     end
 end
 
--- Once per run; the server rejects ids we do not own, so a missing supply is harmless
-function fieldraid.useSupplies(run)
-    if not fieldraid.suppliesOn or fieldraid.suppliesRun == run then return end
-    fieldraid.suppliesRun = run
-    for _, id in ipairs(fieldraid.SUPPLIES) do
-        fieldraid.fire("UseSupply", { Run = run, Id = id })
+-- The one packed supply (FieldRaidLoadout.PackedSupplies holds one): id, unused?. nil until State.Loadout arrives.
+function fieldraid.packedSupply()
+    local charges = fieldraid.charges
+    if type(charges) ~= "table" then return nil, nil end
+    for _, id in ipairs(fieldraid.SUPPLY_ORDER) do
+        if charges[id] ~= nil then return id, charges[id] == 1 end
+    end
+    return nil, nil
+end
+
+-- Fire the packed supply at its moment: luck pot on reaching LUCK_LEVEL, Wind Charge at once, heal/armor
+-- supplies at <= 40% hearts. Resent every 3 s until State reports the charge spent (max 5 tries).
+-- Without Loadout data both luck pots are tried once at LUCK_LEVEL (the server rejects the unpacked one).
+function fieldraid.useSupplies(run, now)
+    if not fieldraid.suppliesOn then return end
+    if fieldraid.supplyRun ~= run then
+        fieldraid.supplyRun, fieldraid.supplyTries, fieldraid.supplyAt, fieldraid.supplyDone = run, 0, 0, false
+    end
+    if fieldraid.supplyDone then return end
+    local id, ready = fieldraid.packedSupply()
+    if id and not ready then
+        fieldraid.supplyDone = true
+        return
+    end
+    if fieldraid.supplyTries >= 5 or now - fieldraid.supplyAt < 3 then return end
+    local hearts = tonumber(plr:GetAttribute("Hearts")) or 0
+    local maxHearts = tonumber(plr:GetAttribute("MaxHealth")) or 0
+    local ids
+    if not id then
+        if fieldraid.level < fieldraid.LUCK_LEVEL then return end
+        ids, fieldraid.supplyDone = { "PotOfGreed", "PotOfLuck" }, true
+    elseif fieldraid.LUCK_SECONDS[id] then
+        if fieldraid.level < fieldraid.LUCK_LEVEL then return end
+        ids = { id }
+    elseif id == "WindCharge" then
+        ids = { id }
+    else
+        if maxHearts <= 0 or hearts / maxHearts > 0.4 then return end
+        ids = { id }
+    end
+    fieldraid.supplyTries += 1
+    fieldraid.supplyAt = now
+    for _, sid in ipairs(ids) do
+        fieldraid.fire("UseSupply", { Run = run, Id = sid })
+        local secs = fieldraid.LUCK_SECONDS[sid]
+        if secs and not fieldraid.luckUntil then fieldraid.luckUntil = now + secs end
     end
 end
 
@@ -6550,7 +6611,7 @@ function fieldraid.chompWheat(now, rootPos)
     fieldraid.ensureGraze()
     if now - chomp.lastFire < chomp.getInterval(part) then return true end
     fieldraid.face(part.Position)
-    chomp.send(part:GetAttribute("NodeId"), part, now)
+    if chomp.send(part:GetAttribute("NodeId"), part, now) then fieldraid.xpSent(part) end
     return true
 end
 
@@ -6563,6 +6624,7 @@ function fieldraid.biteMob(part, now)
     end
     fieldraid.ensureGraze()
     if chomp.send(part:GetAttribute("NodeId"), part, now) then
+        fieldraid.xpSent(part)
         farm.lastChompedMob = part
         farm.mobChompCooldown = now
         chomp.onMobAttack(now)
@@ -6577,6 +6639,11 @@ function fieldraid.forward(target, rootPos)
     local limit = fieldraid.backLimit(rootPos)
     if target.Z <= limit then return target end
     return Vector3.new(target.X, target.Y, math.max(rootPos.Z, math.min(limit, target.Z)))
+end
+
+-- Deepest field to walk to: XP Focus always runs to field 10 (Ogre's Acre)
+function fieldraid.maxField()
+    return fieldraid.focus == "XP Focus" and 10 or fieldraid.maxLevel
 end
 
 -- Z span of a field level (FieldRaidLayout.Band): depth runs from the planting's +Z edge toward -Z.
@@ -6602,38 +6669,47 @@ function fieldraid.backLimit(rootPos)
         return math.max(rootPos.Z + fieldraid.BACK_SLACK, fpos.Z + 12)
     end
     local entry = fieldraid.farmEntryZ
-    if entry and fieldraid.level >= fieldraid.maxLevel then
+    if entry and fieldraid.level >= fieldraid.maxField() then
         return math.max(rootPos.Z + fieldraid.BACK_SLACK, entry - 8)
     end
     return rootPos.Z + fieldraid.BACK_SLACK
 end
 
--- Walk with PathfindingService (fences between fields); straight MoveTo while a path computes or fails
-function fieldraid.walkTo(target, now)
+-- Open field: direct MoveTo (smooth). After a snag (fence, rail, cart) jump + sidestep, then follow a
+-- PathfindingService path for PATH_SECONDS. `free` skips the forward-only clamp (chests, the Ogre).
+local PATH_SECONDS = 6
+function fieldraid.walkTo(target, now, free)
     if not humanoid or not root then return end
     local here = root.Position
-    target = fieldraid.forward(target, here)
-    -- Stuck (fence, rail, cart): drop the path, jump and sidestep before re-pathing
+    if not free then target = fieldraid.forward(target, here) end
     if not fieldraid.stuckPos or (here - fieldraid.stuckPos).Magnitude > 2 then
         fieldraid.stuckPos, fieldraid.stuckAt = here, now
     elseif now - fieldraid.stuckAt > 2.5 then
         fieldraid.stuckPos, fieldraid.stuckAt = here, now
         fieldraid.path, fieldraid.pathTarget, fieldraid.pathAt = nil, nil, 0
+        fieldraid.pathUntil = now + 1.2 + PATH_SECONDS
         fieldraid.nudgeDir = -fieldraid.nudgeDir
         fieldraid.nudgeUntil = now + 1.2
         humanoid.Jump = true
     end
     if now < fieldraid.nudgeUntil then
-        humanoid:MoveTo(here + Vector3.new(12 * fieldraid.nudgeDir, 0, fieldraid.leaving and 4 or -4))
-        fieldraid.lastMove = now
+        local dir = Vector3.new(target.X - here.X, 0, target.Z - here.Z)
+        local side = dir.Magnitude > 0.1 and Vector3.new(-dir.Z, 0, dir.X).Unit or Vector3.new(1, 0, 0)
+        fieldraid.moveGoal(here + side * (12 * fieldraid.nudgeDir), now)
         return
     end
-    if fieldraid.pathTarget and ((fieldraid.pathTarget - target).Magnitude > 12 or now - fieldraid.pathAt > 6) then
+    local usePath = now < (fieldraid.pathUntil or 0) or (fieldraid.leaving and fieldraid.exitVia == "gate")
+    if not usePath or (target - here).Magnitude < 30 then
+        fieldraid.path, fieldraid.pathTarget = nil, nil
+        fieldraid.moveGoal(target, now)
+        return
+    end
+    if fieldraid.pathTarget and ((fieldraid.pathTarget - target).Magnitude > 40 or now - fieldraid.pathAt > PATH_SECONDS) then
         fieldraid.path, fieldraid.pathTarget = nil, nil
     end
     if not fieldraid.path and not fieldraid.pathBusy and now - fieldraid.pathAt > 2 then
         fieldraid.pathBusy, fieldraid.pathAt = true, now
-        local from = root and root.Position
+        local from = here
         task.spawn(function()
             local ok, waypoints = pcall(function()
                 local path = PathfindingService:CreatePath({ AgentRadius = 2.5, AgentHeight = 5, AgentCanJump = true })
@@ -6651,25 +6727,34 @@ function fieldraid.walkTo(target, now)
     local path = fieldraid.path
     if path then
         local wp = path[fieldraid.pathIndex]
-        while wp and root and (Vector3.new(wp.Position.X, 0, wp.Position.Z) - Vector3.new(root.Position.X, 0, root.Position.Z)).Magnitude < 3 do
+        while wp and (Vector3.new(wp.Position.X, 0, wp.Position.Z) - Vector3.new(here.X, 0, here.Z)).Magnitude < 3 do
             fieldraid.pathIndex += 1
             wp = path[fieldraid.pathIndex]
         end
         if wp then
-            goal = fieldraid.forward(wp.Position, here)
+            goal = free and wp.Position or fieldraid.forward(wp.Position, here)
             if wp.Action == Enum.PathWaypointAction.Jump then humanoid.Jump = true end
         else
             fieldraid.path, fieldraid.pathTarget = nil, nil
         end
     end
-    if now - fieldraid.lastMove > 0.25 then
-        fieldraid.lastMove = now
-        humanoid:MoveTo(goal)
+    fieldraid.moveGoal(goal, now)
+end
+
+-- MoveTo only when the goal really moved (or every second, MoveTo times out at 8 s): steady heading
+function fieldraid.moveGoal(goal, now)
+    local last = fieldraid.lastGoal
+    -- lastMove == goalAt: no other MoveTo (dodge, meadow, start) redirected the cow since
+    if last and fieldraid.lastMove == fieldraid.goalAt and now - fieldraid.goalAt < 1 then
+        local moved = (last - goal).Magnitude
+        if moved < 1.5 or (now - fieldraid.goalAt < 0.15 and moved < 8) then return end
     end
+    fieldraid.lastGoal, fieldraid.lastMove, fieldraid.goalAt = goal, now, now
+    humanoid:MoveTo(goal)
 end
 
 function fieldraid.stopWalk()
-    fieldraid.path, fieldraid.pathTarget = nil, nil
+    fieldraid.path, fieldraid.pathTarget, fieldraid.lastGoal = nil, nil, nil
     if humanoid and root and fieldraid.lastMove > 0 then
         fieldraid.lastMove = 0
         humanoid:MoveTo(root.Position)
@@ -6695,9 +6780,9 @@ function fieldraid.arena()
     return best
 end
 
--- Chest + gate prompts of the private arena (rescanned every 4 s: they stream in as the cow moves)
+-- Chest + gate prompts of the private arena (rescanned every 1.5 s: they stream in as the cow moves)
 function fieldraid.prompts(now)
-    if now - fieldraid.lastPromptScan < 4 then return end
+    if now - fieldraid.lastPromptScan < 1.5 then return end
     fieldraid.lastPromptScan = now
     table.clear(fieldraid.chestPrompts)
     fieldraid.gatePrompt, fieldraid.ferryPrompt = nil, nil
@@ -6731,28 +6816,42 @@ function fieldraid.firePrompt(prompt)
     return false
 end
 
--- Walk to and open an earned chest (prompt enabled for us; the game closes the reveal itself)
+-- Walk to and open the nearest earned chest (prompt enabled for us, model not Open). Whole field width,
+-- up to CHEST_BACK studs behind the cow; retried every 6 s until the chest model reports Open.
+local CHEST_RANGE, CHEST_BACK = 600, 25
 function fieldraid.tryChest(now, rootPos)
+    if not fieldraid.lootChests then return false end
+    local best, bestPos, bestD = nil, nil, CHEST_RANGE
     for _, prompt in ipairs(fieldraid.chestPrompts) do
         local owner = prompt:GetAttribute("RaidChestOwner")
-        if prompt.Parent and prompt.Enabled and (owner == nil or owner == plr.UserId) then
-            local pos = fieldraid.promptPos(prompt)
+        if prompt.Parent and prompt.Enabled and (owner == nil or owner == plr.UserId)
+            and now - (fieldraid.chestTried[prompt] or 0) > 6 then
+            local model = prompt:FindFirstAncestorOfClass("Model")
+            local pos = not (model and model:GetAttribute("Open") == true) and fieldraid.promptPos(prompt)
             local d = pos and (pos - rootPos).Magnitude or math.huge
-            if d < (fieldraid.focus == "Loot Runs" and 260 or 90) and pos.Z <= rootPos.Z + 6 and now - (fieldraid.chestTried[prompt] or 0) > 6 then
-                if d > math.max(4, prompt.MaxActivationDistance - 2) then
-                    fieldraid.walkTo(pos, now)
-                    fieldraid.setStatus("Walking to harvest chest")
-                else
-                    fieldraid.stopWalk()
-                    fieldraid.chestTried[prompt] = now
-                    fieldraid.firePrompt(prompt)
-                    fieldraid.setStatus("Opening harvest chest")
-                end
-                return true
-            end
+            if d < bestD and pos.Z <= rootPos.Z + CHEST_BACK then best, bestPos, bestD = prompt, pos, d end
         end
     end
-    return false
+    if not best then return false end
+    if bestD > math.max(4, best.MaxActivationDistance - 2) then
+        fieldraid.walkTo(bestPos, now, true)
+        fieldraid.setStatus(string.format("Walking to harvest chest (%d studs)", math.floor(bestD)))
+    else
+        fieldraid.stopWalk()
+        fieldraid.chestTried[best] = now
+        fieldraid.firePrompt(best)
+        fieldraid.setStatus("Opening harvest chest")
+    end
+    return true
+end
+
+-- Plot chests line up on one lane (CHEST_LANE_X from the Planting center): X to steer for while chest
+-- plots remain ahead (fields 1-9), so they stream in and land in reach. nil = no lane.
+function fieldraid.chestLaneX()
+    if not fieldraid.lootChests or fieldraid.level > fieldraid.LAST_CHEST_LEVEL then return nil end
+    local planting = fieldraid.planting or PLANTING_FALLBACK
+    if type(planting) ~= "table" or typeof(planting.Frame) ~= "CFrame" then return nil end
+    return planting.Frame.Position.X + fieldraid.CHEST_LANE_X
 end
 
 function fieldraid.fmtCal(n)
@@ -6890,7 +6989,7 @@ function fieldraid.startRun(now, rootPos)
     local entry = camp and camp:FindFirstChild("Entry")
     local signup = entry and entry.Value
     if not signup or not signup:IsA("BasePart") then
-        fieldraid.setStatus("Go to the Field Raid camp (sign-up not loaded)")
+        if not fieldraid.campTeleport(now) then fieldraid.setStatus("Go to the Field Raid camp (sign-up not loaded)") end
         return
     end
     -- The server ignores "Solo" unless the cow stands in the green gathering zone: walk onto its center
@@ -6899,7 +6998,9 @@ function fieldraid.startRun(now, rootPos)
     local d = Vector3.new(off.X, 0, off.Z).Magnitude
     if d > 3 then
         if d > 250 then
-            fieldraid.setStatus(string.format("Go to the Field Raid camp (%d studs)", math.floor(d)))
+            if not fieldraid.campTeleport(now) then
+                fieldraid.setStatus(string.format("Go to the Field Raid camp (%d studs)", math.floor(d)))
+            end
             return
         end
         if d < 30 and humanoid then
@@ -6932,9 +7033,269 @@ function fieldraid.setSprint(on, now)
     if remote then pcall(remote.FireServer, remote, on) end
 end
 
-function fieldraid.travel(target, now)
+function fieldraid.travel(target, now, free)
     fieldraid.setSprint(true, now)
-    fieldraid.walkTo(target, now)
+    fieldraid.walkTo(target, now, free)
+end
+
+-- Teleport onto the camp gathering zone (sign-up counter until the zone streams in). Not mid-run or in the meadow.
+function fieldraid.campTeleport(now)
+    if fieldraid.inRaid() or plr:GetAttribute("CowFieldRaidRewardRoom") or not root or not root.Parent then return false end
+    local t = os.clock()
+    if now and t - fieldraid.lastCampTp < 5 then return false end
+    fieldraid.lastCampTp = t
+    fieldraid.stopWalk()
+    setRootCFrame(CFrame.new((fieldraid.gatherSpot() or fieldraid.CAMP_POS) + Vector3.new(0, 4, 0)))
+    fieldraid.setStatus("Teleported to the Field Raid camp")
+    return true
+end
+
+-- Field Ogre: part (when in view), position, worth chasing (alive and its HP moved within OGRE_GIVEUP s), hp
+function fieldraid.ogreState(now)
+    local b = fieldraid.boss
+    local part
+    for _, p in ipairs(fieldraid.mobs) do
+        if p.Parent and p.Parent.Name == "FieldOgre" then part = p break end
+    end
+    local hp = part and (tonumber(part:GetAttribute("Health")) or 0) or b.hp
+    if hp <= 0 then return nil, nil, false, 0 end
+    if hp ~= b.seenHp then b.seenHp, b.seenAt = hp, now end
+    local pos = part and part.Position or b.pos
+    return part, pos, typeof(pos) == "Vector3" and now - b.seenAt < fieldraid.OGRE_GIVEUP, hp
+end
+
+-- Kill Field Ogre: chase and bite it (hitbox surface within MOB_RANGE) until it dies or the chase stalls
+function fieldraid.huntOgre(now, rootPos)
+    if not fieldraid.killOgre or fieldraid.level < 10 then return false end
+    local part, pos, chase, hp = fieldraid.ogreState(now)
+    if not chase then return false end
+    if part then
+        if (fieldraid.cellPoint(part, rootPos) - rootPos).Magnitude <= fieldraid.MOB_RANGE then fieldraid.biteMob(part, now) end
+    elseif now - (fieldraid.lastStream or 0) > 5 then
+        fieldraid.lastStream = now
+        task.spawn(function() pcall(function() plr:RequestStreamAroundAsync(pos, 5) end) end)
+    end
+    if (pos - rootPos).Magnitude > 4 then fieldraid.travel(pos, now, true) end
+    fieldraid.setStatus(string.format("Hunting Field Ogre %d/%d HP", math.ceil(hp), fieldraid.boss.max))
+    return true
+end
+
+-- ==========================
+-- XP FOCUS (port of field_raid_xp.lua Rush & Reset: blitz to F10, best XP/s target, marginal exit)
+-- ==========================
+fieldraid.xp = {
+    est = 0, clock = 0, lastTick = 0, log = {}, hits = {}, sent = {}, runStartAt = nil, visitedMid = false, sweepDir = 1,
+    -- FieldRaidPowerups kill XP; F10 food: wheat 1+3L, secondary 20+10L (GoldenApple 120)
+    KILL_XP = { Spider = 20, Farmer = 40, VillageGuard = 70, VillageArcher = 75, CityGuard = 100, Warlock = 150, FieldOgre = 500 },
+    SECONDARY = { GoldenApple = true, GoldMushroom = true, Mushroom = true, Clover = true, WildBarley = true },
+    HIGH_PACK = { FieldOgre = true, Warlock = true, VillageArcher = true },
+    EXIT_BONUS = 1500, EXIT_OVERHEAD = 8, RATE_WINDOW = 10, RUN_SPEED = 32,
+}
+
+function fieldraid.xpReset(now)
+    local x = fieldraid.xp
+    x.est, x.clock, x.lastTick, x.runStartAt, x.visitedMid = 0, 0, 0, now, false
+    table.clear(x.log)
+    table.clear(x.hits)
+    table.clear(x.sent)
+end
+
+function fieldraid.xpSent(part)
+    if fieldraid.focus ~= "XP Focus" then return end
+    local id = part:GetAttribute("NodeId")
+    if id then fieldraid.xp.sent[id] = part end
+end
+
+function fieldraid.xpSpecies(part)
+    local model = part and part.Parent
+    return model and model.Name or ""
+end
+
+function fieldraid.xpSecondary(part)
+    local x = fieldraid.xp
+    if x.SECONDARY[fieldraid.xpSpecies(part)] then return true end
+    local fk = part:GetAttribute("FoodKind")
+    return fk ~= nil and fk ~= "Wheat" and x.SECONDARY[tostring(fk)] == true
+end
+
+function fieldraid.xpGain(amt)
+    local x = fieldraid.xp
+    x.est += amt
+    x.log[#x.log + 1] = { c = x.clock, amt = amt }
+end
+
+-- GrazeResult for one of our raid bites: food XP lands now, mob XP on EnemyDefeated
+function fieldraid.xpResult(nodeId, accepted)
+    local x = fieldraid.xp
+    local part = x.sent[nodeId]
+    if not part then return end
+    x.sent[nodeId] = nil
+    if not accepted then return end
+    if part:GetAttribute("CowBiteTargetKind") == "RaidMob" then
+        x.hits[nodeId] = fieldraid.xpSpecies(part)
+    else
+        local lv = math.clamp(tonumber(string.match(tostring(nodeId), "_F(%d+)_")) or fieldraid.level, 1, 10)
+        fieldraid.xpGain(fieldraid.xpSecondary(part) and (20 + 10 * lv) or (1 + 3 * lv))
+    end
+end
+
+-- XP/s over the last RATE_WINDOW seconds of F10 farming (drops older log entries)
+function fieldraid.xpRate()
+    local x = fieldraid.xp
+    local log, cutoff, sum, keep = x.log, x.clock - x.RATE_WINDOW, 0, 0
+    for i = 1, #log do
+        local e = log[i]
+        if e.c >= cutoff then
+            keep += 1
+            log[keep] = e
+            sum += e.amt
+        end
+    end
+    for i = #log, keep + 1, -1 do log[i] = nil end
+    return sum / x.RATE_WINDOW
+end
+
+-- Leave when recent F10 XP/s drops below the whole run's XP/s (incl. exit bonus + time to the ferry)
+function fieldraid.xpMarginalExit(now, rootPos)
+    local x = fieldraid.xp
+    if not x.runStartAt or x.clock < x.RATE_WINDOW or x.est < 300 then return false end
+    local _, ferry = fieldraid.exitSpot("ferry")
+    local exitSecs = (ferry - rootPos).Magnitude / x.RUN_SPEED + x.EXIT_OVERHEAD
+    return fieldraid.xpRate() < (x.est + x.EXIT_BONUS) / math.max(1, now - x.runStartAt + exitSecs)
+end
+
+-- Best XP/s target inside field 10: part, pos, kind ("Secondary"|"Wheat"|"Mob"|"OgreFar"), label, high pack seen
+function fieldraid.xpPick(rootPos, now, nearZ, farZ, allowFarmers)
+    local x = fieldraid.xp
+    local bestPart, bestPos, bestKind, bestLabel, bestScore = nil, nil, nil, nil, -1
+    local highPack, ogreSeen = false, false
+    for _, part in ipairs(fieldraid.wheat) do
+        local pz = part.Position.Z
+        local id = part:GetAttribute("NodeId")
+        local skipUntil = id and chomp.skip[id]
+        if part.Parent and id and pz <= nearZ + 12 and pz >= farZ - 12 and not (skipUntil and now < skipUntil) then
+            local pt = fieldraid.cellPoint(part, rootPos)
+            local d = (pt - rootPos).Magnitude
+            local score, kind, label
+            if fieldraid.xpSecondary(part) then
+                score, kind, label = 120 / (0.6 + d / 32), "Secondary", fieldraid.xpSpecies(part)
+            elseif d <= 45 then
+                score, kind, label = 31 / (0.5 + d / 32), "Wheat", "F10 Wheat"
+            end
+            if score and score > bestScore then
+                bestPart, bestPos, bestKind, bestLabel, bestScore = part, pt, kind, label, score
+            end
+        end
+    end
+    for _, part in ipairs(fieldraid.mobs) do
+        local pz = part.Position.Z
+        if fieldraid.mobAlive(part) and pz <= nearZ + 15 and pz >= farZ - 15 then
+            local sp = fieldraid.xpSpecies(part)
+            if x.HIGH_PACK[sp] then highPack = true end
+            if sp == "FieldOgre" then ogreSeen = true end
+            local d = (part.Position - rootPos).Magnitude
+            if sp ~= "Farmer" or allowFarmers or d <= 28 then
+                local hp = math.max(1, tonumber(part:GetAttribute("Health")) or 20)
+                local score = ((x.KILL_XP[sp] or 40) * (x.HIGH_PACK[sp] and 1.35 or 1)) / math.max(0.5, hp / 22 + d / 32)
+                if score > bestScore then
+                    bestPart, bestPos, bestKind, bestLabel, bestScore = part, part.Position, "Mob", sp, score
+                end
+            end
+        end
+    end
+    -- Ogre not streamed into NorthRiverRaidView yet: head for the server-reported boss position
+    local b = fieldraid.boss
+    if not ogreSeen and b.hp > 0 and typeof(b.pos) == "Vector3" and b.pos.Z <= nearZ + 15 and b.pos.Z >= farZ - 15 then
+        local score = x.KILL_XP.FieldOgre / math.max(0.5, b.hp / 22 + (b.pos - rootPos).Magnitude / 32)
+        if score > bestScore then
+            bestPart, bestPos, bestKind, bestLabel = nil, b.pos, "OgreFar", "FieldOgre (far)"
+        end
+    end
+    return bestPart, bestPos, bestKind, bestLabel, highPack
+end
+
+function fieldraid.biteFood(part, now)
+    if fieldraid.chestBusy or now - chomp.lastFire < chomp.getInterval(part) then return end
+    fieldraid.ensureGraze()
+    fieldraid.face(part.Position)
+    if chomp.send(part:GetAttribute("NodeId"), part, now) then fieldraid.xpSent(part) end
+end
+
+function fieldraid.xpTick(now, rootPos)
+    local x = fieldraid.xp
+    if fieldraid.level < 10 then
+        -- Blitz: snatch golden foods within 35 studs ahead in F8/F9, else run on (along the chest lane)
+        if fieldraid.level >= 8 then
+            for _, part in ipairs(fieldraid.wheat) do
+                if part.Parent and fieldraid.xpSecondary(part) then
+                    local pt = fieldraid.cellPoint(part, rootPos)
+                    local d = (pt - rootPos).Magnitude
+                    if d <= 35 and pt.Z <= rootPos.Z + 8 then
+                        if d <= chomp.REACH then fieldraid.biteFood(part, now) else fieldraid.travel(pt, now, true) end
+                        fieldraid.setStatus(string.format("XP: F%d detour %s", fieldraid.level, fieldraid.xpSpecies(part)))
+                        return
+                    end
+                end
+            end
+        end
+        fieldraid.travel(Vector3.new(fieldraid.chestLaneX() or rootPos.X, rootPos.Y, rootPos.Z - 40), now)
+        fieldraid.setStatus(string.format("XP: blitzing field %d -> 10 | ~%d XP", fieldraid.level, math.floor(x.est)))
+        return
+    end
+    local nearZ, farZ = fieldraid.bandZ(10)
+    if not nearZ then
+        fieldraid.travel(rootPos + Vector3.new(0, 0, -40), now)
+        return
+    end
+    local minX, maxX = fieldraid.sweepBounds()
+    minX, maxX = minX or (rootPos.X - 180), maxX or (rootPos.X + 180)
+    x.clock += x.lastTick > 0 and math.min(1, now - x.lastTick) or 0.1
+    x.lastTick = now
+    local midZ = (nearZ + farZ) * 0.5
+    if rootPos.Z <= midZ + 15 then x.visitedMid = true end
+    local part, pos, kind, label, highPack = fieldraid.xpPick(rootPos, now, nearZ, farZ, x.est < 550)
+    local _, _, ogreAlive = fieldraid.ogreState(now)
+    local ogreDead = fieldraid.boss.max > 0 and fieldraid.boss.hp <= 0
+    local cleared = (x.visitedMid or ogreDead) and not highPack and not ogreAlive and kind ~= "Secondary"
+    if cleared and fieldraid.xpMarginalExit(now, rootPos) then
+        fieldraid.leaving, fieldraid.exitVia = "xp rate dropped", "ferry"
+        fieldraid.path, fieldraid.pathTarget = nil, nil
+        return
+    end
+    local tag = string.format(" (~%d XP)", math.floor(x.est))
+    if pos then
+        local d = (pos - rootPos).Magnitude
+        if kind == "OgreFar" and now - (fieldraid.lastStream or 0) > 5 then
+            fieldraid.lastStream = now
+            task.spawn(function() pcall(function() plr:RequestStreamAroundAsync(pos, 5) end) end)
+        end
+        if part and kind == "Mob" then
+            -- Big mobs (Ogre Scale 2.2): measure to the hitbox surface, keep closing in while chewing
+            if (fieldraid.cellPoint(part, rootPos) - rootPos).Magnitude <= fieldraid.MOB_RANGE then
+                fieldraid.biteMob(part, now)
+                if d > 4 then fieldraid.travel(pos, now, true) end
+                fieldraid.setStatus("XP F10: " .. label .. tag)
+                return
+            end
+        elseif part and d <= chomp.REACH then
+            fieldraid.biteFood(part, now)
+            fieldraid.setStatus("XP F10: " .. label .. tag)
+            return
+        end
+        fieldraid.travel(Vector3.new(math.clamp(pos.X, minX, maxX), rootPos.Y, math.clamp(pos.Z, farZ + 6, nearZ - 6)), now, true)
+        fieldraid.setStatus(string.format("XP F10: %s (%d studs)%s", label, math.floor(d), tag))
+        return
+    end
+    if not x.visitedMid then
+        fieldraid.travel(Vector3.new(math.clamp(rootPos.X, minX, maxX), rootPos.Y, midZ), now, true)
+        fieldraid.setStatus("XP F10: advancing to Ogre / Warlocks" .. tag)
+        return
+    end
+    if (x.sweepDir > 0 and rootPos.X >= maxX - 20) or (x.sweepDir < 0 and rootPos.X <= minX + 20) then
+        x.sweepDir = -x.sweepDir
+    end
+    fieldraid.travel(Vector3.new(x.sweepDir > 0 and maxX or minX, rootPos.Y, midZ), now, true)
+    fieldraid.setStatus("XP F10: patrolling" .. tag)
 end
 
 function fieldraid.tick(now, rootPos)
@@ -6959,21 +7320,26 @@ function fieldraid.tick(now, rootPos)
     if fieldraid.run ~= run then
         fieldraid.run, fieldraid.runStartedAt, fieldraid.leaving, fieldraid.startTries, fieldraid.exitVia = run, now, false, 0, nil
         fieldraid.lastWheatSeen, fieldraid.farmEntryZ, fieldraid.sweepZ = now, nil, nil
+        fieldraid.charges, fieldraid.luckUntil = nil, nil
+        local b = fieldraid.boss
+        b.hp, b.max, b.pos, b.seenHp, b.seenAt = 0, 0, nil, nil, 0
         table.clear(fieldraid.chestLevels)
+        fieldraid.xpReset(now)
     end
-    fieldraid.useSupplies(run)
+    fieldraid.useSupplies(run, now)
     if not fieldraid.planting and now - (fieldraid.lastSnapshotAsk or 0) > 10 then
         -- Reloaded mid-run: ask for the run snapshot (the game does this on join) to learn the Planting
         fieldraid.lastSnapshotAsk = now
         fieldraid.fire("Snapshot")
     end
-    if fieldraid.level >= fieldraid.maxLevel and not fieldraid.farmEntryZ then
-        local entryZ = fieldraid.bandZ(fieldraid.maxLevel)
+    local maxField = fieldraid.maxField()
+    if fieldraid.level >= maxField and not fieldraid.farmEntryZ then
+        local entryZ = fieldraid.bandZ(maxField)
         fieldraid.farmEntryZ = entryZ or rootPos.Z
     end
     fieldraid.scan(now)
     fieldraid.prompts(now)
-    local deeper = fieldraid.pushDeeper and fieldraid.level < fieldraid.maxLevel
+    local deeper = fieldraid.pushDeeper and fieldraid.level < maxField
     -- Chest reveal: the server anchors the cow but it takes no damage (Hurt "chest_opening") and hearts
     -- refill. Stay in it until hearts are full, then close it and press on.
     if fieldraid.chestBusy then
@@ -6997,16 +7363,22 @@ function fieldraid.tick(now, rootPos)
     end
     -- Loot Runs: once the last chest plot within Max Field is opened (or passed), bank and start over
     if fieldraid.focus == "Loot Runs" and not fieldraid.leaving then
-        local last = math.min(fieldraid.maxLevel, fieldraid.LAST_CHEST_LEVEL)
+        local last = math.min(maxField, fieldraid.LAST_CHEST_LEVEL)
         if last % 2 == 0 then last -= 1 end
-        if fieldraid.chestLevels[last] or fieldraid.level > last or fieldraid.level >= fieldraid.maxLevel then
+        if fieldraid.chestLevels[last] or fieldraid.level > last or fieldraid.level >= maxField then
             fieldraid.leaving, fieldraid.exitVia = "loot run complete", "ferry"
             fieldraid.path, fieldraid.pathTarget = nil, nil
-            safeNotify({ Title = "Field Raid", Content = "Loot run complete: banking at the Mill gate.", Duration = 5, Image = 4483362458 })
+            safeNotify({ Title = "Field Raid", Content = "Loot run complete: heading to the River ferry.", Duration = 5, Image = 4483362458 })
         end
     end
-    -- An open-able chest heals and shields: take it before anything else (also when hurt), unless leaving
-    if not fieldraid.leaving and fieldraid.tryChest(now, rootPos) then
+    -- Luck pot running out: head for the ferry so the meadow gold chest (tier 3) still rolls with it
+    if fieldraid.luckUntil and fieldraid.focus ~= "Grazing" and fieldraid.level >= 9 and not fieldraid.leaving
+        and now >= fieldraid.luckUntil - 15 then
+        fieldraid.leaving, fieldraid.exitVia = "luck pot ending", "ferry"
+        fieldraid.path, fieldraid.pathTarget = nil, nil
+    end
+    -- An open-able chest heals and shields: take it before anything else (also when hurt or leaving)
+    if fieldraid.tryChest(now, rootPos) then
         fieldraid.setSprint(true, now)
         return
     end
@@ -7018,6 +7390,9 @@ function fieldraid.tick(now, rootPos)
         else
             fieldraid.chompWheat(now, rootPos)
         end
+        return
+    end
+    if (not fieldraid.leaving or fieldraid.leaving == "loot run complete") and fieldraid.huntOgre(now, rootPos) then
         return
     end
     if fieldraid.leaving then
@@ -7044,8 +7419,12 @@ function fieldraid.tick(now, rootPos)
         local rem = math.max(0, math.ceil(fieldraid.maxMinutes * 60 - (now - fieldraid.runStartedAt)))
         timerTag = string.format(" | %d:%02d left", math.floor(rem / 60), rem % 60)
     end
+    if fieldraid.focus == "XP Focus" then
+        fieldraid.xpTick(now, rootPos)
+        return
+    end
     if deeper then
-        fieldraid.travel(rootPos + Vector3.new(0, 0, -40), now)
+        fieldraid.travel(Vector3.new(fieldraid.chestLaneX() or rootPos.X, rootPos.Y, rootPos.Z - 40), now)
         fieldraid.setStatus(string.format("L%d pushing deeper | bag %s cal | %d mobs%s", fieldraid.level, fieldraid.fmtCal(fieldraid.bagCalories), #fieldraid.mobs, timerTag))
         return
     end
@@ -7113,6 +7492,12 @@ do
                 fieldraid.smithEvent(msg)
             elseif kind == "Reset" or kind == "FieldChanged" or kind == "State" then
                 if tonumber(msg.Level) then fieldraid.level = tonumber(msg.Level) end
+                local loadout = msg.Loadout
+                if type(loadout) == "table" and type(loadout.Charges) == "table" then fieldraid.charges = loadout.Charges end
+                local b = fieldraid.boss
+                if typeof(msg.BossPosition) == "Vector3" then b.pos = msg.BossPosition end
+                if tonumber(msg.BossHealth) then b.hp = tonumber(msg.BossHealth) end
+                if tonumber(msg.BossMax) then b.max = tonumber(msg.BossMax) end
                 if kind == "Reset" then
                     fieldraid.bagCalories = 0
                     if fieldraid.run ~= msg.Run or not fieldraid.planting then fieldraid.farmEntryZ = nil end
@@ -7123,6 +7508,15 @@ do
                 fieldraid.addHazard(msg)
             elseif kind == "CancelWarning" or kind == "EnemyDefeated" then
                 fieldraid.dropHazards(msg.Id)
+                if kind == "EnemyDefeated" then
+                    local x = fieldraid.xp
+                    local sp = x.hits[msg.Id]
+                    if sp then
+                        x.hits[msg.Id] = nil
+                        fieldraid.xpGain(x.KILL_XP[sp] or 40)
+                    end
+                    if msg.Species == "FieldOgre" or sp == "FieldOgre" then fieldraid.boss.hp = 0 end
+                end
             elseif kind == "Bag" then
                 fieldraid.bagCalories = tonumber(msg.Calories) or fieldraid.bagCalories
             elseif kind == "ChestOpening" then
@@ -7275,9 +7669,29 @@ function fieldraid.smithTick()
     local pos = root.Position
     local dHead = head and (head.Position - pos).Magnitude or math.huge
     local dAnvil = (anvilPos - pos).Magnitude
-    if s.teleport and dHead > 14 and dAnvil > 7 then
-        fieldraid.smithReach(anvilPos, 7, "anvil")
+    local atAnvil = plr:GetAttribute("SmithJobAtAnvil")
+    local fresh = s.statusAt > 0 and now - s.statusAt < 6 and s.cycle == cycle
+    -- Sheet turned in and no shift left: done for this Day, teleport straight back
+    if s.claimedCycle == cycle and atAnvil ~= "Ready" and atAnvil ~= "Active" and now - s.lastClaim > 2 then
+        s.doneCycle = cycle
+        fieldraid.smithReturn()
+        fieldraid.smithStatus("Paid for this Day | score " .. tostring(s.score))
         return
+    end
+    -- Teleport: to the anvil while on shift, else beside the blacksmith to talk (accept / status / claim)
+    if s.teleport then
+        local onShift = atAnvil == "Active" or (fresh and s.state == "Active")
+        if onShift and dAnvil > 7 then
+            fieldraid.smithReach(anvilPos, 7, "anvil")
+            return
+        elseif not onShift and dHead > 14 and not (atAnvil == "Ready" and dAnvil <= 7) then
+            if head then
+                fieldraid.smithReach(Vector3.new(head.Position.X, anvilPos.Y, head.Position.Z), 12, "blacksmith")
+            elseif dAnvil > 7 then
+                fieldraid.smithReach(anvilPos, 7, "anvil")
+            end
+            if head or dAnvil > 7 then return end
+        end
     end
     local talk = dHead <= 14
     local nearAnvil = dAnvil <= 7
@@ -7286,12 +7700,10 @@ function fieldraid.smithTick()
             or "Blacksmith is away from his forge")
         return
     end
-    local atAnvil = plr:GetAttribute("SmithJobAtAnvil")
-    local fresh = s.statusAt > 0 and now - s.statusAt < 6 and s.cycle == cycle
     -- Finished sheet: turn it in (at the anvil or with him)
     if atAnvil == "Ready" or s.state == "Ready" then
         if now - s.lastClaim > 5 then
-            s.lastClaim = now
+            s.lastClaim, s.claimedCycle = now, cycle
             fieldraid.fire("SmithJobClaim", cycle)
             fieldraid.smithStatus("Turning in sheet (" .. tostring(s.score) .. "/100)")
             s.state, s.statusAt = nil, 0
@@ -17115,13 +17527,13 @@ do
 
     RaidTab:CreateDropdown({
         Name = "Raid Focus",
-        Options = { "Grazing", "Loot Runs" },
+        Options = { "Grazing", "Loot Runs", "XP Focus" },
         CurrentOption = { "Grazing" },
         MultipleOptions = false,
         Flag = "Dropdown_FieldRaidFocus",
         Callback = function(Options)
             local pick = (type(Options) == "table" and Options[1]) or Options
-            fieldraid.focus = pick == "Loot Runs" and "Loot Runs" or "Grazing"
+            fieldraid.focus = (pick == "Loot Runs" or pick == "XP Focus") and pick or "Grazing"
         end,
     })
 
@@ -17132,7 +17544,9 @@ do
         { label = "Blink Dodge", default = true, fn = function(Value) fieldraid.blink = Value end },
         { label = "Dodge Assist (manual play)", default = false, fn = function(Value) fieldraid.dodgeAssist = Value end },
         { label = "Close Chest Once Healed", default = true, fn = function(Value) fieldraid.fastChest = Value end },
-        { label = "Use Supplies (Pot of Greed)", default = false, fn = function(Value) fieldraid.suppliesOn = Value end },
+        { label = "Loot Chests", default = true, fn = function(Value) fieldraid.lootChests = Value end },
+        { label = "Kill Field Ogre", default = false, fn = function(Value) fieldraid.killOgre = Value end },
+        { label = "Use Supplies (luck pot at Field 8)", default = false, fn = function(Value) fieldraid.suppliesOn = Value end },
     })
 
     RaidTab:CreateSlider({
@@ -17156,6 +17570,14 @@ do
     })
 
     local actions = row()
+    actions:CreateButton({
+        Name = "Teleport to Raid Camp",
+        Callback = function()
+            if not fieldraid.campTeleport() then
+                safeNotify({ Title = "Field Raid", Content = "Already in a raid or the harvest meadow.", Duration = 4, Image = 4483362458 })
+            end
+        end,
+    })
     actions:CreateButton({
         Name = "Start Solo Raid",
         Callback = function()
